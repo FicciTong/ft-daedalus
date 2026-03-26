@@ -1,0 +1,390 @@
+# codex-wechat-bridge
+
+> 📱 手机微信  
+> 🖥️ 本地 `tmux` 里的 Codex  
+> 🔁 同一个 canonical live session
+
+[English Version](./README.md)
+
+这是一个把**本地 Codex tmux 会话**桥接到微信的工具，走的是**官方**
+OpenClaw Weixin 通道（`@tencent-weixin/openclaw-weixin`）。
+
+它**不是**云端任务转发器，也**不是**“换个平台聊同一个机器人”的空壳。  
+它的核心目标只有一个：
+
+> **让微信成为你本机 Codex live session 的远程操作入口。**
+
+默认约定：
+
+- canonical tmux 名：`codex`
+- tmux 里跑的 agent：本地 `codex`
+- 微信是远程 operator surface，不是另一个独立 bot
+
+## ✨ 一眼看懂
+
+| 表面 | 你会看到什么 | 它的用途 |
+|---|---|---|
+| 桌面 `tmux codex` | 完整 live terminal stream | 全量输出、工具过程、真正的实时工作界面 |
+| 微信 | commentary 第一 Progress 句 + final reply | 外出时下任务、看进度、收结果 |
+
+如果你想让微信安静一点：
+
+```text
+/notify off
+```
+
+## 🧭 这套东西的真实边界
+
+它：
+
+- **不会**修改 Codex 本体
+- **不会**放进 `ft-cosmos`
+- **不会**走 Codex cloud tasks
+- **不会**把多个 live shell 混成一个聊天窗口
+- **会**使用官方 `openclaw-weixin` 登录链路
+- **会**把 `tmux codex` 当成 canonical runtime truth
+- **会**在当前微信会话绑定后，把桌面侧产生的 final reply 镜像回微信
+
+## 🧠 正确理解方式
+
+你需要把它理解成两层表面、一个 owner：
+
+### 1. 桌面 live owner
+
+```bash
+tmux attach -t codex
+```
+
+这里看到的是完整实时流：
+
+- prompt 注入
+- 模型 live 输出
+- 工具调用
+- 终端噪声
+
+### 2. 微信 operator surface
+
+这里不是终端镜像，而是：
+
+- 消息进同一个本地 Codex session
+- 微信收到的是：
+  - commentary 第一条简短进度
+  - 最终 final reply
+- 不会把工具原始日志、状态栏、底部噪声直接刷给你
+
+所以：
+
+- 想看完整实时流：看桌面 tmux
+- 想手机远程操作：看微信
+- 想让桌面侧 final 回到微信：先在微信发任意一句话或命令，把当前 chat context 绑上
+- 如果你在 `tmux codex` 里手动 `resume` 到别的 thread，镜像会跟随**当前 canonical tmux thread**
+
+## 🧰 前置依赖
+
+装在那台拥有本地 Codex session 的机器上：
+
+- `codex`
+- `tmux`
+- Python `3.13+`
+- `uv`
+- `openclaw`
+- 你手机上的微信
+
+快速检查：
+
+```bash
+codex --version
+tmux -V
+python3 --version
+uv --version
+openclaw --version
+```
+
+这里有一个真话必须说清楚：
+
+> **对，这套实现确实依赖 OpenClaw。**
+
+因为我们走的是官方 OpenClaw Weixin 通道，而不是自己造一套微信接入协议。
+
+腾讯官方当前插件路径大致是：
+
+```bash
+npx -y @tencent-weixin/openclaw-weixin-cli install
+openclaw channels login --channel openclaw-weixin
+```
+
+本项目已经把这条官方路径包起来了，所以你一般不需要自己手打这些底层命令。
+
+## 🚀 安装
+
+```bash
+cd ~/dev
+git clone https://github.com/FicciTong/codex-wechat-bridge.git
+cd codex-wechat-bridge
+uv sync
+```
+
+## ⚡ 给朋友用的最快安装方式
+
+如果你要把这套东西交给别人装，最短路径就是：
+
+```bash
+cd ~/dev/codex-wechat-bridge
+bash scripts/install-user-service.sh
+```
+
+这个脚本会自动做：
+
+1. 检查依赖命令（`codex`、`tmux`、`python3`、`uv`、`openclaw`、`systemctl`）
+2. 执行 `uv sync`
+3. 安装 user-level systemd 服务
+4. 创建 `~/.config/codex-wechat-bridge.env`
+5. 走官方微信扫码登录
+6. 重启 bridge
+7. 运行 doctor 自检
+
+如果只想单独看健康状态：
+
+```bash
+cd ~/dev/codex-wechat-bridge
+bash scripts/doctor.sh
+```
+
+## 🔐 官方微信登录
+
+canonical 登录命令：
+
+```bash
+cd ~/dev/codex-wechat-bridge
+uv run codex-wechat-bridge auth-openclaw
+```
+
+它会自动：
+
+1. 在专用 OpenClaw profile `codex-wechat-bridge` 下 bootstrap 官方插件
+2. 启用插件
+3. 走官方二维码登录
+4. 把账号导入 bridge 的本地状态目录
+
+默认账号文件位置：
+
+```bash
+~/.local/state/codex-wechat-bridge/account.json
+```
+
+如果以后 doctor 报：
+
+- `errcode=-14`
+- 或登录超时
+
+直接重新跑一次：
+
+```bash
+uv run codex-wechat-bridge auth-openclaw
+```
+
+如果你要故意改 OpenClaw profile：
+
+```bash
+export CODEX_WECHAT_BRIDGE_OPENCLAW_PROFILE=my-profile
+```
+
+## 🛡️ 安全边界
+
+默认情况下，如果你不加限制，任何能触达这个 bot 会话的人都能控制它。
+
+如果这台机器重要，请配置 allowlist：
+
+```bash
+~/.config/codex-wechat-bridge.env
+```
+
+示例：
+
+```bash
+CODEX_WECHAT_BRIDGE_ALLOWED_USERS=o9cq80y6O1DAYqilESlM_NbeqtTc@im.wechat
+```
+
+多个用户就逗号分隔：
+
+```bash
+CODEX_WECHAT_BRIDGE_ALLOWED_USERS=user-a@im.wechat,user-b@im.wechat
+```
+
+改完后重启：
+
+```bash
+systemctl --user restart codex-wechat-bridge
+```
+
+## 🖥️ canonical 桌面会话
+
+这套桥默认认一个 canonical tmux owner：
+
+```bash
+tmux new -s codex 'codex resume --last -C /home/ft/dev/ft-cosmos --no-alt-screen'
+```
+
+如果已经存在：
+
+```bash
+tmux attach -t codex
+```
+
+如果你还没有历史 thread：
+
+```bash
+tmux new -s codex 'codex -C /home/ft/dev/ft-cosmos --no-alt-screen'
+```
+
+纪律非常简单：
+
+- 永远只维护一个 canonical bridge-owned tmux live session
+- 不要到处乱开新的 `codex resume` 窗口
+- 你要在电脑上看 live，就 attach `tmux codex`
+
+## ▶️ 运行 bridge
+
+前台跑：
+
+```bash
+cd ~/dev/codex-wechat-bridge
+uv run codex-wechat-bridge run
+```
+
+健康检查：
+
+```bash
+cd ~/dev/codex-wechat-bridge
+uv run codex-wechat-bridge doctor
+```
+
+## ⚙️ 安装成用户服务
+
+仓库自带 user-level systemd unit：
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp ops/systemd/user/codex-wechat-bridge.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now codex-wechat-bridge
+```
+
+bridge 读取的 canonical env 文件是：
+
+```bash
+~/.config/codex-wechat-bridge.env
+```
+
+这里是前台 CLI 和后台 service 共用的配置入口。
+
+常用命令：
+
+```bash
+systemctl --user status codex-wechat-bridge
+systemctl --user restart codex-wechat-bridge
+journalctl --user -u codex-wechat-bridge -n 100 --no-pager
+```
+
+## 💬 微信命令
+
+支持 `/command` 和 `\\command` 两种前缀。
+
+命令有：
+
+- `/help`
+- `/status`
+- `/health`
+- `/notify on|off|status`
+- `/sessions`
+- `/new [label]`
+- `/switch <index|thread_id-prefix|label|tmux>`
+- `/attach-last`
+- `/stop`
+
+普通文本消息会送进当前 `tmux codex` 里正在活着的 Codex thread。
+
+示例：
+
+```text
+/health
+/notify on
+/status
+/sessions
+/switch 1
+/switch attached-last
+/switch codex
+帮我检查今天的 package outcome
+```
+
+手机侧语义：
+
+- `/health` = bridge / tmux / 当前 thread 现在健不健康
+- `/notify` = 切 `progress+final` 或 `final-only`
+- `/status` = 当前接的是哪个 live session
+- `/sessions` = 手机可读的短列表，用来快速 `/switch 1`
+
+## 🗓️ 日常使用建议
+
+### 每天开始前
+
+1. 确认 `tmux codex` 在
+2. 确认 Codex 在里面跑着
+3. 确认 bridge service 正常
+4. 微信里发 `/status` 确认当前 active session
+
+### 你在外面的时候
+
+- 直接在微信里正常说话
+- 如果不确定接的是谁，就发 `/status`
+- 如果你真的在管多个 session，再用 `/sessions` / `/switch`
+
+### 你回到电脑前的时候
+
+直接 attach canonical owner：
+
+```bash
+tmux attach -t codex
+```
+
+不要期待另一个独立开的桌面 Codex 窗口会自动和微信实时同步。  
+真正的 live owner 是 canonical tmux。
+
+## 🧩 可选环境变量
+
+- `CODEX_WECHAT_BRIDGE_DEFAULT_CWD`
+- `CODEX_WECHAT_BRIDGE_STATE_DIR`
+- `CODEX_WECHAT_BRIDGE_ACCOUNT_FILE`
+- `CODEX_WECHAT_BRIDGE_CODEX_BIN`
+- `CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES`
+- `CODEX_WECHAT_BRIDGE_OPENCLAW_PROFILE`
+- `CODEX_WECHAT_BRIDGE_TMUX_SESSION`
+
+## 🧯 故障恢复
+
+如果微信不回了：
+
+1. 看 service：
+
+```bash
+systemctl --user status codex-wechat-bridge
+```
+
+2. 跑 doctor：
+
+```bash
+cd ~/dev/codex-wechat-bridge
+uv run codex-wechat-bridge doctor
+```
+
+3. 如果登录过期：
+
+```bash
+uv run codex-wechat-bridge auth-openclaw
+```
+
+4. 如果 bridge 健康但 Codex 不在了，重建 canonical tmux：
+
+```bash
+tmux new -s codex 'codex resume --last -C /home/ft/dev/ft-cosmos --no-alt-screen'
+```

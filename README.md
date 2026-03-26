@@ -1,5 +1,11 @@
 # codex-wechat-bridge
 
+> 📱 WeChat on your phone  
+> 🖥️ Codex in your local `tmux`  
+> 🔁 One canonical live session
+
+[中文说明 / Chinese Guide](./README.zh-CN.md)
+
 Bridge a **local Codex tmux session** into WeChat using the **official**
 OpenClaw Weixin channel (`@tencent-weixin/openclaw-weixin`).
 
@@ -8,29 +14,37 @@ by routing WeChat messages into one canonical live tmux shell:
 
 - tmux session name: `codex`
 - live agent inside that shell: local `codex`
-- WeChat acts as a remote input surface for that same local shell
+- WeChat acts as a remote operator surface for that same local shell
 
-Desktop and mobile intentionally have **different output semantics**:
+## ✨ At A Glance
 
-- desktop `tmux codex` = **full live terminal stream**
-- WeChat default = **commentary first sentence + final reply**
-- optional quiet mode = **final reply only** via `/notify off`
+| Surface | What You See | What It Is For |
+|---|---|---|
+| Desktop `tmux codex` | Full live terminal stream | Real-time work, full context, tool chatter |
+| WeChat | Commentary first sentence + final reply | Remote operation from your phone |
 
-## Truthful boundaries
+If you want quiet mode on mobile:
 
-- This bridge does **not** modify Codex.
-- This bridge does **not** live inside `ft-cosmos`.
-- This bridge does **not** use Codex cloud tasks.
-- This bridge does **not** multiplex multiple active live shells into one chat.
-- This bridge uses the **official** `openclaw-weixin` login flow.
-- This bridge keeps its own dedicated OpenClaw profile by default, so it does
-  not need to fight with an existing OpenClaw gateway account already running
-  on the same machine.
-- This bridge treats `tmux codex` as the canonical runtime truth.
+```text
+/notify off
+```
 
-## How To Think About It
+## 🧭 Truthful Boundaries
 
-There are two distinct surfaces:
+This bridge:
+
+- does **not** modify Codex
+- does **not** live inside `ft-cosmos`
+- does **not** use Codex cloud tasks
+- does **not** multiplex many live shells into one WeChat chat
+- **does** use the official `openclaw-weixin` login flow
+- **does** treat `tmux codex` as the canonical runtime truth
+- **does** mirror desktop-originated final replies back to WeChat once the chat
+  context is bound
+
+## 🧠 Mental Model
+
+There are two surfaces, but only **one canonical live owner**:
 
 1. **Desktop live owner**
    - `tmux attach -t codex`
@@ -38,10 +52,9 @@ There are two distinct surfaces:
 
 2. **WeChat operator surface**
    - sends messages into that same local Codex session
-   - receives **final reply only**
-   - does **not** receive thinking / commentary / bottom status bar noise
-   - after the current WeChat chat is bound, desktop-originated final replies
-     from that same active session are also mirrored back to WeChat
+   - receives **commentary first sentence + final reply**
+   - does **not** receive raw tool logs, bottom status bar noise, or terminal
+     junk
 
 So:
 
@@ -51,11 +64,8 @@ So:
   send any normal message or command once so the current chat context is bound
 - if you manually `resume` a different thread inside `tmux codex`, the mirror
   follows that **current canonical tmux thread**, not a stale saved thread id
-- mobile default is `progress+final`; it sends only the **first sentence** of
-  each commentary update, never raw tool output
-- if you want less mobile noise, use `/notify off`
 
-## Prerequisites
+## 🧰 Prerequisites
 
 You need these on the machine that owns the local Codex session:
 
@@ -65,10 +75,6 @@ You need these on the machine that owns the local Codex session:
 - `uv`
 - `openclaw`
 - WeChat on your phone
-
-This means: **yes, OpenClaw is a real prerequisite for this implementation.**
-The bridge uses the official OpenClaw Weixin channel path; it does not replace
-that dependency.
 
 Quick checks:
 
@@ -80,25 +86,21 @@ uv --version
 openclaw --version
 ```
 
-For the official Weixin channel plugin, Tencent currently documents:
+This means: **yes, OpenClaw is a real prerequisite** for this implementation.
+The bridge uses the official OpenClaw Weixin channel path; it does not replace
+that dependency.
+
+Tencent's official plugin flow currently looks like:
 
 ```bash
 npx -y @tencent-weixin/openclaw-weixin-cli install
-```
-
-and then:
-
-```bash
 openclaw channels login --channel openclaw-weixin
 ```
 
 This bridge wraps that official route for you, so you usually do **not** need
 to run those raw commands manually.
 
-If your friend does not already have `openclaw`, they need to install it first
-before this bridge can work.
-
-## Install
+## 🚀 Install
 
 ```bash
 cd ~/dev
@@ -107,7 +109,7 @@ cd codex-wechat-bridge
 uv sync
 ```
 
-## Fastest Friend Install
+## ⚡ Fastest Install For A Friend
 
 If you want to hand this to someone else, the shortest install path is:
 
@@ -116,7 +118,7 @@ cd ~/dev/codex-wechat-bridge
 bash scripts/install-user-service.sh
 ```
 
-This script does all of the following:
+This script:
 
 1. checks required commands (`codex`, `tmux`, `python3`, `uv`, `openclaw`,
    `systemctl`)
@@ -134,7 +136,7 @@ cd ~/dev/codex-wechat-bridge
 bash scripts/doctor.sh
 ```
 
-## Official WeChat Login
+## 🔐 Official WeChat Login
 
 The canonical login path for this bridge is:
 
@@ -166,12 +168,12 @@ If you intentionally want a different OpenClaw profile:
 export CODEX_WECHAT_BRIDGE_OPENCLAW_PROFILE=my-profile
 ```
 
-## Security Boundary
+## 🛡️ Security Boundary
 
 By default, if you do nothing, the bridge allows any sender who can reach the
 bot conversation.
 
-If this machine matters, **configure an allowlist** in:
+If this machine matters, configure an allowlist in:
 
 ```bash
 ~/.config/codex-wechat-bridge.env
@@ -195,7 +197,7 @@ After changing the env file:
 systemctl --user restart codex-wechat-bridge
 ```
 
-## Canonical Desktop Session
+## 🖥️ Canonical Desktop Session
 
 The bridge expects one canonical live tmux owner:
 
@@ -222,7 +224,7 @@ Important discipline:
   continuity to stay clean
 - if you need desktop live view, always attach to `tmux codex`
 
-## Run The Bridge
+## ▶️ Run The Bridge
 
 Foreground:
 
@@ -238,7 +240,7 @@ cd ~/dev/codex-wechat-bridge
 uv run codex-wechat-bridge doctor
 ```
 
-## Install As A User Service
+## ⚙️ Install As A User Service
 
 This repo includes a user-level systemd unit:
 
@@ -261,7 +263,8 @@ That is the canonical place for both foreground CLI and background service:
 - `CODEX_WECHAT_BRIDGE_TMUX_SESSION`
 - `CODEX_WECHAT_BRIDGE_CODEX_BIN`
 - `CODEX_WECHAT_BRIDGE_ALLOWED_USERS`
-- optional profile overrides
+- `CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES`
+- optional OpenClaw profile overrides
 
 Useful commands:
 
@@ -271,7 +274,7 @@ systemctl --user restart codex-wechat-bridge
 journalctl --user -u codex-wechat-bridge -n 100 --no-pager
 ```
 
-## WeChat Commands
+## 💬 WeChat Commands
 
 The bridge accepts both `/command` and `\\command`.
 
@@ -310,7 +313,7 @@ Phone-friendly semantics:
 - `/status` = which live session am I currently attached to
 - `/sessions` = short switchable list, optimized for phone reading
 
-## Daily Operating Guide
+## 🗓️ Daily Operating Guide
 
 ### Start of day
 
@@ -337,7 +340,7 @@ tmux attach -t codex
 Do **not** expect a separate desktop Codex window to live-sync if it is not the
 canonical tmux owner.
 
-## Optional Environment Variables
+## 🧩 Optional Environment Variables
 
 - `CODEX_WECHAT_BRIDGE_DEFAULT_CWD`
 - `CODEX_WECHAT_BRIDGE_STATE_DIR`
@@ -347,24 +350,24 @@ canonical tmux owner.
 - `CODEX_WECHAT_BRIDGE_OPENCLAW_PROFILE`
 - `CODEX_WECHAT_BRIDGE_TMUX_SESSION`
 
-## Failure Recovery
+## 🧯 Failure Recovery
 
 If WeChat stops replying:
 
-1. run:
+1. check the service:
 
 ```bash
 systemctl --user status codex-wechat-bridge
 ```
 
-2. run:
+2. run doctor:
 
 ```bash
 cd ~/dev/codex-wechat-bridge
 uv run codex-wechat-bridge doctor
 ```
 
-3. if login expired, run:
+3. if login expired:
 
 ```bash
 uv run codex-wechat-bridge auth-openclaw
