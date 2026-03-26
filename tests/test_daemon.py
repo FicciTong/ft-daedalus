@@ -365,7 +365,7 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("recent:", text)
             self.assertIn("progress one", text)
             self.assertIn("FINAL_OK", text)
-            self.assertIn("[1][sent][progress]", text)
+            self.assertIn("[1][sent][progress][13:00:00]", text)
             self.assertIn("next=/recent after 2", text)
 
     def test_recent_after_seq_uses_stable_delivery_ledger(self) -> None:

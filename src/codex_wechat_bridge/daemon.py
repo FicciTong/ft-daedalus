@@ -7,6 +7,7 @@ from pathlib import Path
 from queue import Empty, Queue
 import threading
 import time
+from zoneinfo import ZoneInfo
 
 from .config import BridgeConfig
 from .delivery_ledger import append_delivery, read_recent_for_user
@@ -14,6 +15,8 @@ from .live_session import LiveCodexSessionManager
 from .state import BridgeState
 from .wechat_api import WeChatClient
 from .systemd_notify import notify as systemd_notify
+
+DISPLAY_TZ = ZoneInfo("Asia/Shanghai")
 
 
 HELP_TEXT = """FT bridge 命令总览
@@ -303,7 +306,7 @@ class BridgeDaemon:
             return "recent=empty\nhint=当前会话还没有可补看的已发送消息"
         lines = []
         for item in items:
-            ts = str(item.get("ts", ""))[11:19] or "--:--:--"
+            ts = self._display_time(item.get("ts"))
             seq = int(item.get("seq", 0) or 0)
             status = str(item.get("status", "unknown"))
             kind = str(item.get("kind", "message"))
@@ -794,3 +797,15 @@ class BridgeDaemon:
         if cwd.startswith(home):
             return cwd.replace(home, "~", 1)
         return cwd
+
+    def _display_time(self, raw_ts: object) -> str:
+        text = str(raw_ts or "").strip()
+        if not text:
+            return "--:--:--"
+        try:
+            dt = datetime.fromisoformat(text)
+        except ValueError:
+            return text[11:19] if len(text) >= 19 else "--:--:--"
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(DISPLAY_TZ).strftime("%H:%M:%S")
