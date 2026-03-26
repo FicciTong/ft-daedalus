@@ -39,6 +39,20 @@ class LiveSessionTests(unittest.TestCase):
         }
         self.assertEqual(self.runner._extract_final_text(event), "FINAL_OK")
 
+    def test_extract_progress_text_uses_first_sentence(self) -> None:
+        event = {
+            "type": "event_msg",
+            "payload": {
+                "type": "agent_message",
+                "phase": "commentary",
+                "message": "我先检查 bridge 当前状态，然后再看事件日志。\n后面这句不该发。",
+            },
+        }
+        self.assertEqual(
+            self.runner._extract_progress_text(event),
+            "我先检查 bridge 当前状态，然后再看事件日志。",
+        )
+
     def test_wait_for_final_reply_returns_final_without_task_complete(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             rollout = Path(tmpdir) / "rollout.jsonl"

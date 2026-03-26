@@ -25,6 +25,7 @@ class _FakeRunner:
     def __init__(self) -> None:
         self.rollout_sizes: dict[str, int] = {}
         self.finals: dict[tuple[str, int], tuple[str, int]] = {}
+        self.progresses: dict[tuple[str, int], tuple[list[str], str, int]] = {}
         self.runtime_thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
 
     def try_live_session(self, state: BridgeState):
@@ -55,6 +56,23 @@ class _FakeRunner:
 
         return FinalScan(final_text=text, end_offset=end_offset)
 
+    def latest_mirror_since(self, *, thread_id: str, start_offset: int):
+        value = self.progresses.get((thread_id, start_offset))
+        if value is None:
+            value = self.finals.get((thread_id, start_offset))
+            if value is None:
+                from codex_wechat_bridge.live_session import MirrorScan
+
+                return MirrorScan(progress_texts=[], final_text="", end_offset=start_offset)
+            text, end_offset = value
+            from codex_wechat_bridge.live_session import MirrorScan
+
+            return MirrorScan(progress_texts=[], final_text=text, end_offset=end_offset)
+        progress_texts, final_text, end_offset = value
+        from codex_wechat_bridge.live_session import MirrorScan
+
+        return MirrorScan(progress_texts=progress_texts, final_text=final_text, end_offset=end_offset)
+
 
 class _TestDaemon(BridgeDaemon):
     def _start_mirror_thread(self) -> None:
@@ -71,6 +89,7 @@ class DaemonTests(unittest.TestCase):
             openclaw_profile="codex-wechat-bridge",
             canonical_tmux_session="codex",
             allowed_users=allowed_users,
+            progress_updates_default=False,
         )
 
     def test_authorized_sender_allowed_when_allowlist_empty(self) -> None:
@@ -164,6 +183,20 @@ class DaemonTests(unittest.TestCase):
             daemon._bind_peer("user@im.wechat", "ctx-1")
             self.assertEqual(state.get_mirror_offset(thread_id), 42)
 
+    def test_notify_command_toggles_progress_mode(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            self.assertEqual(daemon._notify_text("status"), "notify=final-only")
+            self.assertEqual(daemon._notify_text("on"), "notify=progress+final")
+            self.assertTrue(daemon.state.progress_updates_enabled)
+            self.assertEqual(daemon._notify_text("off"), "notify=final-only")
+            self.assertFalse(daemon.state.progress_updates_enabled)
+
     def test_mirror_desktop_final_back_to_wechat(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
@@ -186,6 +219,31 @@ class DaemonTests(unittest.TestCase):
             daemon._mirror_desktop_final_if_any()
             self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", "ctx-1", "DESKTOP_FINAL_OK"))
             self.assertEqual(state.get_mirror_offset(thread_id), 150)
+
+    def test_mirror_progress_first_when_enabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            state = BridgeState(
+                active_session_id=thread_id,
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                progress_updates_enabled=True,
+                mirror_offsets={thread_id: 100},
+                sessions={},
+            )
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            runner.progresses[(thread_id, 100)] = (["我先检查 bridge 当前状态。"], "FINAL_OK", 150)
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            daemon._mirror_desktop_final_if_any()
+            self.assertEqual(fake_wechat.sent[0], ("user@im.wechat", "ctx-1", "我先检查 bridge 当前状态。"))
+            self.assertEqual(fake_wechat.sent[1], ("user@im.wechat", "ctx-1", "FINAL_OK"))
+            self.assertEqual(state.get_last_progress_summary(thread_id), "我先检查 bridge 当前状态。")
 
     def test_mirror_follows_current_tmux_thread(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

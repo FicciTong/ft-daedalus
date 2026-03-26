@@ -14,6 +14,7 @@ class BridgeConfig:
     openclaw_profile: str
     canonical_tmux_session: str
     allowed_users: frozenset[str]
+    progress_updates_default: bool
     poll_timeout_ms: int = 35_000
     text_chunk_limit: int = 3500
 
@@ -59,6 +60,17 @@ def _load_env_file(path: Path) -> dict[str, str]:
     return values
 
 
+def _parse_bool(raw: str | None, *, default: bool = False) -> bool:
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def load_config() -> BridgeConfig:
     env_file = Path(
         os.environ.get(
@@ -101,6 +113,13 @@ def load_config() -> BridgeConfig:
             file_env.get("CODEX_WECHAT_BRIDGE_ALLOWED_USERS", ""),
         )
     )
+    progress_updates_default = _parse_bool(
+        os.environ.get(
+            "CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES",
+            file_env.get("CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES"),
+        ),
+        default=False,
+    )
     return BridgeConfig(
         codex_bin=codex_bin,
         account_file=account_file,
@@ -109,4 +128,5 @@ def load_config() -> BridgeConfig:
         openclaw_profile=openclaw_profile,
         canonical_tmux_session=canonical_tmux_session,
         allowed_users=allowed_users,
+        progress_updates_default=progress_updates_default,
     )

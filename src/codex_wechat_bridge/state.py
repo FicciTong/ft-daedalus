@@ -27,7 +27,9 @@ class BridgeState:
     get_updates_buf: str = ""
     bound_user_id: str | None = None
     bound_context_token: str | None = None
+    progress_updates_enabled: bool | None = None
     mirror_offsets: dict[str, int] = field(default_factory=dict)
+    last_progress_summaries: dict[str, str] = field(default_factory=dict)
     sessions: dict[str, SessionRecord] = field(default_factory=dict)
 
     @classmethod
@@ -55,9 +57,14 @@ class BridgeState:
             get_updates_buf=raw.get("get_updates_buf", ""),
             bound_user_id=raw.get("bound_user_id"),
             bound_context_token=raw.get("bound_context_token"),
+            progress_updates_enabled=raw.get("progress_updates_enabled"),
             mirror_offsets={
                 str(key): int(value)
                 for key, value in (raw.get("mirror_offsets", {}) or {}).items()
+            },
+            last_progress_summaries={
+                str(key): str(value)
+                for key, value in (raw.get("last_progress_summaries", {}) or {}).items()
             },
             sessions=sessions,
         )
@@ -71,7 +78,9 @@ class BridgeState:
                     "get_updates_buf": self.get_updates_buf,
                     "bound_user_id": self.bound_user_id,
                     "bound_context_token": self.bound_context_token,
+                    "progress_updates_enabled": self.progress_updates_enabled,
                     "mirror_offsets": self.mirror_offsets,
+                    "last_progress_summaries": self.last_progress_summaries,
                     "sessions": {
                         key: asdict(value) for key, value in self.sessions.items()
                     },
@@ -109,3 +118,9 @@ class BridgeState:
 
     def set_mirror_offset(self, thread_id: str, offset: int) -> None:
         self.mirror_offsets[thread_id] = int(offset)
+
+    def get_last_progress_summary(self, thread_id: str) -> str:
+        return str(self.last_progress_summaries.get(thread_id, ""))
+
+    def set_last_progress_summary(self, thread_id: str, summary: str) -> None:
+        self.last_progress_summaries[thread_id] = str(summary)

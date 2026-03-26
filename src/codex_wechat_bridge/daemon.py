@@ -17,6 +17,7 @@ HELP_TEXT = """可用命令:
 /help            显示帮助
 /status          查看当前 active session
 /health          查看 bridge / tmux / session 健康状态
+/notify on|off|status 进度提示开关（微信只收 commentary 第一 Progress 句）
 /sessions        列出 bridge 已知 sessions
 /new [label]     新建一个本地 Codex session 并切过去
 /switch <编号|id前缀|label|tmux> 切换 active session
@@ -51,6 +52,8 @@ class BridgeDaemon:
         self.state = state
         self._lock = threading.RLock()
         self.config.state_dir.mkdir(parents=True, exist_ok=True)
+        if self.state.progress_updates_enabled is None:
+            self.state.progress_updates_enabled = self.config.progress_updates_default
         self._bootstrap_runtime()
         self._start_mirror_thread()
 
@@ -113,6 +116,8 @@ class BridgeDaemon:
             return self._status_text()
         if command == "/health":
             return self._health_text()
+        if command == "/notify":
+            return self._notify_text(arg)
         if command == "/sessions":
             return self._sessions_text()
         if command == "/stop":
@@ -168,6 +173,24 @@ class BridgeDaemon:
                 f"attach={self.runner.attach_hint(refreshed)}"
             )
         return f"未知命令: {command}\n\n{HELP_TEXT}"
+
+    def _notify_text(self, arg: str) -> str:
+        normalized = arg.strip().lower()
+        if not normalized or normalized == "status":
+            return (
+                "notify=progress+final"
+                if self._progress_updates_enabled()
+                else "notify=final-only"
+            )
+        if normalized in {"on", "progress", "enable"}:
+            self.state.progress_updates_enabled = True
+            self._save_state()
+            return "notify=progress+final"
+        if normalized in {"off", "final", "disable"}:
+            self.state.progress_updates_enabled = False
+            self._save_state()
+            return "notify=final-only"
+        return "用法: /notify on|off|status"
 
     def _handle_prompt(self, body: str) -> str:
         active_record = self.runner.require_live_session(self.state)
@@ -251,6 +274,7 @@ class BridgeDaemon:
             f"label={record.label}\n"
             f"tmux={record.tmux_session}\n"
             f"cwd={self._short_cwd(record.cwd)}\n"
+            f"notify={'progress+final' if self._progress_updates_enabled() else 'final-only'}\n"
             f"attach={self.runner.attach_hint(record)}"
         )
 
@@ -299,6 +323,7 @@ class BridgeDaemon:
             f"thread={self._short_thread(runtime.thread_id) if runtime.thread_id else 'none'}",
             f"wechat={wechat_account}",
             f"access={access}",
+            f"notify={'progress+final' if self._progress_updates_enabled() else 'final-only'}",
         ]
         return "\n".join(lines)
 
@@ -332,7 +357,7 @@ class BridgeDaemon:
         context_token = self.state.bound_context_token
         if not thread_id or not to_user_id or not context_token:
             return
-        scan = self.runner.latest_final_since(
+        scan = self.runner.latest_mirror_since(
             thread_id=thread_id,
             start_offset=self.state.get_mirror_offset(thread_id),
         )
@@ -340,6 +365,19 @@ class BridgeDaemon:
             return
         self.state.set_mirror_offset(thread_id, scan.end_offset)
         self._save_state()
+        if self._progress_updates_enabled():
+            for progress in scan.progress_texts:
+                if not progress:
+                    continue
+                if progress == self.state.get_last_progress_summary(thread_id):
+                    continue
+                self.state.set_last_progress_summary(thread_id, progress)
+                self._save_state()
+                self._reply(to_user_id, context_token, progress)
+                self._log_event(
+                    "mirrored_progress",
+                    {"thread": self._short_thread(thread_id), "to": to_user_id},
+                )
         if not scan.final_text:
             return
         self._reply(to_user_id, context_token, scan.final_text)
@@ -364,6 +402,9 @@ class BridgeDaemon:
                 self._save_state()
             return runtime.thread_id
         return self.state.active_session_id
+
+    def _progress_updates_enabled(self) -> bool:
+        return bool(self.state.progress_updates_enabled)
 
     def _chunk_text(self, text: str) -> list[str]:
         text = text.strip()

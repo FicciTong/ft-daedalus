@@ -14,6 +14,7 @@ Desktop and mobile intentionally have **different output semantics**:
 
 - desktop `tmux codex` = **full live terminal stream**
 - WeChat = **final reply only**
+- optional WeChat progress mode = **commentary first sentence + final reply**
 
 ## Truthful boundaries
 
@@ -50,6 +51,8 @@ So:
   send any normal message or command once so the current chat context is bound
 - if you manually `resume` a different thread inside `tmux codex`, the mirror
   follows that **current canonical tmux thread**, not a stale saved thread id
+- if you want less waiting anxiety on mobile, enable `/notify on`; it sends only
+  the **first sentence** of each commentary update, never raw tool output
 
 ## Prerequisites
 
@@ -276,6 +279,7 @@ Commands:
 - `/help`
 - `/status`
 - `/health`
+- `/notify on|off|status`
 - `/sessions`
 - `/new [label]`
 - `/switch <index|thread_id-prefix|label|tmux>`
@@ -289,6 +293,7 @@ Examples:
 
 ```text
 /health
+/notify on
 /status
 /sessions
 /switch 1
@@ -300,6 +305,7 @@ Examples:
 Phone-friendly semantics:
 
 - `/health` = is the bridge / tmux / thread healthy right now
+- `/notify` = choose `final-only` or `progress+final`
 - `/status` = which live session am I currently attached to
 - `/sessions` = short switchable list, optimized for phone reading
 
@@ -336,6 +342,7 @@ canonical tmux owner.
 - `CODEX_WECHAT_BRIDGE_STATE_DIR`
 - `CODEX_WECHAT_BRIDGE_ACCOUNT_FILE`
 - `CODEX_WECHAT_BRIDGE_CODEX_BIN`
+- `CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES`
 - `CODEX_WECHAT_BRIDGE_OPENCLAW_PROFILE`
 - `CODEX_WECHAT_BRIDGE_TMUX_SESSION`
 

@@ -25,6 +25,7 @@ class ConfigTests(unittest.TestCase):
             env_file.write_text(
                 "CODEX_WECHAT_BRIDGE_ALLOWED_USERS=user-a@im.wechat,user-b@im.wechat\n"
                 "CODEX_WECHAT_BRIDGE_TMUX_SESSION=my-tmux\n"
+                "CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES=on\n"
             )
             with patch.dict(
                 os.environ,
@@ -37,6 +38,7 @@ class ConfigTests(unittest.TestCase):
                 frozenset({"user-a@im.wechat", "user-b@im.wechat"}),
             )
             self.assertEqual(config.canonical_tmux_session, "my-tmux")
+            self.assertTrue(config.progress_updates_default)
 
 
 if __name__ == "__main__":

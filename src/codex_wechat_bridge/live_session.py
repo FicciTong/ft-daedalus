@@ -36,6 +36,13 @@ class FinalScan:
 
 
 @dataclass(frozen=True)
+class MirrorScan:
+    progress_texts: list[str]
+    final_text: str
+    end_offset: int
+
+
+@dataclass(frozen=True)
 class LiveRuntimeStatus:
     tmux_session: str
     exists: bool
@@ -260,7 +267,7 @@ class LiveCodexSessionManager:
             return 0
         return int(rollout_file.stat().st_size)
 
-    def latest_final_since(self, *, thread_id: str, start_offset: int) -> FinalScan | None:
+    def latest_mirror_since(self, *, thread_id: str, start_offset: int) -> MirrorScan | None:
         rollout_file = self._resolve_rollout_file(thread_id)
         if rollout_file is None or not rollout_file.exists():
             return None
@@ -269,9 +276,10 @@ class LiveCodexSessionManager:
         if size < offset:
             offset = 0
         if size == offset:
-            return FinalScan(final_text="", end_offset=offset)
+            return MirrorScan(progress_texts=[], final_text="", end_offset=offset)
         carry = ""
         final_text = ""
+        progress_texts: list[str] = []
         with rollout_file.open("r", encoding="utf-8") as fh:
             fh.seek(offset)
             chunk = fh.read()
@@ -285,6 +293,9 @@ class LiveCodexSessionManager:
                 event = json.loads(raw)
             except json.JSONDecodeError:
                 continue
+            progress = self._extract_progress_text(event)
+            if progress:
+                progress_texts.append(progress)
             extracted = self._extract_final_text(event)
             if extracted:
                 final_text = extracted
@@ -294,10 +305,19 @@ class LiveCodexSessionManager:
             except json.JSONDecodeError:
                 event = None
             if event:
+                progress = self._extract_progress_text(event)
+                if progress:
+                    progress_texts.append(progress)
                 extracted = self._extract_final_text(event)
                 if extracted:
                     final_text = extracted
-        return FinalScan(final_text=final_text, end_offset=end_offset)
+        return MirrorScan(progress_texts=progress_texts, final_text=final_text, end_offset=end_offset)
+
+    def latest_final_since(self, *, thread_id: str, start_offset: int) -> FinalScan | None:
+        scan = self.latest_mirror_since(thread_id=thread_id, start_offset=start_offset)
+        if scan is None:
+            return None
+        return FinalScan(final_text=scan.final_text, end_offset=scan.end_offset)
 
     def _ensure_running_tmux(self, record: SessionRecord) -> str:
         tmux_session = record.tmux_session or self._tmux_name_for(record.thread_id)
@@ -531,6 +551,30 @@ class LiveCodexSessionManager:
                         parts.append(text)
             return "\n\n".join(parts).strip()
         return ""
+
+    def _extract_progress_text(self, event: dict) -> str:
+        if event.get("type") != "event_msg":
+            return ""
+        payload = event.get("payload") or {}
+        if payload.get("type") != "agent_message":
+            return ""
+        if payload.get("phase") != "commentary":
+            return ""
+        message = str(payload.get("message", "")).strip()
+        return self._first_progress_sentence(message)
+
+    def _first_progress_sentence(self, text: str) -> str:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        if not lines:
+            return ""
+        first = lines[0]
+        for punct in ("。", "！", "？", ".", "!", "?"):
+            idx = first.find(punct)
+            if idx != -1:
+                return first[: idx + 1].strip()
+        if len(first) <= 120:
+            return first
+        return first[:120].rstrip() + "…"
 
     def _wait_for_thread_id(self, tmux_session: str) -> str:
         deadline = time.monotonic() + 20.0
