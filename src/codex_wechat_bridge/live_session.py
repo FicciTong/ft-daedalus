@@ -230,17 +230,16 @@ class LiveCodexSessionManager:
             if rollout_file and rollout_file.exists()
             else 0
         )
-        baseline = self._capture_clean_text(tmux_session)
         self._inject_prompt(tmux_session, prompt)
         response_text = self._wait_for_final_reply(
             rollout_file=rollout_file,
             start_offset=rollout_offset,
         )
         if not response_text:
-            response_text = self._collect_response(
-                tmux_session=tmux_session,
-                baseline_text=baseline,
-                submitted_prompt=prompt,
+            response_text = (
+                "未捕获到 final reply。"
+                "桌面 `tmux codex` 仍然保留完整 live 输出；"
+                "如果这次回答还在继续生成，请回到电脑侧查看。"
             )
         thread_id = self._extract_thread_id(self._capture_clean_text(tmux_session)) or record.thread_id
         return LiveReply(thread_id=thread_id, response_text=response_text or "(无文本回复)")
@@ -340,13 +339,14 @@ class LiveCodexSessionManager:
     ) -> str:
         if rollout_file is None:
             return ""
-        deadline = time.monotonic() + 900.0
+        deadline = time.monotonic() + 300.0
         offset = start_offset
         carry = ""
         final_text = ""
         saw_task_complete = False
+        last_growth_at: float | None = None
         while time.monotonic() < deadline:
-            time.sleep(1.0)
+            time.sleep(0.5)
             if not rollout_file.exists():
                 continue
             size = rollout_file.stat().st_size
@@ -355,11 +355,18 @@ class LiveCodexSessionManager:
             if size == offset:
                 if final_text and saw_task_complete:
                     return final_text
+                if (
+                    final_text
+                    and last_growth_at is not None
+                    and time.monotonic() - last_growth_at >= 2.0
+                ):
+                    return final_text
                 continue
             with rollout_file.open("r", encoding="utf-8") as fh:
                 fh.seek(offset)
                 chunk = fh.read()
                 offset = fh.tell()
+            last_growth_at = time.monotonic()
             data = carry + chunk
             lines = data.splitlines()
             if data and not data.endswith("\n"):
