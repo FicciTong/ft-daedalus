@@ -46,18 +46,25 @@ def _send_bound_text(
         raise RuntimeError("No text to send.")
     wechat = client or WeChatClient(WeChatAccount.load(config.account_file))
     for chunk in chunks:
-        wechat.send_text(
-            to_user_id=state.bound_user_id,
-            context_token=state.bound_context_token,
-            text=chunk,
-        )
+        try:
+            wechat.send_text(
+                to_user_id=state.bound_user_id,
+                context_token=state.bound_context_token,
+                text=chunk,
+            )
+            event_kind = "relay_outgoing"
+        except Exception as exc:  # noqa: BLE001
+            state.enqueue_pending(to_user_id=state.bound_user_id, text=chunk)
+            state.save(config.state_file)
+            event_kind = "relay_queued"
+            chunk = f"{chunk[:400]} [queued: {str(exc)[:160]}]"
         config.state_dir.mkdir(parents=True, exist_ok=True)
         with config.event_log_file.open("a", encoding="utf-8") as fh:
             fh.write(
                 json.dumps(
                     {
                         "ts": datetime.now(UTC).isoformat(),
-                        "kind": "relay_outgoing",
+                        "kind": event_kind,
                         "payload": {
                             "to": state.bound_user_id,
                             "text": chunk[:400],

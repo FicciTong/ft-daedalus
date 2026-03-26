@@ -220,6 +220,10 @@ The bridge now has three built-in reliability layers:
    - if rollout JSONL misses a `final_answer`, the bridge falls back to the
      visible answer in the live `tmux codex` pane instead of only returning
      “未捕获到 final reply”
+4. **pending outbox**
+   - if delivery still fails, the message is queued locally
+   - when you next send any WeChat message (for example `/status`), the bridge
+     automatically flushes the queued progress/final messages back to you
 
 Last-resort operator recovery is still:
 

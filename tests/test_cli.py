@@ -19,6 +19,11 @@ class _FakeWeChat:
         return {}
 
 
+class _FailingWeChat:
+    def send_text(self, *, to_user_id: str, context_token: str | None, text: str):
+        raise RuntimeError("ret=-2")
+
+
 class CliTests(unittest.TestCase):
     def _make_config(self, state_dir: Path) -> BridgeConfig:
         return BridgeConfig(
@@ -66,6 +71,27 @@ class CliTests(unittest.TestCase):
                     "hello",
                     client=_FakeWeChat(),
                 )
+
+    def test_send_bound_text_queues_when_send_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+            )
+            rc = _send_bound_text(
+                self._make_config(Path(tmpdir)),
+                state,
+                "hello queued chat",
+                client=_FailingWeChat(),
+            )
+            self.assertEqual(rc, 0)
+            self.assertEqual(len(state.pending_outbox), 1)
+            self.assertEqual(state.pending_outbox[0]["to"], "user@im.wechat")
+            self.assertEqual(state.pending_outbox[0]["text"], "hello queued chat")
+            lines = (Path(tmpdir) / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(lines), 1)
+            event = json.loads(lines[0])
+            self.assertEqual(event["kind"], "relay_queued")
 
 
 if __name__ == "__main__":

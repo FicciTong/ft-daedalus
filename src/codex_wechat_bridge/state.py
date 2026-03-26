@@ -30,6 +30,7 @@ class BridgeState:
     progress_updates_enabled: bool | None = None
     mirror_offsets: dict[str, int] = field(default_factory=dict)
     last_progress_summaries: dict[str, str] = field(default_factory=dict)
+    pending_outbox: list[dict[str, str]] = field(default_factory=list)
     sessions: dict[str, SessionRecord] = field(default_factory=dict)
 
     @classmethod
@@ -66,6 +67,15 @@ class BridgeState:
                 str(key): str(value)
                 for key, value in (raw.get("last_progress_summaries", {}) or {}).items()
             },
+            pending_outbox=[
+                {
+                    "to": str(item.get("to", "")),
+                    "text": str(item.get("text", "")),
+                    "created_at": str(item.get("created_at", now_iso())),
+                }
+                for item in (raw.get("pending_outbox", []) or [])
+                if str(item.get("to", "")).strip() and str(item.get("text", "")).strip()
+            ],
             sessions=sessions,
         )
 
@@ -81,6 +91,7 @@ class BridgeState:
                     "progress_updates_enabled": self.progress_updates_enabled,
                     "mirror_offsets": self.mirror_offsets,
                     "last_progress_summaries": self.last_progress_summaries,
+                    "pending_outbox": self.pending_outbox,
                     "sessions": {
                         key: asdict(value) for key, value in self.sessions.items()
                     },
@@ -124,3 +135,27 @@ class BridgeState:
 
     def set_last_progress_summary(self, thread_id: str, summary: str) -> None:
         self.last_progress_summaries[thread_id] = str(summary)
+
+    def enqueue_pending(self, *, to_user_id: str, text: str) -> None:
+        body = text.strip()
+        if not to_user_id or not body:
+            return
+        self.pending_outbox.append(
+            {
+                "to": str(to_user_id),
+                "text": body,
+                "created_at": now_iso(),
+            }
+        )
+        self.pending_outbox = self.pending_outbox[-100:]
+
+    def pop_pending_for(self, to_user_id: str) -> list[dict[str, str]]:
+        matched: list[dict[str, str]] = []
+        kept: list[dict[str, str]] = []
+        for item in self.pending_outbox:
+            if item.get("to") == to_user_id:
+                matched.append(item)
+            else:
+                kept.append(item)
+        self.pending_outbox = kept
+        return matched

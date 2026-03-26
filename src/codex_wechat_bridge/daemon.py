@@ -376,10 +376,19 @@ class BridgeDaemon:
 
     def _reply(self, to_user_id: str, context_token: str | None, text: str) -> None:
         for chunk in self._chunk_text(text):
-            self.wechat.send_text(
-                to_user_id=to_user_id, context_token=context_token, text=chunk
-            )
-            self._log_event("outgoing", {"to": to_user_id, "text": chunk[:400]})
+            try:
+                self.wechat.send_text(
+                    to_user_id=to_user_id, context_token=context_token, text=chunk
+                )
+                self._log_event("outgoing", {"to": to_user_id, "text": chunk[:400]})
+            except Exception as exc:  # noqa: BLE001
+                self.state.enqueue_pending(to_user_id=to_user_id, text=chunk)
+                self._save_state()
+                self._log_event(
+                    "queued_outgoing",
+                    {"to": to_user_id, "text": chunk[:400], "error": str(exc)},
+                )
+                return
 
     def _start_mirror_thread(self) -> None:
         thread = threading.Thread(
@@ -529,6 +538,37 @@ class BridgeDaemon:
         self.state.bound_context_token = context_token
         if changed and self.state.active_session_id:
             self._sync_mirror_cursor(self.state.active_session_id)
+        self._save_state()
+        self._flush_pending_outbox(from_user_id, context_token)
+
+    def _flush_pending_outbox(self, to_user_id: str, context_token: str | None) -> None:
+        pending = self.state.pop_pending_for(to_user_id)
+        if not pending:
+            return
+        kept: list[dict[str, str]] = []
+        for item in pending:
+            text = item.get("text", "").strip()
+            if not text:
+                continue
+            try:
+                self.wechat.send_text(
+                    to_user_id=to_user_id,
+                    context_token=context_token,
+                    text=text,
+                )
+                self._log_event("outgoing", {"to": to_user_id, "text": text[:400]})
+                self._log_event(
+                    "flushed_outgoing",
+                    {"to": to_user_id, "text": text[:400]},
+                )
+            except Exception as exc:  # noqa: BLE001
+                kept.append(item)
+                self._log_event(
+                    "queued_outgoing",
+                    {"to": to_user_id, "text": text[:400], "error": str(exc)},
+                )
+                break
+        self.state.pending_outbox = kept + self.state.pending_outbox
         self._save_state()
 
     def _sync_mirror_cursor(self, thread_id: str) -> None:

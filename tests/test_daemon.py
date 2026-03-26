@@ -15,8 +15,11 @@ class _FakeWeChat:
     def __init__(self) -> None:
         self.account = type("Account", (), {"account_id": "test-bot"})()
         self.sent: list[tuple[str, str | None, str]] = []
+        self.fail = False
 
     def send_text(self, *, to_user_id: str, context_token: str | None, text: str):
+        if self.fail:
+            raise RuntimeError("ret=-2")
         self.sent.append((to_user_id, context_token, text))
         return {}
 
@@ -185,6 +188,31 @@ class DaemonTests(unittest.TestCase):
             )
             daemon._bind_peer("user@im.wechat", "ctx-1")
             self.assertEqual(state.get_mirror_offset(thread_id), 42)
+
+    def test_bind_peer_flushes_pending_outbox(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            state = BridgeState(
+                active_session_id=thread_id,
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "PENDING_FINAL_OK",
+                        "created_at": "2026-03-26T00:00:00+00:00",
+                    }
+                ],
+            )
+            runner = _FakeRunner()
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            daemon._bind_peer("user@im.wechat", "ctx-1")
+            self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", "ctx-1", "PENDING_FINAL_OK"))
+            self.assertEqual(state.pending_outbox, [])
 
     def test_notify_command_toggles_progress_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

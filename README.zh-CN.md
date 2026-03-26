@@ -240,6 +240,9 @@ systemctl --user restart codex-wechat-bridge
 3. **final reply 兜底**
    - 如果 rollout JSONL 没抓到 `final_answer`，bridge 会退回 live `tmux codex` pane 里的可见答复
    - 不再只回“未捕获到 final reply”
+4. **pending outbox**
+   - 如果这样还是发不出去，消息会先落到本地 outbox
+   - 你下次任意发一条微信消息进来（例如 `/status`），bridge 会自动把排队的 progress/final 补发给你
 
 最后兜底的 operator 操作还是：
 
