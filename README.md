@@ -162,6 +162,15 @@ By default the bridge stores its imported account at:
 If `doctor` later reports `errcode=-14` / session timeout, just run
 `uv run codex-wechat-bridge auth-openclaw` again.
 
+If outbound sends later fail with `ret=-2`, the bridge now automatically retries
+once **without** `context_token`. This keeps delivery alive even when the old
+chat context expires. If you still do not see a message, send:
+
+```bash
+/status
+/recent 6
+```
+
 If you intentionally want a different OpenClaw profile:
 
 ```bash
@@ -195,6 +204,28 @@ After changing the env file:
 
 ```bash
 systemctl --user restart codex-wechat-bridge
+```
+
+## 🛟 Reliability Guardrails
+
+The bridge now has three built-in reliability layers:
+
+1. **systemd watchdog**
+   - the service uses `Type=notify` + `WatchdogSec=90`
+   - if the WeChat long-poll loop hangs instead of crashing, systemd restarts it
+2. **stale context retry**
+   - if WeChat rejects a send with `ret=-2`, the bridge retries once without
+     `context_token`
+3. **final-reply fallback**
+   - if rollout JSONL misses a `final_answer`, the bridge falls back to the
+     visible answer in the live `tmux codex` pane instead of only returning
+     “未捕获到 final reply”
+
+Last-resort operator recovery is still:
+
+```bash
+/status
+/recent 6
 ```
 
 ## 🖥️ Canonical Desktop Session

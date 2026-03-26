@@ -100,11 +100,27 @@ class WeChatClient:
         response = self._post("ilink/bot/sendmessage", payload, timeout=20.0)
         errcode = response.get("errcode")
         ret = response.get("ret")
-        if errcode not in (None, 0) or ret not in (None, 0):
-            raise RuntimeError(
-                f"WeChat send failed: ret={ret} errcode={errcode} errmsg={response.get('errmsg')}"
-            )
-        return response
+        if errcode in (None, 0) and ret in (None, 0):
+            return response
+        # Official WeChat chat contexts can expire even when the user/chat binding is
+        # still valid. Retry once without the context token so delivery can continue
+        # instead of forcing a manual rebind.
+        if ret == -2 and context_token:
+            retry_payload = {
+                "msg": {
+                    **payload["msg"],
+                    "context_token": None,
+                },
+                "base_info": payload["base_info"],
+            }
+            response = self._post("ilink/bot/sendmessage", retry_payload, timeout=20.0)
+            errcode = response.get("errcode")
+            ret = response.get("ret")
+            if errcode in (None, 0) and ret in (None, 0):
+                return response
+        raise RuntimeError(
+            f"WeChat send failed: ret={ret} errcode={errcode} errmsg={response.get('errmsg')}"
+        )
 
 
 def body_from_item_list(item_list: list[dict[str, Any]] | None) -> str:

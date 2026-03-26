@@ -183,6 +183,17 @@ uv run codex-wechat-bridge auth-openclaw
 uv run codex-wechat-bridge auth-openclaw
 ```
 
+如果后面微信发不出去并出现 `ret=-2`，bridge 现在会自动再试一次：
+- 第二次发送会去掉 `context_token`
+- 这样旧聊天上下文过期时，消息也尽量不要直接丢
+
+如果你还是没看到，先发：
+
+```bash
+/status
+/recent 6
+```
+
 如果你要故意改 OpenClaw profile：
 
 ```bash
@@ -215,6 +226,26 @@ CODEX_WECHAT_BRIDGE_ALLOWED_USERS=user-a@im.wechat,user-b@im.wechat
 
 ```bash
 systemctl --user restart codex-wechat-bridge
+```
+
+## 🛟 可靠性保障
+
+现在这套 bridge 内置了三层保障：
+
+1. **systemd watchdog**
+   - 服务采用 `Type=notify` + `WatchdogSec=90`
+   - 如果微信长轮询卡死但进程没退出，systemd 会自动重启
+2. **过期 context 自动重发**
+   - 如果微信发送返回 `ret=-2`，bridge 会自动去掉 `context_token` 再试一次
+3. **final reply 兜底**
+   - 如果 rollout JSONL 没抓到 `final_answer`，bridge 会退回 live `tmux codex` pane 里的可见答复
+   - 不再只回“未捕获到 final reply”
+
+最后兜底的 operator 操作还是：
+
+```bash
+/status
+/recent 6
 ```
 
 ## 🖥️ canonical 桌面会话

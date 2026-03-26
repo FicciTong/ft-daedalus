@@ -78,6 +78,9 @@ class _TestDaemon(BridgeDaemon):
     def _start_mirror_thread(self) -> None:
         return None
 
+    def _start_watchdog_thread(self) -> None:
+        return None
+
 
 class DaemonTests(unittest.TestCase):
     def _make_config(self, state_dir: Path, allowed_users: frozenset[str]) -> BridgeConfig:

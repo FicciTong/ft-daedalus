@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from codex_wechat_bridge.live_session import LiveCodexSessionManager
+from codex_wechat_bridge.state import SessionRecord
 
 
 class LiveSessionTests(unittest.TestCase):
@@ -81,6 +82,33 @@ class LiveSessionTests(unittest.TestCase):
                         start_offset=0,
                     )
             self.assertEqual(reply, "WECHAT_FINAL_ONLY_OK")
+
+    def test_send_prompt_falls_back_to_visible_pane_reply_when_final_missing(self) -> None:
+        record = SessionRecord(
+            thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+            label="attached-last",
+            cwd="/tmp",
+            source="tmux-live",
+            created_at="2026-03-26T00:00:00+00:00",
+            updated_at="2026-03-26T00:00:00+00:00",
+            tmux_session="codex",
+        )
+        with patch.object(self.runner, "_ensure_running_tmux", return_value="codex"):
+            with patch.object(self.runner, "_capture_clean_text", side_effect=["baseline", "baseline"]):
+                with patch.object(self.runner, "_resolve_rollout_file", return_value=None):
+                    with patch.object(self.runner, "_inject_prompt") as inject_mock:
+                        with patch.object(self.runner, "_wait_for_final_reply", return_value=""):
+                            with patch.object(
+                                self.runner,
+                                "_collect_response",
+                                return_value="VISIBLE_REPLY_OK",
+                            ):
+                                reply = self.runner.send_prompt(
+                                    record=record,
+                                    prompt="hello",
+                                )
+        inject_mock.assert_called_once()
+        self.assertEqual(reply.response_text, "VISIBLE_REPLY_OK")
 
 
 if __name__ == "__main__":

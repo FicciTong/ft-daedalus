@@ -237,6 +237,7 @@ class LiveCodexSessionManager:
 
     def send_prompt(self, *, record: SessionRecord, prompt: str) -> LiveReply:
         tmux_session = self._ensure_running_tmux(record)
+        baseline_text = self._capture_clean_text(tmux_session)
         rollout_file = self._resolve_rollout_file(record.thread_id)
         rollout_offset = (
             rollout_file.stat().st_size
@@ -248,6 +249,12 @@ class LiveCodexSessionManager:
             rollout_file=rollout_file,
             start_offset=rollout_offset,
         )
+        if not response_text:
+            response_text = self._collect_response(
+                tmux_session=tmux_session,
+                baseline_text=baseline_text,
+                submitted_prompt=prompt,
+            )
         if not response_text:
             response_text = (
                 "未捕获到 final reply。"
