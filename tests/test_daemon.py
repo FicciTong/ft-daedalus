@@ -364,8 +364,7 @@ class DaemonTests(unittest.TestCase):
             daemon._handle_incoming(incoming)
             self.assertEqual(daemon.state.bound_user_id, "user@im.wechat")
             self.assertEqual(daemon.state.bound_context_token, "ctx-voice")
-            self.assertIn("无转写", fake_wechat.sent[-1][2])
-            self.assertTrue(fake_wechat.sent[-1][2].endswith("SYSTEM"))
+            self.assertEqual(fake_wechat.sent[-1][2], "⚙️ 收到语音，但无转写。")
 
     def test_voice_without_message_type_is_still_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -440,7 +439,7 @@ class DaemonTests(unittest.TestCase):
                 (
                     "user@im.wechat",
                     "ctx-text",
-                    "已注入 terminal。 SYSTEM",
+                    "⚙️ 已注入 terminal。",
                 ),
             )
 
@@ -522,7 +521,7 @@ class DaemonTests(unittest.TestCase):
             daemon._mirror_desktop_final_if_any()
             self.assertEqual(
                 fake_wechat.sent[-1],
-                ("user@im.wechat", None, "DESKTOP_FINAL_OK\n\nFINAL"),
+                ("user@im.wechat", None, "✅ DESKTOP_FINAL_OK"),
             )
             self.assertEqual(state.get_mirror_offset(thread_id), 150)
 
@@ -549,11 +548,11 @@ class DaemonTests(unittest.TestCase):
             daemon._mirror_desktop_final_if_any()
             self.assertEqual(
                 fake_wechat.sent[0],
-                ("user@im.wechat", None, "我先检查 bridge 当前状态。"),
+                ("user@im.wechat", None, "⏳ 我先检查 bridge 当前状态。"),
             )
             self.assertEqual(
                 fake_wechat.sent[1],
-                ("user@im.wechat", None, "FINAL_OK\n\nFINAL"),
+                ("user@im.wechat", None, "✅ FINAL_OK"),
             )
             self.assertEqual(state.get_last_progress_summary(thread_id), "我先检查 bridge 当前状态。")
 
@@ -593,7 +592,7 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(state.sessions[new_thread].tmux_session, "codex")
             self.assertEqual(
                 fake_wechat.sent[-1],
-                ("user@im.wechat", None, "NEW_THREAD_FINAL_OK\n\nFINAL"),
+                ("user@im.wechat", None, "✅ NEW_THREAD_FINAL_OK"),
             )
             self.assertEqual(state.get_mirror_offset(new_thread), 30)
 
@@ -617,7 +616,7 @@ class DaemonTests(unittest.TestCase):
             )
             assert incoming is not None
             daemon._handle_incoming(incoming)
-            self.assertTrue(fake_wechat.sent[-1][2].endswith("SYSTEM"))
+            self.assertTrue(fake_wechat.sent[-1][2].startswith("⚙️ "))
 
     def test_final_and_system_tags_are_mutually_exclusive(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -637,8 +636,14 @@ class DaemonTests(unittest.TestCase):
                 kind="progress",
                 origin="wechat-prompt-submitted",
             )
-            self.assertEqual(final_text, "规则已收口。\n\nFINAL")
-            self.assertEqual(system_text, "已注入 terminal。 SYSTEM")
+            progress_text = daemon._render_reply_text(
+                "我先检查 bridge 当前状态。",
+                kind="progress",
+                origin="desktop-mirror",
+            )
+            self.assertEqual(final_text, "✅ 规则已收口。")
+            self.assertEqual(system_text, "⚙️ 已注入 terminal。")
+            self.assertEqual(progress_text, "⏳ 我先检查 bridge 当前状态。")
 
 
 if __name__ == "__main__":

@@ -29,11 +29,11 @@ If you want quiet mode on mobile:
 /notify off
 ```
 
-WeChat message tags:
+WeChat message icons:
 
-- `SYSTEM` = bridge / service / binding / command notices
-- `FINAL` = the round is actually done
-- progress commentary stays untagged by default
+- `⚙️` = bridge / service / binding / command notices
+- `⏳` = progress commentary
+- `✅` = the round is actually done
 
 ## 🧭 Truthful Boundaries
 

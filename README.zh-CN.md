@@ -33,11 +33,11 @@ OpenClaw Weixin 通道（`@tencent-weixin/openclaw-weixin`）。
 /notify off
 ```
 
-微信消息标签：
+微信消息图标：
 
-- `SYSTEM` = bridge / 服务 / 绑定 / 命令提示
-- `FINAL` = 这一轮真的结束了
-- progress commentary 默认不加标签
+- `⚙️` = bridge / 服务 / 绑定 / 命令提示
+- `⏳` = progress commentary
+- `✅` = 这一轮真的结束了
 
 ## 🧭 这套东西的真实边界
 

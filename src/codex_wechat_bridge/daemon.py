@@ -533,9 +533,11 @@ class BridgeDaemon:
         if not body:
             body = "(空回复)"
         if kind == "final":
-            return self._append_tag(body, "FINAL")
+            return self._prepend_icon(body, "✅")
         if self._is_system_reply(kind=kind, origin=origin):
-            return self._append_tag(body, "SYSTEM", inline=True)
+            return self._prepend_icon(body, "⚙️")
+        if kind == "progress":
+            return self._prepend_icon(body, "⏳")
         return body
 
     def _is_system_reply(self, *, kind: str, origin: str) -> bool:
@@ -549,16 +551,17 @@ class BridgeDaemon:
             "wechat-prompt-error",
         }
 
-    def _append_tag(self, text: str, tag: str, *, inline: bool = False) -> str:
+    def _prepend_icon(self, text: str, icon: str) -> str:
         normalized = text.rstrip()
-        if normalized.endswith(f" {tag}") or normalized.endswith(tag):
+        if normalized.startswith(f"{icon} ") or normalized == icon:
             return normalized
-        if inline:
-            return f"{normalized} {tag}"
-        return f"{normalized}\n\n{tag}"
+        return f"{icon} {normalized}"
 
     def _strip_known_tags(self, text: str) -> str:
         normalized = text.rstrip()
+        for icon in ("⚙️", "⏳", "✅"):
+            if normalized.startswith(f"{icon} "):
+                normalized = normalized[len(icon) + 1 :].lstrip()
         for known in ("SYSTEM", "FINAL"):
             for suffix in (f"\n\n{known}", f" {known}"):
                 if normalized.endswith(suffix):
