@@ -302,6 +302,14 @@ journalctl --user -u codex-wechat-bridge -n 100 --no-pager
 - `/attach-last`
 - `/stop`
 
+如果是脚本、桌面侧任务、或者像我现在这种不在 bridge owner 里的直连会话，
+但你仍然想把一段消息主动推到**当前已绑定**的微信聊天窗口，可以用：
+
+```bash
+cd ~/dev/codex-wechat-bridge
+uv run codex-wechat-bridge send-bound "hello from desktop"
+```
+
 普通文本消息会送进当前 `tmux codex` 里正在活着的 Codex thread。
 
 示例：
@@ -323,6 +331,7 @@ journalctl --user -u codex-wechat-bridge -n 100 --no-pager
 - `/notify` = 切 `progress+final` 或 `final-only`
 - `/status` = 当前接的是哪个 live session
 - `/sessions` = 手机可读的短列表，用来快速 `/switch 1`
+- `send-bound` = 桌面/脚本侧显式把一段消息推到当前绑定微信会话
 
 ## 🗓️ 日常使用建议
 

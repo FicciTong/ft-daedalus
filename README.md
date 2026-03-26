@@ -290,6 +290,14 @@ Commands:
 - `/attach-last`
 - `/stop`
 
+For scripts or non-bridge sessions that still need to push a message into the
+currently bound WeChat chat, use:
+
+```bash
+cd ~/dev/codex-wechat-bridge
+uv run codex-wechat-bridge send-bound "hello from desktop"
+```
+
 Plain text messages are sent to whatever Codex thread is **currently active
 inside `tmux codex`**.
 
@@ -312,6 +320,8 @@ Phone-friendly semantics:
 - `/notify` = choose `progress+final` or `final-only`
 - `/status` = which live session am I currently attached to
 - `/sessions` = short switchable list, optimized for phone reading
+- `send-bound` = explicit desktop/session-side push into the current bound
+  WeChat chat
 
 ## 🗓️ Daily Operating Guide
 

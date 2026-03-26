@@ -4,6 +4,7 @@ import argparse
 import json
 import subprocess
 import shutil
+import sys
 from pathlib import Path
 
 from .config import load_config
@@ -16,12 +17,58 @@ from .wechat_api import WeChatAccount, WeChatClient
 OPENCLAW_WEIXIN_PLUGIN_SPEC = "@tencent-weixin/openclaw-weixin"
 
 
+def _chunk_text(text: str, limit: int) -> list[str]:
+    body = text.strip()
+    if not body:
+        return []
+    if len(body) <= limit:
+        return [body]
+    chunks: list[str] = []
+    current = body
+    while current:
+        chunks.append(current[:limit])
+        current = current[limit:]
+    return chunks
+
+
+def _send_bound_text(
+    config,
+    state: BridgeState,
+    text: str,
+    *,
+    client: WeChatClient | None = None,
+) -> int:
+    if not state.bound_user_id or not state.bound_context_token:
+        raise RuntimeError("No bound WeChat chat context. Send /status from WeChat first.")
+    chunks = _chunk_text(text, config.text_chunk_limit)
+    if not chunks:
+        raise RuntimeError("No text to send.")
+    wechat = client or WeChatClient(WeChatAccount.load(config.account_file))
+    for chunk in chunks:
+        wechat.send_text(
+            to_user_id=state.bound_user_id,
+            context_token=state.bound_context_token,
+            text=chunk,
+        )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="codex-wechat-bridge")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run", help="Run the WeChat bridge daemon")
     sub.add_parser("status", help="Print current bridge state")
     sub.add_parser("doctor", help="Check bridge prerequisites and current auth health")
+    send_bound = sub.add_parser(
+        "send-bound",
+        help="Send text to the currently bound WeChat chat context",
+    )
+    send_bound.add_argument("text", nargs="?", help="Text to send")
+    send_bound.add_argument(
+        "--stdin",
+        action="store_true",
+        help="Read text from stdin",
+    )
     sub.add_parser(
         "auth-openclaw",
         help="Run official openclaw-weixin login under the dedicated bridge profile, then import the account",
@@ -198,6 +245,10 @@ def main() -> int:
         print(f"latest_codex_thread={runner.find_latest_thread()}")
         print(f"canonical_tmux_session={config.canonical_tmux_session}")
         return 0
+
+    if args.command == "send-bound":
+        text = sys.stdin.read() if args.stdin else (args.text or "")
+        return _send_bound_text(config, state, text)
 
     account = WeChatAccount.load(config.account_file)
     daemon = BridgeDaemon(
