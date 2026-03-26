@@ -118,7 +118,7 @@ def load_config() -> BridgeConfig:
             "CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES",
             file_env.get("CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES"),
         ),
-        default=False,
+        default=True,
     )
     return BridgeConfig(
         codex_bin=codex_bin,

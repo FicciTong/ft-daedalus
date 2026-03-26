@@ -40,6 +40,18 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.canonical_tmux_session, "my-tmux")
             self.assertTrue(config.progress_updates_default)
 
+    def test_load_config_defaults_progress_updates_on(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file = Path(tmpdir) / "bridge.env"
+            env_file.write_text("")
+            with patch.dict(
+                os.environ,
+                {"CODEX_WECHAT_BRIDGE_ENV_FILE": str(env_file)},
+                clear=False,
+            ):
+                config = load_config()
+            self.assertTrue(config.progress_updates_default)
+
 
 if __name__ == "__main__":
     unittest.main()

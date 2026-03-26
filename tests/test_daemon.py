@@ -89,7 +89,7 @@ class DaemonTests(unittest.TestCase):
             openclaw_profile="codex-wechat-bridge",
             canonical_tmux_session="codex",
             allowed_users=allowed_users,
-            progress_updates_default=False,
+            progress_updates_default=True,
         )
 
     def test_authorized_sender_allowed_when_allowlist_empty(self) -> None:
@@ -191,7 +191,7 @@ class DaemonTests(unittest.TestCase):
                 runner=_FakeRunner(),
                 state=BridgeState(),
             )
-            self.assertEqual(daemon._notify_text("status"), "notify=final-only")
+            self.assertEqual(daemon._notify_text("status"), "notify=progress+final")
             self.assertEqual(daemon._notify_text("on"), "notify=progress+final")
             self.assertTrue(daemon.state.progress_updates_enabled)
             self.assertEqual(daemon._notify_text("off"), "notify=final-only")

@@ -40,6 +40,10 @@ CODEX_WECHAT_BRIDGE_TMUX_SESSION=codex
 # Optional: lock the bridge to a specific WeChat sender or senders.
 # Comma-separated values, for example:
 # CODEX_WECHAT_BRIDGE_ALLOWED_USERS=o9cq80y6O1DAYqilESlM_NbeqtTc@im.wechat
+
+# WeChat mobile defaults to progress+final. Use /notify off later if you only
+# want final replies.
+CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES=on
 EOF
 fi
 
