@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+import threading
+import time
 
 from .config import BridgeConfig
 from .live_session import LiveCodexSessionManager
@@ -47,46 +49,51 @@ class BridgeDaemon:
         self.wechat = wechat
         self.runner = runner
         self.state = state
+        self._lock = threading.RLock()
         self.config.state_dir.mkdir(parents=True, exist_ok=True)
         self._bootstrap_runtime()
+        self._start_mirror_thread()
 
     def run_forever(self) -> None:
         while True:
             response = self.wechat.get_updates(self.state.get_updates_buf)
-            self.state.get_updates_buf = response.get(
-                "get_updates_buf", self.state.get_updates_buf
-            )
-            self._save_state()
+            with self._lock:
+                self.state.get_updates_buf = response.get(
+                    "get_updates_buf", self.state.get_updates_buf
+                )
+                self._save_state()
             for raw in response.get("msgs", []) or []:
                 incoming = self._parse_incoming(raw)
                 if incoming is None:
                     continue
-                self._log_event("incoming", {"body": incoming.body, "from": incoming.from_user_id})
-                if not self._is_authorized_sender(incoming.from_user_id):
-                    self._reply(
-                        incoming.from_user_id,
-                        incoming.context_token,
-                        "❌ 当前微信账号未被授权控制此 bridge。",
-                    )
-                    self._log_event(
-                        "unauthorized",
-                        {"from": incoming.from_user_id},
-                    )
-                    continue
-                try:
-                    self._handle_incoming(incoming)
-                except Exception as exc:  # noqa: BLE001
-                    self._reply(
-                        incoming.from_user_id,
-                        incoming.context_token,
-                        f"❌ bridge error: {str(exc)[:300]}",
-                    )
-                    self._log_event("error", {"error": str(exc)})
+                with self._lock:
+                    self._log_event("incoming", {"body": incoming.body, "from": incoming.from_user_id})
+                    if not self._is_authorized_sender(incoming.from_user_id):
+                        self._reply(
+                            incoming.from_user_id,
+                            incoming.context_token,
+                            "❌ 当前微信账号未被授权控制此 bridge。",
+                        )
+                        self._log_event(
+                            "unauthorized",
+                            {"from": incoming.from_user_id},
+                        )
+                        continue
+                    try:
+                        self._handle_incoming(incoming)
+                    except Exception as exc:  # noqa: BLE001
+                        self._reply(
+                            incoming.from_user_id,
+                            incoming.context_token,
+                            f"❌ bridge error: {str(exc)[:300]}",
+                        )
+                        self._log_event("error", {"error": str(exc)})
 
     def _handle_incoming(self, incoming: IncomingMessage) -> None:
         body = incoming.body.strip()
         if not body:
             return
+        self._bind_peer(incoming.from_user_id, incoming.context_token)
         if body.startswith("/") or body.startswith("\\"):
             reply = self._handle_command(body)
         else:
@@ -117,6 +124,7 @@ class BridgeDaemon:
             if not record:
                 return "没有找到最近的 ft-cosmos 本地 Codex session。"
             self.state.active_session_id = record.thread_id
+            self._sync_mirror_cursor(record.thread_id)
             self._save_state()
             return (
                 f"已接管最近 session:\n{record.thread_id}\n"
@@ -128,6 +136,7 @@ class BridgeDaemon:
             label = arg or f"session-{datetime.now(UTC).strftime('%m%d-%H%M%S')}"
             record = self.runner.create_new_session(state=self.state, label=label)
             self.state.active_session_id = record.thread_id
+            self._sync_mirror_cursor(record.thread_id)
             self._save_state()
             return (
                 f"已新建并切换到 session:\n{record.thread_id}\n"
@@ -150,6 +159,7 @@ class BridgeDaemon:
                 source=record.source,
             )
             refreshed.updated_at = datetime.now(UTC).isoformat()
+            self._sync_mirror_cursor(refreshed.thread_id)
             self._save_state()
             return (
                 f"已切换到 session:\n{match}\n"
@@ -170,6 +180,7 @@ class BridgeDaemon:
             tmux_session=active_record.tmux_session,
         )
         self.state.active_session_id = result.thread_id
+        self._sync_mirror_cursor(result.thread_id)
         self._save_state()
         return result.response_text or "(无文本回复)"
 
@@ -298,6 +309,45 @@ class BridgeDaemon:
             )
             self._log_event("outgoing", {"to": to_user_id, "text": chunk[:400]})
 
+    def _start_mirror_thread(self) -> None:
+        thread = threading.Thread(
+            target=self._mirror_loop,
+            name="codex-wechat-final-mirror",
+            daemon=True,
+        )
+        thread.start()
+
+    def _mirror_loop(self) -> None:
+        while True:
+            time.sleep(1.0)
+            with self._lock:
+                try:
+                    self._mirror_desktop_final_if_any()
+                except Exception as exc:  # noqa: BLE001
+                    self._log_event("mirror_error", {"error": str(exc)})
+
+    def _mirror_desktop_final_if_any(self) -> None:
+        thread_id = self.state.active_session_id
+        to_user_id = self.state.bound_user_id
+        context_token = self.state.bound_context_token
+        if not thread_id or not to_user_id or not context_token:
+            return
+        scan = self.runner.latest_final_since(
+            thread_id=thread_id,
+            start_offset=self.state.get_mirror_offset(thread_id),
+        )
+        if scan is None:
+            return
+        self.state.set_mirror_offset(thread_id, scan.end_offset)
+        self._save_state()
+        if not scan.final_text:
+            return
+        self._reply(to_user_id, context_token, scan.final_text)
+        self._log_event(
+            "mirrored_final",
+            {"thread": self._short_thread(thread_id), "to": to_user_id},
+        )
+
     def _chunk_text(self, text: str) -> list[str]:
         text = text.strip()
         if not text:
@@ -339,6 +389,20 @@ class BridgeDaemon:
         if not self.config.allowed_users:
             return True
         return from_user_id in self.config.allowed_users
+
+    def _bind_peer(self, from_user_id: str, context_token: str | None) -> None:
+        changed = (
+            self.state.bound_user_id != from_user_id
+            or self.state.bound_context_token != context_token
+        )
+        self.state.bound_user_id = from_user_id
+        self.state.bound_context_token = context_token
+        if changed and self.state.active_session_id:
+            self._sync_mirror_cursor(self.state.active_session_id)
+        self._save_state()
+
+    def _sync_mirror_cursor(self, thread_id: str) -> None:
+        self.state.set_mirror_offset(thread_id, self.runner.rollout_size(thread_id))
 
     def _save_state(self) -> None:
         self.state.save(self.config.state_file)

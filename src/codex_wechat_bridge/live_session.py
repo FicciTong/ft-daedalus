@@ -30,6 +30,12 @@ class LiveReply:
 
 
 @dataclass(frozen=True)
+class FinalScan:
+    final_text: str
+    end_offset: int
+
+
+@dataclass(frozen=True)
 class LiveRuntimeStatus:
     tmux_session: str
     exists: bool
@@ -247,6 +253,51 @@ class LiveCodexSessionManager:
     def attach_hint(self, record: SessionRecord) -> str:
         tmux_session = record.tmux_session or self._tmux_name_for(record.thread_id)
         return f"tmux attach -t {tmux_session}"
+
+    def rollout_size(self, thread_id: str) -> int:
+        rollout_file = self._resolve_rollout_file(thread_id)
+        if rollout_file is None or not rollout_file.exists():
+            return 0
+        return int(rollout_file.stat().st_size)
+
+    def latest_final_since(self, *, thread_id: str, start_offset: int) -> FinalScan | None:
+        rollout_file = self._resolve_rollout_file(thread_id)
+        if rollout_file is None or not rollout_file.exists():
+            return None
+        offset = int(start_offset)
+        size = rollout_file.stat().st_size
+        if size < offset:
+            offset = 0
+        if size == offset:
+            return FinalScan(final_text="", end_offset=offset)
+        carry = ""
+        final_text = ""
+        with rollout_file.open("r", encoding="utf-8") as fh:
+            fh.seek(offset)
+            chunk = fh.read()
+            end_offset = fh.tell()
+        data = carry + chunk
+        lines = data.splitlines()
+        if data and not data.endswith("\n"):
+            carry = lines.pop() if lines else data
+        for raw in lines:
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            extracted = self._extract_final_text(event)
+            if extracted:
+                final_text = extracted
+        if carry:
+            try:
+                event = json.loads(carry)
+            except json.JSONDecodeError:
+                event = None
+            if event:
+                extracted = self._extract_final_text(event)
+                if extracted:
+                    final_text = extracted
+        return FinalScan(final_text=final_text, end_offset=end_offset)
 
     def _ensure_running_tmux(self, record: SessionRecord) -> str:
         tmux_session = record.tmux_session or self._tmux_name_for(record.thread_id)

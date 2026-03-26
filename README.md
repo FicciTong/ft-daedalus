@@ -39,11 +39,15 @@ There are two distinct surfaces:
    - sends messages into that same local Codex session
    - receives **final reply only**
    - does **not** receive thinking / commentary / bottom status bar noise
+   - after the current WeChat chat is bound, desktop-originated final replies
+     from that same active session are also mirrored back to WeChat
 
 So:
 
 - if you want the full live stream, look at desktop tmux
 - if you want remote control from your phone, use WeChat
+- if you want desktop-originated final replies to come back to WeChat, first
+  send any normal message or command once so the current chat context is bound
 
 ## Prerequisites
 

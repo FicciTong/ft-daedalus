@@ -25,6 +25,9 @@ class SessionRecord:
 class BridgeState:
     active_session_id: str | None = None
     get_updates_buf: str = ""
+    bound_user_id: str | None = None
+    bound_context_token: str | None = None
+    mirror_offsets: dict[str, int] = field(default_factory=dict)
     sessions: dict[str, SessionRecord] = field(default_factory=dict)
 
     @classmethod
@@ -50,6 +53,12 @@ class BridgeState:
         return cls(
             active_session_id=raw.get("active_session_id"),
             get_updates_buf=raw.get("get_updates_buf", ""),
+            bound_user_id=raw.get("bound_user_id"),
+            bound_context_token=raw.get("bound_context_token"),
+            mirror_offsets={
+                str(key): int(value)
+                for key, value in (raw.get("mirror_offsets", {}) or {}).items()
+            },
             sessions=sessions,
         )
 
@@ -60,6 +69,9 @@ class BridgeState:
                 {
                     "active_session_id": self.active_session_id,
                     "get_updates_buf": self.get_updates_buf,
+                    "bound_user_id": self.bound_user_id,
+                    "bound_context_token": self.bound_context_token,
+                    "mirror_offsets": self.mirror_offsets,
                     "sessions": {
                         key: asdict(value) for key, value in self.sessions.items()
                     },
@@ -91,3 +103,9 @@ class BridgeState:
         )
         self.sessions[thread_id] = record
         return record
+
+    def get_mirror_offset(self, thread_id: str) -> int:
+        return int(self.mirror_offsets.get(thread_id, 0))
+
+    def set_mirror_offset(self, thread_id: str, offset: int) -> None:
+        self.mirror_offsets[thread_id] = int(offset)
