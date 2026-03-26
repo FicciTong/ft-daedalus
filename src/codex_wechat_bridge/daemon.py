@@ -79,6 +79,7 @@ class BridgeDaemon:
         self._bootstrap_runtime()
         self._start_mirror_thread()
         self._start_prompt_thread()
+        self._start_outbox_thread()
         systemd_notify("READY=1")
         systemd_notify("STATUS=bridge running")
 
@@ -554,6 +555,14 @@ class BridgeDaemon:
         )
         thread.start()
 
+    def _start_outbox_thread(self) -> None:
+        thread = threading.Thread(
+            target=self._outbox_retry_loop,
+            name="codex-wechat-outbox-retry",
+            daemon=True,
+        )
+        thread.start()
+
     def _mirror_loop(self) -> None:
         while True:
             time.sleep(1.0)
@@ -581,6 +590,14 @@ class BridgeDaemon:
                 self._log_event("prompt_error", {"error": str(exc)})
             finally:
                 self._prompt_queue.task_done()
+
+    def _outbox_retry_loop(self) -> None:
+        while True:
+            time.sleep(5.0)
+            try:
+                self._flush_bound_outbox_if_any()
+            except Exception as exc:  # noqa: BLE001
+                self._log_event("outbox_retry_error", {"error": str(exc)})
 
     def _mirror_desktop_final_if_any(self) -> None:
         thread_id = self._current_mirror_thread_id()
@@ -720,6 +737,15 @@ class BridgeDaemon:
                 self._sync_mirror_cursor(self.state.active_session_id)
             self._save_state()
         self._flush_pending_outbox(from_user_id, context_token)
+
+    def _flush_bound_outbox_if_any(self) -> None:
+        with self._lock:
+            to_user_id = self.state.bound_user_id
+            context_token = self.state.bound_context_token
+            has_pending = bool(self.state.pending_outbox)
+        if not to_user_id or not has_pending:
+            return
+        self._flush_pending_outbox(to_user_id, context_token)
 
     def _flush_pending_outbox(self, to_user_id: str, context_token: str | None) -> None:
         with self._lock:

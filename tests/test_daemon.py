@@ -214,6 +214,33 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", None, "PENDING_FINAL_OK"))
             self.assertEqual(state.pending_outbox, [])
 
+    def test_background_flush_uses_existing_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            state = BridgeState(
+                active_session_id=thread_id,
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "AUTO_FLUSH_OK",
+                        "created_at": "2026-03-26T00:00:00+00:00",
+                    }
+                ],
+            )
+            runner = _FakeRunner()
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            daemon._flush_bound_outbox_if_any()
+            self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", None, "AUTO_FLUSH_OK"))
+            self.assertEqual(state.pending_outbox, [])
+
     def test_bind_peer_preserves_remaining_pending_after_mid_flush_failure(self) -> None:
         class _FlakyWeChat(_FakeWeChat):
             def __init__(self) -> None:
