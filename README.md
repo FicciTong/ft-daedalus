@@ -269,6 +269,7 @@ Commands:
 
 - `/help`
 - `/status`
+- `/health`
 - `/sessions`
 - `/new [label]`
 - `/switch <index|thread_id-prefix|label|tmux>`
@@ -281,6 +282,7 @@ inside `tmux codex`**.
 Examples:
 
 ```text
+/health
 /status
 /sessions
 /switch 1
@@ -288,6 +290,12 @@ Examples:
 /switch codex
 帮我检查今天的 package outcome
 ```
+
+Phone-friendly semantics:
+
+- `/health` = is the bridge / tmux / thread healthy right now
+- `/status` = which live session am I currently attached to
+- `/sessions` = short switchable list, optimized for phone reading
 
 ## Daily Operating Guide
 

@@ -6,16 +6,30 @@ from pathlib import Path
 
 from codex_wechat_bridge.config import BridgeConfig
 from codex_wechat_bridge.daemon import BridgeDaemon
+from codex_wechat_bridge.live_session import LiveRuntimeStatus
+from codex_wechat_bridge.state import SessionRecord
 from codex_wechat_bridge.state import BridgeState
 
 
 class _FakeWeChat:
-    pass
+    def __init__(self) -> None:
+        self.account = type("Account", (), {"account_id": "test-bot"})()
 
 
 class _FakeRunner:
     def try_live_session(self, state: BridgeState):
         return None
+
+    def current_runtime_status(self) -> LiveRuntimeStatus:
+        return LiveRuntimeStatus(
+            tmux_session="codex",
+            exists=True,
+            pane_command="node",
+            thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+        )
+
+    def attach_hint(self, record: SessionRecord) -> str:
+        return "tmux attach -t codex"
 
 
 class DaemonTests(unittest.TestCase):
@@ -52,6 +66,57 @@ class DaemonTests(unittest.TestCase):
             )
             self.assertTrue(daemon._is_authorized_sender("allowed-user@im.wechat"))
             self.assertFalse(daemon._is_authorized_sender("other-user@im.wechat"))
+
+    def test_health_text_is_mobile_short(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(
+                active_session_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                sessions={},
+            )
+            daemon = BridgeDaemon(
+                config=self._make_config(
+                    Path(tmpdir), frozenset({"allowed-user@im.wechat"})
+                ),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=state,
+            )
+            text = daemon._health_text()
+            self.assertIn("health=ok", text)
+            self.assertIn("tmux=codex", text)
+            self.assertIn("thread=019cdfe5", text)
+            self.assertIn("wechat=test-bot", text)
+            self.assertIn("access=locked:1", text)
+
+    def test_status_text_is_mobile_short(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            state = BridgeState(
+                active_session_id=thread_id,
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="attached-last",
+                        cwd="/home/test/dev/ft-cosmos",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="codex",
+                    )
+                },
+            )
+            daemon = BridgeDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=state,
+            )
+            text = daemon._status_text()
+            self.assertIn("status=ok", text)
+            self.assertIn("thread=019cdfe5", text)
+            self.assertIn("label=attached-last", text)
+            self.assertIn("tmux=codex", text)
+            self.assertIn("attach=tmux attach -t codex", text)
 
 
 if __name__ == "__main__":

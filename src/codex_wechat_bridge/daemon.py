@@ -14,6 +14,7 @@ from .wechat_api import WeChatClient
 HELP_TEXT = """可用命令:
 /help            显示帮助
 /status          查看当前 active session
+/health          查看 bridge / tmux / session 健康状态
 /sessions        列出 bridge 已知 sessions
 /new [label]     新建一个本地 Codex session 并切过去
 /switch <编号|id前缀|label|tmux> 切换 active session
@@ -103,6 +104,8 @@ class BridgeDaemon:
             return HELP_TEXT
         if command == "/status":
             return self._status_text()
+        if command == "/health":
+            return self._health_text()
         if command == "/sessions":
             return self._sessions_text()
         if command == "/stop":
@@ -205,40 +208,39 @@ class BridgeDaemon:
         runtime = self.runner.current_runtime_status()
         if not runtime.exists:
             return (
-                "当前 canonical tmux 不存在。\n"
+                "status=missing_tmux\n"
                 f"tmux={runtime.tmux_session}\n"
-                "请先启动：\n"
-                f"tmux new -s {runtime.tmux_session} "
-                f"'{self.config.codex_bin} resume --last -C {self.config.default_cwd} --no-alt-screen'"
+                "hint=先启动 canonical tmux"
             )
         if runtime.pane_command not in {"node", "codex"}:
             return (
-                "当前 canonical tmux 已存在，但里面不是 Codex。\n"
+                "status=tmux_not_codex\n"
                 f"tmux={runtime.tmux_session}\n"
-                f"pane_current_command={runtime.pane_command or 'unknown'}\n"
-                "请先 attach 进去并启动/恢复 Codex。"
+                f"pane={runtime.pane_command or 'unknown'}\n"
+                "hint=attach 后启动或恢复 codex"
             )
         if not runtime.thread_id:
             return (
-                "当前 canonical tmux 已打开，但还没有进入任何 Codex thread。\n"
+                "status=no_thread\n"
                 f"tmux={runtime.tmux_session}\n"
-                "请先 attach 后执行：\n"
-                f"codex resume --last -C {self.config.default_cwd} --no-alt-screen"
+                "hint=attach 后 resume --last"
             )
         self.state.active_session_id = runtime.thread_id
         self._save_state()
         record = self.state.sessions.get(self.state.active_session_id)
         if not record:
-            return f"当前 active session={self.state.active_session_id}，但 registry 里缺记录。"
+            return (
+                "status=registry_missing\n"
+                f"thread={self._short_thread(runtime.thread_id)}\n"
+                f"tmux={runtime.tmux_session}"
+            )
         return (
-            "当前 active session:\n"
-            f"id={record.thread_id}\n"
+            "status=ok\n"
+            f"thread={self._short_thread(record.thread_id)}\n"
             f"label={record.label}\n"
-            f"cwd={record.cwd}\n"
-            f"source={record.source}\n"
             f"tmux={record.tmux_session}\n"
-            f"attach={self.runner.attach_hint(record)}\n"
-            f"updated_at={record.updated_at}"
+            f"cwd={self._short_cwd(record.cwd)}\n"
+            f"attach={self.runner.attach_hint(record)}"
         )
 
     def _sessions_text(self) -> str:
@@ -246,25 +248,48 @@ class BridgeDaemon:
         if not self.state.sessions:
             if runtime.exists:
                 return (
-                    "bridge 里还没有已知 session 记录，但 canonical tmux 已存在。\n"
+                    "sessions=0\n"
                     f"tmux={runtime.tmux_session}\n"
-                    f"thread={runtime.thread_id or 'none'}"
+                    f"thread={self._short_thread(runtime.thread_id) if runtime.thread_id else 'none'}"
                 )
-            return "bridge 里还没有已知 session。"
+            return "sessions=0"
         ordered = self._ordered_sessions()
-        lines = []
+        lines = [f"sessions={len(ordered)}"]
         for idx, record in enumerate(ordered[:20], start=1):
             marker = "*" if record.thread_id == self.state.active_session_id else " "
             lines.append(
-                f"{marker} [{idx}] {record.label} | {record.thread_id[:8]} | {record.tmux_session or '-'} | {record.updated_at}"
+                f"{marker}{idx} {record.label} | {self._short_thread(record.thread_id)} | {record.tmux_session or '-'}"
             )
         return (
-            "已知 sessions:\n"
-            + "\n".join(lines)
-            + "\n\n当前 canonical tmux:\n"
-            + runtime.tmux_session
-            + "\n\n切换示例:\n/switch 1\n/switch attached-last\n/switch codex"
+            "\n".join(lines)
+            + "\nuse=/switch 1"
         )
+
+    def _health_text(self) -> str:
+        runtime = self.runner.current_runtime_status()
+        if not runtime.exists:
+            status = "degraded"
+        elif runtime.pane_command not in {"node", "codex"}:
+            status = "degraded"
+        elif not runtime.thread_id:
+            status = "degraded"
+        else:
+            status = "ok"
+        access = (
+            f"locked:{len(self.config.allowed_users)}"
+            if self.config.allowed_users
+            else "open"
+        )
+        wechat_account = getattr(getattr(self.wechat, "account", None), "account_id", "unknown")
+        lines = [
+            f"health={status}",
+            f"tmux={runtime.tmux_session}",
+            f"pane={runtime.pane_command or 'none'}",
+            f"thread={self._short_thread(runtime.thread_id) if runtime.thread_id else 'none'}",
+            f"wechat={wechat_account}",
+            f"access={access}",
+        ]
+        return "\n".join(lines)
 
     def _reply(self, to_user_id: str, context_token: str | None, text: str) -> None:
         for chunk in self._chunk_text(text):
@@ -332,3 +357,12 @@ class BridgeDaemon:
                 )
                 + "\n"
             )
+
+    def _short_thread(self, thread_id: str) -> str:
+        return thread_id[:8]
+
+    def _short_cwd(self, cwd: str) -> str:
+        home = str(Path.home())
+        if cwd.startswith(home):
+            return cwd.replace(home, "~", 1)
+        return cwd
