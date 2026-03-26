@@ -235,6 +235,23 @@ class LiveCodexSessionManager:
             tmux_session=tmux_session,
         )
 
+    def submit_prompt(self, *, record: SessionRecord, prompt: str) -> SessionRecord:
+        tmux_session = self._ensure_running_tmux(record)
+        self._inject_prompt(tmux_session, prompt)
+        thread_id = (
+            self._extract_thread_id(self._capture_clean_text(tmux_session))
+            or record.thread_id
+        )
+        return SessionRecord(
+            thread_id=thread_id,
+            label=record.label,
+            cwd=record.cwd,
+            source=record.source,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            tmux_session=record.tmux_session,
+        )
+
     def send_prompt(self, *, record: SessionRecord, prompt: str) -> LiveReply:
         tmux_session = self._ensure_running_tmux(record)
         baseline_text = self._capture_clean_text(tmux_session)

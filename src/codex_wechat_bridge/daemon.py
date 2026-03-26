@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 from pathlib import Path
-from queue import Empty, Queue
 import threading
 import time
 from zoneinfo import ZoneInfo
@@ -72,13 +71,11 @@ class BridgeDaemon:
         self.runner = runner
         self.state = state
         self._lock = threading.RLock()
-        self._prompt_queue: Queue[IncomingMessage] = Queue()
         self.config.state_dir.mkdir(parents=True, exist_ok=True)
         if self.state.progress_updates_enabled is None:
             self.state.progress_updates_enabled = self.config.progress_updates_default
         self._bootstrap_runtime()
         self._start_mirror_thread()
-        self._start_prompt_thread()
         self._start_outbox_thread()
         systemd_notify("READY=1")
         systemd_notify("STATUS=bridge running")
@@ -189,19 +186,38 @@ class BridgeDaemon:
                 thread_id=thread_id,
             )
             return
-        queue_depth = self._enqueue_prompt(incoming)
-        reply = (
-            "已收到，开始处理。"
-            if queue_depth <= 1
-            else f"已收到，已入队。前面还有 {queue_depth - 1} 条。"
+        with self._lock:
+            active_record = self.runner.require_live_session(self.state)
+            self.state.active_session_id = active_record.thread_id
+            self._sync_mirror_cursor(active_record.thread_id)
+            self._save_state()
+        refreshed = self.runner.submit_prompt(record=active_record, prompt=incoming.body)
+        with self._lock:
+            self.state.active_session_id = refreshed.thread_id
+            self.state.touch_session(
+                refreshed.thread_id,
+                label=refreshed.label,
+                cwd=refreshed.cwd,
+                source=refreshed.source,
+                tmux_session=refreshed.tmux_session,
+            )
+            self._save_state()
+            thread_id = refreshed.thread_id
+        self._log_event(
+            "prompt_submitted",
+            {
+                "thread": self._short_thread(thread_id),
+                "from": incoming.from_user_id,
+                "body": incoming.body[:400],
+            },
         )
         self._reply(
             incoming.from_user_id,
             incoming.context_token,
-            reply,
+            "已注入当前 terminal；后续 progress/final 会继续发到微信。",
             kind="progress",
-            origin="wechat-prompt-queued",
-            thread_id=self.state.active_session_id,
+            origin="wechat-prompt-submitted",
+            thread_id=thread_id,
         )
 
     def _handle_command(self, body: str) -> str:
@@ -330,34 +346,6 @@ class BridgeDaemon:
             lines.append(f"[{seq}][{status}][{kind}][{ts}] {text}")
         last_seq = int(items[-1].get("seq", 0) or 0)
         return "recent:\n" + "\n\n".join(lines) + f"\n\nnext=/recent after {last_seq}"
-
-    def _enqueue_prompt(self, incoming: IncomingMessage) -> int:
-        self._prompt_queue.put(incoming)
-        return self._prompt_queue.qsize()
-
-    def _process_prompt(self, incoming: IncomingMessage) -> None:
-        with self._lock:
-            active_record = self.runner.require_live_session(self.state)
-        result = self.runner.send_prompt(record=active_record, prompt=incoming.body)
-        with self._lock:
-            refreshed = self.state.touch_session(
-                result.thread_id,
-                label=active_record.label,
-                cwd=active_record.cwd,
-                source=active_record.source,
-                tmux_session=active_record.tmux_session,
-            )
-            self.state.active_session_id = result.thread_id
-            self._sync_mirror_cursor(result.thread_id)
-            self._save_state()
-        self._reply(
-            incoming.from_user_id,
-            incoming.context_token,
-            result.response_text or "(无文本回复)",
-            kind="final",
-            origin="wechat-prompt",
-            thread_id=refreshed.thread_id,
-        )
 
     def _bootstrap_runtime(self) -> None:
         record = self.runner.try_live_session(self.state)
@@ -547,14 +535,6 @@ class BridgeDaemon:
         )
         thread.start()
 
-    def _start_prompt_thread(self) -> None:
-        thread = threading.Thread(
-            target=self._prompt_worker_loop,
-            name="codex-wechat-prompt-worker",
-            daemon=True,
-        )
-        thread.start()
-
     def _start_outbox_thread(self) -> None:
         thread = threading.Thread(
             target=self._outbox_retry_loop,
@@ -570,26 +550,6 @@ class BridgeDaemon:
                 self._mirror_desktop_final_if_any()
             except Exception as exc:  # noqa: BLE001
                 self._log_event("mirror_error", {"error": str(exc)})
-
-    def _prompt_worker_loop(self) -> None:
-        while True:
-            try:
-                incoming = self._prompt_queue.get(timeout=1.0)
-            except Empty:
-                continue
-            try:
-                self._process_prompt(incoming)
-            except Exception as exc:  # noqa: BLE001
-                self._reply(
-                    incoming.from_user_id,
-                    incoming.context_token,
-                    f"❌ bridge error: {str(exc)[:300]}",
-                    kind="final",
-                    origin="wechat-prompt-error",
-                )
-                self._log_event("prompt_error", {"error": str(exc)})
-            finally:
-                self._prompt_queue.task_done()
 
     def _outbox_retry_loop(self) -> None:
         while True:

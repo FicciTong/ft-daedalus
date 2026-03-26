@@ -110,6 +110,28 @@ class LiveSessionTests(unittest.TestCase):
         inject_mock.assert_called_once()
         self.assertEqual(reply.response_text, "VISIBLE_REPLY_OK")
 
+    def test_submit_prompt_injects_without_waiting_for_final(self) -> None:
+        record = SessionRecord(
+            thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+            label="attached-last",
+            cwd="/tmp",
+            source="tmux-live",
+            created_at="2026-03-26T00:00:00+00:00",
+            updated_at="2026-03-26T00:00:00+00:00",
+            tmux_session="codex",
+        )
+        with patch.object(self.runner, "_ensure_running_tmux", return_value="codex"):
+            with patch.object(
+                self.runner,
+                "_capture_clean_text",
+                return_value="... 019cdfe5-fa14-74a3-aa31-5451128ea58d ...",
+            ):
+                with patch.object(self.runner, "_inject_prompt") as inject_mock:
+                    submitted = self.runner.submit_prompt(record=record, prompt="hello")
+        inject_mock.assert_called_once_with("codex", "hello")
+        self.assertEqual(submitted.thread_id, record.thread_id)
+        self.assertEqual(submitted.tmux_session, "codex")
+
 
 if __name__ == "__main__":
     unittest.main()

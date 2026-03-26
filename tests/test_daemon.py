@@ -30,6 +30,7 @@ class _FakeRunner:
         self.finals: dict[tuple[str, int], tuple[str, int]] = {}
         self.progresses: dict[tuple[str, int], tuple[list[str], str, int]] = {}
         self.runtime_thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+        self.submitted: list[tuple[str, str]] = []
 
     def try_live_session(self, state: BridgeState):
         return None
@@ -44,6 +45,27 @@ class _FakeRunner:
 
     def attach_hint(self, record: SessionRecord) -> str:
         return "tmux attach -t codex"
+
+    def require_live_session(self, state: BridgeState) -> SessionRecord:
+        return state.touch_session(
+            self.runtime_thread_id,
+            label="attached-last",
+            cwd="/tmp",
+            source="tmux-live",
+            tmux_session="codex",
+        )
+
+    def submit_prompt(self, *, record: SessionRecord, prompt: str) -> SessionRecord:
+        self.submitted.append((record.thread_id, prompt))
+        return SessionRecord(
+            thread_id=record.thread_id,
+            label=record.label,
+            cwd=record.cwd,
+            source=record.source,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            tmux_session=record.tmux_session,
+        )
 
     def rollout_size(self, thread_id: str) -> int:
         return self.rollout_sizes.get(thread_id, 0)
@@ -79,9 +101,6 @@ class _FakeRunner:
 
 class _TestDaemon(BridgeDaemon):
     def _start_mirror_thread(self) -> None:
-        return None
-
-    def _start_prompt_thread(self) -> None:
         return None
 
 
@@ -381,13 +400,14 @@ class DaemonTests(unittest.TestCase):
             )
             self.assertIsNone(incoming)
 
-    def test_prompt_is_queued_and_acknowledged_immediately(self) -> None:
+    def test_prompt_is_submitted_to_live_codex_and_acknowledged_immediately(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
             daemon = _TestDaemon(
                 config=self._make_config(Path(tmpdir), frozenset()),
                 wechat=fake_wechat,
-                runner=_FakeRunner(),
+                runner=runner,
                 state=BridgeState(
                     active_session_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
                 ),
@@ -404,8 +424,18 @@ class DaemonTests(unittest.TestCase):
             self.assertIsNotNone(incoming)
             assert incoming is not None
             daemon._handle_incoming(incoming)
-            self.assertEqual(daemon._prompt_queue.qsize(), 1)
-            self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", "ctx-text", "已收到，开始处理。"))
+            self.assertEqual(
+                runner.submitted[-1],
+                ("019cdfe5-fa14-74a3-aa31-5451128ea58d", "hello bridge"),
+            )
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                (
+                    "user@im.wechat",
+                    "ctx-text",
+                    "已注入当前 terminal；后续 progress/final 会继续发到微信。",
+                ),
+            )
 
     def test_recent_replays_latest_outgoing_messages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
