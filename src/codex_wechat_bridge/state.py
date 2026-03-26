@@ -167,6 +167,17 @@ class BridgeState:
         body = text.strip()
         if not to_user_id or not body:
             return
+        if kind == "progress" and origin == "desktop-mirror":
+            self.pending_outbox = [
+                item
+                for item in self.pending_outbox
+                if not (
+                    item.get("to") == str(to_user_id)
+                    and item.get("kind") == "progress"
+                    and item.get("origin") == "desktop-mirror"
+                    and (item.get("thread_id") or "") == str(thread_id or "")
+                )
+            ]
         self.pending_outbox.append(
             {
                 "to": str(to_user_id),

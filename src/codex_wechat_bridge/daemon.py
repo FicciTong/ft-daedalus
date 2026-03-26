@@ -484,7 +484,8 @@ class BridgeDaemon:
     ) -> None:
         effective_context = context_token if use_context_token else None
         rendered = self._render_reply_text(text, kind=kind, origin=origin)
-        for chunk in self._chunk_text(rendered):
+        chunks = self._chunk_text(rendered)
+        for idx, chunk in enumerate(chunks):
             try:
                 self.wechat.send_text(
                     to_user_id=to_user_id,
@@ -505,18 +506,25 @@ class BridgeDaemon:
                         thread_id=thread_id,
                     )
             except Exception as exc:  # noqa: BLE001
+                remaining = chunks[idx:]
                 with self._lock:
-                    self.state.enqueue_pending_with_meta(
-                        to_user_id=to_user_id,
-                        text=chunk,
-                        kind=kind,
-                        origin=origin,
-                        thread_id=thread_id,
-                    )
+                    for pending_chunk in remaining:
+                        self.state.enqueue_pending_with_meta(
+                            to_user_id=to_user_id,
+                            text=pending_chunk,
+                            kind=kind,
+                            origin=origin,
+                            thread_id=thread_id,
+                        )
                     self._save_state()
                     self._log_event(
                         "queued_outgoing",
-                        {"to": to_user_id, "text": chunk[:400], "error": str(exc)},
+                        {
+                            "to": to_user_id,
+                            "text": chunk[:400],
+                            "queued_chunks": len(remaining),
+                            "error": str(exc),
+                        },
                     )
                     append_delivery(
                         state=self.state,

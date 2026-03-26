@@ -24,6 +24,23 @@ class _FakeWeChat:
         return {}
 
 
+class _ChunkFailWeChat(_FakeWeChat):
+    def __init__(self, *, fail_on_call: int) -> None:
+        super().__init__()
+        self.calls = 0
+        self.fail_on_call = fail_on_call
+
+    def send_text(self, *, to_user_id: str, context_token: str | None, text: str):
+        self.calls += 1
+        if self.calls == self.fail_on_call:
+            raise RuntimeError("ret=-2")
+        return super().send_text(
+            to_user_id=to_user_id,
+            context_token=context_token,
+            text=text,
+        )
+
+
 class _FakeRunner:
     def __init__(self) -> None:
         self.rollout_sizes: dict[str, int] = {}
@@ -677,6 +694,63 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(final_text, "✅ 规则已收口。")
             self.assertEqual(system_text, "⚙️ 已注入 terminal。")
             self.assertEqual(progress_text, "⏳ 我先检查 bridge 当前状态。")
+
+    def test_desktop_progress_pending_queue_keeps_only_latest_for_thread(self) -> None:
+        state = BridgeState()
+        state.enqueue_pending_with_meta(
+            to_user_id="user@im.wechat",
+            text="old progress",
+            kind="progress",
+            origin="desktop-mirror",
+            thread_id="thread-1",
+        )
+        state.enqueue_pending_with_meta(
+            to_user_id="user@im.wechat",
+            text="system ack",
+            kind="progress",
+            origin="wechat-prompt-submitted",
+            thread_id="thread-1",
+        )
+        state.enqueue_pending_with_meta(
+            to_user_id="user@im.wechat",
+            text="new progress",
+            kind="progress",
+            origin="desktop-mirror",
+            thread_id="thread-1",
+        )
+        self.assertEqual(
+            [(item["origin"], item["text"]) for item in state.pending_outbox],
+            [
+                ("wechat-prompt-submitted", "system ack"),
+                ("desktop-mirror", "new progress"),
+            ],
+        )
+
+    def test_reply_failure_queues_remaining_chunks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState()
+            fake_wechat = _ChunkFailWeChat(fail_on_call=2)
+            config = self._make_config(Path(tmpdir), frozenset())
+            object.__setattr__(config, "text_chunk_limit", 5)
+            daemon = _TestDaemon(
+                config=config,
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+            daemon._reply(
+                "user@im.wechat",
+                "ctx-1",
+                "1234567890ABCDE",
+                kind="final",
+                origin="desktop-mirror",
+                thread_id="thread-1",
+            )
+            self.assertEqual(fake_wechat.sent, [("user@im.wechat", "ctx-1", "✅ 123")])
+            self.assertEqual(
+                [item["text"] for item in state.pending_outbox],
+                ["45678", "90ABC", "DE"],
+            )
 
 
 if __name__ == "__main__":
