@@ -568,20 +568,23 @@ class LiveCodexSessionManager:
         if payload.get("phase") != "commentary":
             return ""
         message = str(payload.get("message", "")).strip()
-        return self._first_progress_sentence(message)
+        return self._normalize_progress_text(message)
 
-    def _first_progress_sentence(self, text: str) -> str:
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        if not lines:
-            return ""
-        first = lines[0]
-        for punct in ("。", "！", "？", ".", "!", "?"):
-            idx = first.find(punct)
-            if idx != -1:
-                return first[: idx + 1].strip()
-        if len(first) <= 120:
-            return first
-        return first[:120].rstrip() + "…"
+    def _normalize_progress_text(self, text: str) -> str:
+        lines = [line.rstrip() for line in text.splitlines()]
+        normalized: list[str] = []
+        blank_pending = False
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                if normalized:
+                    blank_pending = True
+                continue
+            if blank_pending:
+                normalized.append("")
+                blank_pending = False
+            normalized.append(stripped)
+        return "\n".join(normalized).strip()
 
     def _wait_for_thread_id(self, tmux_session: str) -> str:
         deadline = time.monotonic() + 20.0

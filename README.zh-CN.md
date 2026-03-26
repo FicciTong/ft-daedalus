@@ -25,7 +25,7 @@ OpenClaw Weixin 通道（`@tencent-weixin/openclaw-weixin`）。
 | 表面 | 你会看到什么 | 它的用途 |
 |---|---|---|
 | 桌面 `tmux codex` | 完整 live terminal stream | 全量输出、工具过程、真正的实时工作界面 |
-| 微信 | commentary 第一 Progress 句 + final reply | 外出时下任务、看进度、收结果 |
+| 微信 | commentary progress + final reply | 外出时下任务、看进度、收结果 |
 
 如果你想让微信安静一点：
 
@@ -68,7 +68,7 @@ tmux attach -t codex
 
 - 消息进同一个本地 Codex session
 - 微信收到的是：
-  - commentary 第一条简短进度
+  - commentary progress
   - 最终 final reply
 - 不会把工具原始日志、状态栏、底部噪声直接刷给你
 
@@ -338,6 +338,7 @@ journalctl --user -u codex-wechat-bridge -n 100 --no-pager
 命令有：
 
 - `/help`
+- `/menu`
 - `/status`
 - `/health`
 - `/notify on|off|status`

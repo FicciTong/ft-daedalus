@@ -266,6 +266,24 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(daemon._notify_text("off"), "notify=final-only")
             self.assertFalse(daemon.state.progress_updates_enabled)
 
+    def test_help_and_menu_show_mobile_command_page(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            help_text = daemon._handle_command("/help")
+            menu_text = daemon._handle_command("/menu")
+            self.assertEqual(help_text, menu_text)
+            self.assertIn("FT bridge 命令总览", help_text)
+            self.assertIn("/status", help_text)
+            self.assertIn("/health", help_text)
+            self.assertIn("/sessions", help_text)
+            self.assertIn("/notify on", help_text)
+            self.assertIn("/recent after 128", help_text)
+
     def test_recent_replays_latest_outgoing_messages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state_dir = Path(tmpdir)

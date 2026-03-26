@@ -40,7 +40,7 @@ class LiveSessionTests(unittest.TestCase):
         }
         self.assertEqual(self.runner._extract_final_text(event), "FINAL_OK")
 
-    def test_extract_progress_text_uses_first_sentence(self) -> None:
+    def test_extract_progress_text_keeps_full_commentary_block(self) -> None:
         event = {
             "type": "event_msg",
             "payload": {
@@ -51,7 +51,7 @@ class LiveSessionTests(unittest.TestCase):
         }
         self.assertEqual(
             self.runner._extract_progress_text(event),
-            "我先检查 bridge 当前状态，然后再看事件日志。",
+            "我先检查 bridge 当前状态，然后再看事件日志。\n后面这句不该发。",
         )
 
     def test_wait_for_final_reply_returns_final_without_task_complete(self) -> None:

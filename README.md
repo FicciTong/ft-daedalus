@@ -21,7 +21,7 @@ by routing WeChat messages into one canonical live tmux shell:
 | Surface | What You See | What It Is For |
 |---|---|---|
 | Desktop `tmux codex` | Full live terminal stream | Real-time work, full context, tool chatter |
-| WeChat | Commentary first sentence + final reply | Remote operation from your phone |
+| WeChat | Commentary progress + final reply | Remote operation from your phone |
 
 If you want quiet mode on mobile:
 
@@ -52,7 +52,7 @@ There are two surfaces, but only **one canonical live owner**:
 
 2. **WeChat operator surface**
    - sends messages into that same local Codex session
-   - receives **commentary first sentence + final reply**
+   - receives **commentary progress + final reply**
    - does **not** receive raw tool logs, bottom status bar noise, or terminal
      junk
 
@@ -328,6 +328,7 @@ The bridge accepts both `/command` and `\\command`.
 Commands:
 
 - `/help`
+- `/menu`
 - `/status`
 - `/health`
 - `/notify on|off|status`

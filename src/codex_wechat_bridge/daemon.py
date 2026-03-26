@@ -15,20 +15,32 @@ from .wechat_api import WeChatClient
 from .systemd_notify import notify as systemd_notify
 
 
-HELP_TEXT = """可用命令:
-/help            显示帮助
-/status          查看当前 active session
-/health          查看 bridge / tmux / session 健康状态
-/notify on|off|status 进度提示开关（微信只收 commentary 第一 Progress 句）
-/recent [n]      补看最近几条已发到微信的 progress/final
-/sessions        列出 bridge 已知 sessions
-/new [label]     新建一个本地 Codex session 并切过去
-/switch <编号|id前缀|label|tmux> 切换 active session
-/attach-last     接管 ft-cosmos 最近一个本地 Codex session
-/stop            取消当前 active session
+HELP_TEXT = """FT bridge 命令总览
 
-普通文本消息会直接续写 `tmux codex` 里当前活着的那条 session。
-如果 `tmux codex` 还没打开 Codex，bridge 会明确提示你先去启动/恢复。
+会话:
+/status            当前 active session / tmux / cwd
+/health            bridge / tmux / thread 健康检查
+/sessions          可切换 session 列表
+/switch <target>   切换到某个 session
+/attach-last       接最近一个 ft-cosmos session
+/new [label]       新建一个本地 Codex session
+/stop              清空当前 active session
+
+通知:
+/notify on         微信收 progress + final
+/notify off        微信只收 final
+/notify status     查看当前通知模式
+
+追溯:
+/recent 10         看最近 10 条 delivery ledger
+/recent after 128  从 seq=128 之后继续看
+
+帮助:
+/help              显示这页
+/menu              同 /help
+
+普通文本消息 = 直接发给当前 `tmux codex` 里的 live session。
+如果 `tmux codex` 还没打开 Codex，bridge 会明确提示你先启动/恢复。
 """
 
 
@@ -133,7 +145,7 @@ class BridgeDaemon:
         command = parts[0].lower()
         arg = parts[1].strip() if len(parts) > 1 else ""
 
-        if command == "/help":
+        if command in {"/help", "/menu"}:
             return HELP_TEXT
         if command == "/status":
             return self._status_text()
