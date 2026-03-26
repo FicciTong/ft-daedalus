@@ -230,7 +230,10 @@ class DaemonTests(unittest.TestCase):
                 state=state,
             )
             daemon._bind_peer("user@im.wechat", "ctx-1")
-            self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", None, "PENDING_FINAL_OK"))
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                ("user@im.wechat", None, "PENDING_FINAL_OK"),
+            )
             self.assertEqual(state.pending_outbox, [])
 
     def test_background_flush_uses_existing_binding(self) -> None:
@@ -257,7 +260,10 @@ class DaemonTests(unittest.TestCase):
                 state=state,
             )
             daemon._flush_bound_outbox_if_any()
-            self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", None, "AUTO_FLUSH_OK"))
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                ("user@im.wechat", None, "AUTO_FLUSH_OK"),
+            )
             self.assertEqual(state.pending_outbox, [])
 
     def test_bind_peer_preserves_remaining_pending_after_mid_flush_failure(self) -> None:
@@ -359,6 +365,7 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(daemon.state.bound_user_id, "user@im.wechat")
             self.assertEqual(daemon.state.bound_context_token, "ctx-voice")
             self.assertIn("没有给出可用转写", fake_wechat.sent[-1][2])
+            self.assertTrue(fake_wechat.sent[-1][2].endswith("SYSTEM"))
 
     def test_voice_without_message_type_is_still_accepted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -433,7 +440,7 @@ class DaemonTests(unittest.TestCase):
                 (
                     "user@im.wechat",
                     "ctx-text",
-                    "已注入当前 terminal；后续 progress/final 会继续发到微信。",
+                    "已注入当前 terminal；后续 progress/final 会继续发到微信。\n\nSYSTEM",
                 ),
             )
 
@@ -513,7 +520,10 @@ class DaemonTests(unittest.TestCase):
                 state=state,
             )
             daemon._mirror_desktop_final_if_any()
-            self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", None, "DESKTOP_FINAL_OK"))
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                ("user@im.wechat", None, "DESKTOP_FINAL_OK\n\nFINAL"),
+            )
             self.assertEqual(state.get_mirror_offset(thread_id), 150)
 
     def test_mirror_progress_first_when_enabled(self) -> None:
@@ -537,8 +547,14 @@ class DaemonTests(unittest.TestCase):
                 state=state,
             )
             daemon._mirror_desktop_final_if_any()
-            self.assertEqual(fake_wechat.sent[0], ("user@im.wechat", None, "我先检查 bridge 当前状态。"))
-            self.assertEqual(fake_wechat.sent[1], ("user@im.wechat", None, "FINAL_OK"))
+            self.assertEqual(
+                fake_wechat.sent[0],
+                ("user@im.wechat", None, "我先检查 bridge 当前状态。"),
+            )
+            self.assertEqual(
+                fake_wechat.sent[1],
+                ("user@im.wechat", None, "FINAL_OK\n\nFINAL"),
+            )
             self.assertEqual(state.get_last_progress_summary(thread_id), "我先检查 bridge 当前状态。")
 
     def test_mirror_follows_current_tmux_thread(self) -> None:
@@ -575,8 +591,33 @@ class DaemonTests(unittest.TestCase):
             daemon._mirror_desktop_final_if_any()
             self.assertEqual(state.active_session_id, new_thread)
             self.assertEqual(state.sessions[new_thread].tmux_session, "codex")
-            self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", None, "NEW_THREAD_FINAL_OK"))
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                ("user@im.wechat", None, "NEW_THREAD_FINAL_OK\n\nFINAL"),
+            )
             self.assertEqual(state.get_mirror_offset(new_thread), 30)
+
+    def test_command_reply_gets_system_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-cmd",
+                    "message_id": "msg-status",
+                    "item_list": [{"type": 1, "text_item": {"text": "/status"}}],
+                }
+            )
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            self.assertTrue(fake_wechat.sent[-1][2].endswith("SYSTEM"))
 
 
 if __name__ == "__main__":

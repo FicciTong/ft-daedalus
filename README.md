@@ -29,6 +29,12 @@ If you want quiet mode on mobile:
 /notify off
 ```
 
+WeChat message tags:
+
+- `SYSTEM` = bridge / service / binding / command notices
+- `FINAL` = the round is actually done
+- progress commentary stays untagged by default
+
 ## 🧭 Truthful Boundaries
 
 This bridge:

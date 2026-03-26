@@ -479,7 +479,8 @@ class BridgeDaemon:
         thread_id: str | None = None,
     ) -> None:
         effective_context = context_token if use_context_token else None
-        for chunk in self._chunk_text(text):
+        rendered = self._render_reply_text(text, kind=kind, origin=origin)
+        for chunk in self._chunk_text(rendered):
             try:
                 self.wechat.send_text(
                     to_user_id=to_user_id,
@@ -526,6 +527,33 @@ class BridgeDaemon:
                         error=str(exc),
                     )
                 return
+
+    def _render_reply_text(self, text: str, *, kind: str, origin: str) -> str:
+        body = text.strip()
+        if not body:
+            body = "(空回复)"
+        if kind == "final":
+            return self._append_tag(body, "FINAL")
+        if self._is_system_reply(kind=kind, origin=origin):
+            return self._append_tag(body, "SYSTEM")
+        return body
+
+    def _is_system_reply(self, *, kind: str, origin: str) -> bool:
+        if kind == "command":
+            return True
+        return origin in {
+            "bridge",
+            "wechat-command",
+            "wechat-voice",
+            "wechat-prompt-submitted",
+            "wechat-prompt-error",
+        }
+
+    def _append_tag(self, text: str, tag: str) -> str:
+        normalized = text.rstrip()
+        if normalized.endswith(tag):
+            return normalized
+        return f"{normalized}\n\n{tag}"
 
     def _start_mirror_thread(self) -> None:
         thread = threading.Thread(
