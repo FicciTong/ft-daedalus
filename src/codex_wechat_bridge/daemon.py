@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 import json
 from pathlib import Path
+from queue import Empty, Queue
 import threading
 import time
 
@@ -50,6 +51,8 @@ class IncomingMessage:
     context_token: str | None
     body: str
     message_id: str
+    is_voice: bool = False
+    has_transcript: bool = False
 
 
 class BridgeDaemon:
@@ -66,11 +69,13 @@ class BridgeDaemon:
         self.runner = runner
         self.state = state
         self._lock = threading.RLock()
+        self._prompt_queue: Queue[IncomingMessage] = Queue()
         self.config.state_dir.mkdir(parents=True, exist_ok=True)
         if self.state.progress_updates_enabled is None:
             self.state.progress_updates_enabled = self.config.progress_updates_default
         self._bootstrap_runtime()
         self._start_mirror_thread()
+        self._start_prompt_thread()
         systemd_notify("READY=1")
         systemd_notify("STATUS=bridge running")
 
@@ -79,8 +84,25 @@ class BridgeDaemon:
             try:
                 response = self.wechat.get_updates(self.state.get_updates_buf)
             except Exception as exc:  # noqa: BLE001
-                with self._lock:
-                    self._log_event("poll_error", {"error": str(exc)})
+                self._log_event("poll_error", {"error": str(exc)})
+                systemd_notify("STATUS=bridge poll error; retrying")
+                time.sleep(2.0)
+                continue
+            ret = response.get("ret")
+            errcode = response.get("errcode")
+            if ret not in (None, 0) or errcode not in (None, 0):
+                self._log_event(
+                    "poll_error",
+                    {
+                        "ret": ret,
+                        "errcode": errcode,
+                        "errmsg": response.get("errmsg"),
+                    },
+                )
+                if ret == -14 or errcode == -14:
+                    with self._lock:
+                        self.state.get_updates_buf = ""
+                        self._save_state()
                 systemd_notify("STATUS=bridge poll error; retrying")
                 time.sleep(2.0)
                 continue
@@ -93,48 +115,73 @@ class BridgeDaemon:
                 incoming = self._parse_incoming(raw)
                 if incoming is None:
                     continue
-                with self._lock:
-                    self._log_event("incoming", {"body": incoming.body, "from": incoming.from_user_id})
-                    if not self._is_authorized_sender(incoming.from_user_id):
-                        self._reply(
-                            incoming.from_user_id,
-                            incoming.context_token,
-                            "❌ 当前微信账号未被授权控制此 bridge。",
-                        )
-                        self._log_event(
-                            "unauthorized",
-                            {"from": incoming.from_user_id},
-                        )
-                        continue
-                    try:
-                        self._handle_incoming(incoming)
-                    except Exception as exc:  # noqa: BLE001
-                        self._reply(
-                            incoming.from_user_id,
-                            incoming.context_token,
-                            f"❌ bridge error: {str(exc)[:300]}",
-                        )
-                        self._log_event("error", {"error": str(exc)})
+                body_preview = incoming.body or (
+                    "<voice-no-transcript>" if incoming.is_voice else "<empty>"
+                )
+                self._log_event(
+                    "incoming", {"body": body_preview, "from": incoming.from_user_id}
+                )
+                if not self._is_authorized_sender(incoming.from_user_id):
+                    self._reply(
+                        incoming.from_user_id,
+                        incoming.context_token,
+                        "❌ 当前微信账号未被授权控制此 bridge。",
+                    )
+                    self._log_event(
+                        "unauthorized",
+                        {"from": incoming.from_user_id},
+                    )
+                    continue
+                try:
+                    self._handle_incoming(incoming)
+                except Exception as exc:  # noqa: BLE001
+                    self._reply(
+                        incoming.from_user_id,
+                        incoming.context_token,
+                        f"❌ bridge error: {str(exc)[:300]}",
+                    )
+                    self._log_event("error", {"error": str(exc)})
 
     def _handle_incoming(self, incoming: IncomingMessage) -> None:
+        self._bind_peer(incoming.from_user_id, incoming.context_token)
         body = incoming.body.strip()
+        if incoming.is_voice and not incoming.has_transcript:
+            self._reply(
+                incoming.from_user_id,
+                incoming.context_token,
+                "⚠️ 收到语音，但微信这次没有给出可用转写。我已经刷新会话绑定；你可以重试语音，或直接发文字。",
+                kind="progress",
+                origin="wechat-voice",
+                thread_id=self.state.active_session_id,
+            )
+            return
         if not body:
             return
-        self._bind_peer(incoming.from_user_id, incoming.context_token)
         if body.startswith("/") or body.startswith("\\"):
-            reply = self._handle_command(body)
-            reply_kind = "command"
-            reply_origin = "wechat-command"
-        else:
-            reply = self._handle_prompt(body)
-            reply_kind = "final"
-            reply_origin = "wechat-prompt"
+            with self._lock:
+                reply = self._handle_command(body)
+                thread_id = self.state.active_session_id
+            self._reply(
+                incoming.from_user_id,
+                incoming.context_token,
+                reply,
+                kind="command",
+                origin="wechat-command",
+                thread_id=thread_id,
+            )
+            return
+        queue_depth = self._enqueue_prompt(incoming)
+        reply = (
+            "已收到，开始处理。"
+            if queue_depth <= 1
+            else f"已收到，已入队。前面还有 {queue_depth - 1} 条。"
+        )
         self._reply(
             incoming.from_user_id,
             incoming.context_token,
             reply,
-            kind=reply_kind,
-            origin=reply_origin,
+            kind="progress",
+            origin="wechat-prompt-queued",
             thread_id=self.state.active_session_id,
         )
 
@@ -265,20 +312,33 @@ class BridgeDaemon:
         last_seq = int(items[-1].get("seq", 0) or 0)
         return "recent:\n" + "\n\n".join(lines) + f"\n\nnext=/recent after {last_seq}"
 
-    def _handle_prompt(self, body: str) -> str:
-        active_record = self.runner.require_live_session(self.state)
-        result = self.runner.send_prompt(record=active_record, prompt=body)
-        refreshed = self.state.touch_session(
-            result.thread_id,
-            label=active_record.label,
-            cwd=active_record.cwd,
-            source=active_record.source,
-            tmux_session=active_record.tmux_session,
+    def _enqueue_prompt(self, incoming: IncomingMessage) -> int:
+        self._prompt_queue.put(incoming)
+        return self._prompt_queue.qsize()
+
+    def _process_prompt(self, incoming: IncomingMessage) -> None:
+        with self._lock:
+            active_record = self.runner.require_live_session(self.state)
+        result = self.runner.send_prompt(record=active_record, prompt=incoming.body)
+        with self._lock:
+            refreshed = self.state.touch_session(
+                result.thread_id,
+                label=active_record.label,
+                cwd=active_record.cwd,
+                source=active_record.source,
+                tmux_session=active_record.tmux_session,
+            )
+            self.state.active_session_id = result.thread_id
+            self._sync_mirror_cursor(result.thread_id)
+            self._save_state()
+        self._reply(
+            incoming.from_user_id,
+            incoming.context_token,
+            result.response_text or "(无文本回复)",
+            kind="final",
+            origin="wechat-prompt",
+            thread_id=refreshed.thread_id,
         )
-        self.state.active_session_id = result.thread_id
-        self._sync_mirror_cursor(result.thread_id)
-        self._save_state()
-        return result.response_text or "(无文本回复)"
 
     def _bootstrap_runtime(self) -> None:
         record = self.runner.try_live_session(self.state)
@@ -419,43 +479,45 @@ class BridgeDaemon:
                     context_token=effective_context,
                     text=chunk,
                 )
-                self._log_event("outgoing", {"to": to_user_id, "text": chunk[:400]})
-                append_delivery(
-                    state=self.state,
-                    state_file=self.config.state_file,
-                    ledger_file=self.config.delivery_ledger_file,
-                    to_user_id=to_user_id,
-                    text=chunk,
-                    status="sent",
-                    kind=kind,
-                    origin=origin,
-                    thread_id=thread_id,
-                )
+                with self._lock:
+                    self._log_event("outgoing", {"to": to_user_id, "text": chunk[:400]})
+                    append_delivery(
+                        state=self.state,
+                        state_file=self.config.state_file,
+                        ledger_file=self.config.delivery_ledger_file,
+                        to_user_id=to_user_id,
+                        text=chunk,
+                        status="sent",
+                        kind=kind,
+                        origin=origin,
+                        thread_id=thread_id,
+                    )
             except Exception as exc:  # noqa: BLE001
-                self.state.enqueue_pending_with_meta(
-                    to_user_id=to_user_id,
-                    text=chunk,
-                    kind=kind,
-                    origin=origin,
-                    thread_id=thread_id,
-                )
-                self._save_state()
-                self._log_event(
-                    "queued_outgoing",
-                    {"to": to_user_id, "text": chunk[:400], "error": str(exc)},
-                )
-                append_delivery(
-                    state=self.state,
-                    state_file=self.config.state_file,
-                    ledger_file=self.config.delivery_ledger_file,
-                    to_user_id=to_user_id,
-                    text=chunk,
-                    status="queued",
-                    kind=kind,
-                    origin=origin,
-                    thread_id=thread_id,
-                    error=str(exc),
-                )
+                with self._lock:
+                    self.state.enqueue_pending_with_meta(
+                        to_user_id=to_user_id,
+                        text=chunk,
+                        kind=kind,
+                        origin=origin,
+                        thread_id=thread_id,
+                    )
+                    self._save_state()
+                    self._log_event(
+                        "queued_outgoing",
+                        {"to": to_user_id, "text": chunk[:400], "error": str(exc)},
+                    )
+                    append_delivery(
+                        state=self.state,
+                        state_file=self.config.state_file,
+                        ledger_file=self.config.delivery_ledger_file,
+                        to_user_id=to_user_id,
+                        text=chunk,
+                        status="queued",
+                        kind=kind,
+                        origin=origin,
+                        thread_id=thread_id,
+                        error=str(exc),
+                    )
                 return
 
     def _start_mirror_thread(self) -> None:
@@ -466,39 +528,71 @@ class BridgeDaemon:
         )
         thread.start()
 
+    def _start_prompt_thread(self) -> None:
+        thread = threading.Thread(
+            target=self._prompt_worker_loop,
+            name="codex-wechat-prompt-worker",
+            daemon=True,
+        )
+        thread.start()
+
     def _mirror_loop(self) -> None:
         while True:
             time.sleep(1.0)
-            with self._lock:
-                try:
-                    self._mirror_desktop_final_if_any()
-                except Exception as exc:  # noqa: BLE001
-                    self._log_event("mirror_error", {"error": str(exc)})
+            try:
+                self._mirror_desktop_final_if_any()
+            except Exception as exc:  # noqa: BLE001
+                self._log_event("mirror_error", {"error": str(exc)})
+
+    def _prompt_worker_loop(self) -> None:
+        while True:
+            try:
+                incoming = self._prompt_queue.get(timeout=1.0)
+            except Empty:
+                continue
+            try:
+                self._process_prompt(incoming)
+            except Exception as exc:  # noqa: BLE001
+                self._reply(
+                    incoming.from_user_id,
+                    incoming.context_token,
+                    f"❌ bridge error: {str(exc)[:300]}",
+                    kind="final",
+                    origin="wechat-prompt-error",
+                )
+                self._log_event("prompt_error", {"error": str(exc)})
+            finally:
+                self._prompt_queue.task_done()
 
     def _mirror_desktop_final_if_any(self) -> None:
         thread_id = self._current_mirror_thread_id()
-        to_user_id = self.state.bound_user_id
+        with self._lock:
+            to_user_id = self.state.bound_user_id
+            bound_context_token = self.state.bound_context_token
+            start_offset = self.state.get_mirror_offset(thread_id) if thread_id else 0
         if not thread_id or not to_user_id:
             return
         scan = self.runner.latest_mirror_since(
             thread_id=thread_id,
-            start_offset=self.state.get_mirror_offset(thread_id),
+            start_offset=start_offset,
         )
         if scan is None:
             return
-        self.state.set_mirror_offset(thread_id, scan.end_offset)
-        self._save_state()
+        with self._lock:
+            self.state.set_mirror_offset(thread_id, scan.end_offset)
+            self._save_state()
         if self._progress_updates_enabled():
             for progress in scan.progress_texts:
                 if not progress:
                     continue
-                if progress == self.state.get_last_progress_summary(thread_id):
-                    continue
-                self.state.set_last_progress_summary(thread_id, progress)
-                self._save_state()
+                with self._lock:
+                    if progress == self.state.get_last_progress_summary(thread_id):
+                        continue
+                    self.state.set_last_progress_summary(thread_id, progress)
+                    self._save_state()
                 self._reply(
                     to_user_id,
-                    self.state.bound_context_token,
+                    bound_context_token,
                     progress,
                     use_context_token=False,
                     kind="progress",
@@ -513,7 +607,7 @@ class BridgeDaemon:
             return
         self._reply(
             to_user_id,
-            self.state.bound_context_token,
+            bound_context_token,
             scan.final_text,
             use_context_token=False,
             kind="final",
@@ -528,19 +622,21 @@ class BridgeDaemon:
     def _current_mirror_thread_id(self) -> str | None:
         runtime = self.runner.current_runtime_status()
         if runtime.exists and runtime.thread_id:
-            if self.state.active_session_id != runtime.thread_id:
-                self.state.active_session_id = runtime.thread_id
-                existing = self.state.sessions.get(runtime.thread_id)
-                self.state.touch_session(
-                    runtime.thread_id,
-                    label=existing.label if existing else "live-codex",
-                    cwd=existing.cwd if existing else str(self.config.default_cwd),
-                    source=existing.source if existing else "tmux-live",
-                    tmux_session=runtime.tmux_session,
-                )
-                self._save_state()
+            with self._lock:
+                if self.state.active_session_id != runtime.thread_id:
+                    self.state.active_session_id = runtime.thread_id
+                    existing = self.state.sessions.get(runtime.thread_id)
+                    self.state.touch_session(
+                        runtime.thread_id,
+                        label=existing.label if existing else "live-codex",
+                        cwd=existing.cwd if existing else str(self.config.default_cwd),
+                        source=existing.source if existing else "tmux-live",
+                        tmux_session=runtime.tmux_session,
+                    )
+                    self._save_state()
             return runtime.thread_id
-        return self.state.active_session_id
+        with self._lock:
+            return self.state.active_session_id
 
     def _progress_updates_enabled(self) -> bool:
         return bool(self.state.progress_updates_enabled)
@@ -564,22 +660,28 @@ class BridgeDaemon:
         if raw.get("message_type") != 1:
             return None
         body = ""
+        is_voice = False
+        has_transcript = False
         for item in raw.get("item_list", []) or []:
             if item.get("type") == 1:
                 body = str(item.get("text_item", {}).get("text", "")).strip()
                 break
             if item.get("type") == 3:
+                is_voice = True
                 voice_text = item.get("voice_item", {}).get("text")
                 if voice_text:
                     body = str(voice_text).strip()
+                    has_transcript = True
                     break
-        if not body:
+        if not body and not is_voice:
             return None
         return IncomingMessage(
             from_user_id=str(raw.get("from_user_id", "")),
             context_token=raw.get("context_token"),
             body=body,
             message_id=str(raw.get("message_id", "")),
+            is_voice=is_voice,
+            has_transcript=has_transcript,
         )
 
     def _is_authorized_sender(self, from_user_id: str) -> bool:
@@ -588,19 +690,22 @@ class BridgeDaemon:
         return from_user_id in self.config.allowed_users
 
     def _bind_peer(self, from_user_id: str, context_token: str | None) -> None:
-        changed = (
-            self.state.bound_user_id != from_user_id
-            or self.state.bound_context_token != context_token
-        )
-        self.state.bound_user_id = from_user_id
-        self.state.bound_context_token = context_token
-        if changed and self.state.active_session_id:
-            self._sync_mirror_cursor(self.state.active_session_id)
-        self._save_state()
+        with self._lock:
+            changed = (
+                self.state.bound_user_id != from_user_id
+                or self.state.bound_context_token != context_token
+            )
+            self.state.bound_user_id = from_user_id
+            self.state.bound_context_token = context_token
+            if changed and self.state.active_session_id:
+                self._sync_mirror_cursor(self.state.active_session_id)
+            self._save_state()
         self._flush_pending_outbox(from_user_id, context_token)
 
     def _flush_pending_outbox(self, to_user_id: str, context_token: str | None) -> None:
-        pending = self.state.pop_pending_for(to_user_id)
+        with self._lock:
+            pending = self.state.pop_pending_for(to_user_id)
+            self._save_state()
         if not pending:
             return
         kept: list[dict[str, str]] = []
@@ -617,44 +722,47 @@ class BridgeDaemon:
                     context_token=None,
                     text=text,
                 )
-                self._log_event("outgoing", {"to": to_user_id, "text": text[:400]})
-                self._log_event(
-                    "flushed_outgoing",
-                    {"to": to_user_id, "text": text[:400]},
-                )
-                append_delivery(
-                    state=self.state,
-                    state_file=self.config.state_file,
-                    ledger_file=self.config.delivery_ledger_file,
-                    to_user_id=to_user_id,
-                    text=text,
-                    status="flushed",
-                    kind=kind,
-                    origin=origin,
-                    thread_id=thread_id,
-                )
+                with self._lock:
+                    self._log_event("outgoing", {"to": to_user_id, "text": text[:400]})
+                    self._log_event(
+                        "flushed_outgoing",
+                        {"to": to_user_id, "text": text[:400]},
+                    )
+                    append_delivery(
+                        state=self.state,
+                        state_file=self.config.state_file,
+                        ledger_file=self.config.delivery_ledger_file,
+                        to_user_id=to_user_id,
+                        text=text,
+                        status="flushed",
+                        kind=kind,
+                        origin=origin,
+                        thread_id=thread_id,
+                    )
             except Exception as exc:  # noqa: BLE001
                 kept.append(item)
                 kept.extend(pending[idx + 1 :])
-                self._log_event(
-                    "queued_outgoing",
-                    {"to": to_user_id, "text": text[:400], "error": str(exc)},
-                )
-                append_delivery(
-                    state=self.state,
-                    state_file=self.config.state_file,
-                    ledger_file=self.config.delivery_ledger_file,
-                    to_user_id=to_user_id,
-                    text=text,
-                    status="queued",
-                    kind=kind,
-                    origin=origin,
-                    thread_id=thread_id,
-                    error=str(exc),
-                )
+                with self._lock:
+                    self._log_event(
+                        "queued_outgoing",
+                        {"to": to_user_id, "text": text[:400], "error": str(exc)},
+                    )
+                    append_delivery(
+                        state=self.state,
+                        state_file=self.config.state_file,
+                        ledger_file=self.config.delivery_ledger_file,
+                        to_user_id=to_user_id,
+                        text=text,
+                        status="queued",
+                        kind=kind,
+                        origin=origin,
+                        thread_id=thread_id,
+                        error=str(exc),
+                    )
                 break
-        self.state.pending_outbox = kept + self.state.pending_outbox
-        self._save_state()
+        with self._lock:
+            self.state.pending_outbox = kept + self.state.pending_outbox
+            self._save_state()
 
     def _sync_mirror_cursor(self, thread_id: str) -> None:
         self.state.set_mirror_offset(thread_id, self.runner.rollout_size(thread_id))
@@ -663,19 +771,20 @@ class BridgeDaemon:
         self.state.save(self.config.state_file)
 
     def _log_event(self, kind: str, payload: dict) -> None:
-        self.config.state_dir.mkdir(parents=True, exist_ok=True)
-        with self.config.event_log_file.open("a", encoding="utf-8") as fh:
-            fh.write(
-                json.dumps(
-                    {
-                        "ts": datetime.now(UTC).isoformat(),
-                        "kind": kind,
-                        "payload": payload,
-                    },
-                    ensure_ascii=False,
+        with self._lock:
+            self.config.state_dir.mkdir(parents=True, exist_ok=True)
+            with self.config.event_log_file.open("a", encoding="utf-8") as fh:
+                fh.write(
+                    json.dumps(
+                        {
+                            "ts": datetime.now(UTC).isoformat(),
+                            "kind": kind,
+                            "payload": payload,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
                 )
-                + "\n"
-            )
 
     def _short_thread(self, thread_id: str) -> str:
         return thread_id[:8]

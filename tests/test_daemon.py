@@ -81,6 +81,9 @@ class _TestDaemon(BridgeDaemon):
     def _start_mirror_thread(self) -> None:
         return None
 
+    def _start_prompt_thread(self) -> None:
+        return None
+
 
 class DaemonTests(unittest.TestCase):
     def _make_config(self, state_dir: Path, allowed_users: frozenset[str]) -> BridgeConfig:
@@ -283,6 +286,59 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("/sessions", help_text)
             self.assertIn("/notify on", help_text)
             self.assertIn("/recent after 128", help_text)
+
+    def test_voice_without_transcript_refreshes_binding_and_replies_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-voice",
+                    "message_id": "msg-1",
+                    "item_list": [{"type": 3, "voice_item": {}}],
+                }
+            )
+            self.assertIsNotNone(incoming)
+            assert incoming is not None
+            self.assertTrue(incoming.is_voice)
+            self.assertFalse(incoming.has_transcript)
+            daemon._handle_incoming(incoming)
+            self.assertEqual(daemon.state.bound_user_id, "user@im.wechat")
+            self.assertEqual(daemon.state.bound_context_token, "ctx-voice")
+            self.assertIn("没有给出可用转写", fake_wechat.sent[-1][2])
+
+    def test_prompt_is_queued_and_acknowledged_immediately(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    active_session_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                ),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-text",
+                    "message_id": "msg-2",
+                    "item_list": [{"type": 1, "text_item": {"text": "hello bridge"}}],
+                }
+            )
+            self.assertIsNotNone(incoming)
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            self.assertEqual(daemon._prompt_queue.qsize(), 1)
+            self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", "ctx-text", "已收到，开始处理。"))
 
     def test_recent_replays_latest_outgoing_messages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -228,6 +228,12 @@ The bridge now has four built-in reliability layers:
    - if delivery still fails, the message is queued locally
    - when you next send any WeChat message (for example `/status`), the bridge
      automatically flushes the queued progress/final messages back to you
+5. **asynchronous prompt lane + voice fallback**
+   - WeChat prompts are queued and processed by a dedicated worker, so a long
+     running prompt no longer blocks later `/status` or `/help`
+   - if WeChat delivers a voice message without usable transcript text, the
+     bridge still refreshes binding/flushes pending messages and replies with a
+     truthful hint instead of silently dropping the event
 
 You can also pace outbound delivery more conservatively with:
 

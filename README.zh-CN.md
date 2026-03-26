@@ -246,6 +246,9 @@ systemctl --user restart codex-wechat-bridge
    - 如果 rollout JSONL 没抓到 `final_answer`，bridge 会退回 live `tmux codex` pane 里的可见答复
    - 如果这样还是发不出去，消息会先落到本地 outbox
    - 你下次任意发一条微信消息进来（例如 `/status`），bridge 会自动把排队的 progress/final 补发给你
+5. **prompt 异步队列 + 语音兜底**
+   - 微信发来的 prompt 会进入单独 worker 队列处理，所以一条长任务不再把后面的 `/status`、`/help` 一起堵死
+   - 如果微信这次只给了语音消息但没有可用转写文本，bridge 仍然会刷新绑定、补发队列，并明确告诉你“这次语音没有可用转写”，而不是静默吞掉
 
 如果你想把发消息节奏再放慢一点，还可以在 env 里设置：
 
