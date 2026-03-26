@@ -117,6 +117,21 @@ class BridgeDaemon:
             for raw in response.get("msgs", []) or []:
                 incoming = self._parse_incoming(raw)
                 if incoming is None:
+                    item_types = [
+                        item.get("type")
+                        for item in (raw.get("item_list", []) or [])
+                        if isinstance(item, dict)
+                    ]
+                    if item_types:
+                        self._log_event(
+                            "ignored_incoming",
+                            {
+                                "message_type": raw.get("message_type"),
+                                "item_types": item_types,
+                                "from": raw.get("from_user_id"),
+                                "message_id": raw.get("message_id"),
+                            },
+                        )
                     continue
                 body_preview = incoming.body or (
                     "<voice-no-transcript>" if incoming.is_voice else "<empty>"
@@ -660,7 +675,8 @@ class BridgeDaemon:
         return chunks
 
     def _parse_incoming(self, raw: dict) -> IncomingMessage | None:
-        if raw.get("message_type") != 1:
+        message_type = raw.get("message_type")
+        if message_type == 2:
             return None
         body = ""
         is_voice = False

@@ -314,6 +314,46 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(daemon.state.bound_context_token, "ctx-voice")
             self.assertIn("没有给出可用转写", fake_wechat.sent[-1][2])
 
+    def test_voice_without_message_type_is_still_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-voice",
+                    "message_id": "msg-voice-no-type",
+                    "item_list": [{"type": 3, "voice_item": {}}],
+                }
+            )
+            self.assertIsNotNone(incoming)
+            assert incoming is not None
+            self.assertTrue(incoming.is_voice)
+            self.assertFalse(incoming.has_transcript)
+
+    def test_explicit_bot_message_type_is_ignored(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 2,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-bot",
+                    "message_id": "msg-bot",
+                    "item_list": [{"type": 1, "text_item": {"text": "ignore me"}}],
+                }
+            )
+            self.assertIsNone(incoming)
+
     def test_prompt_is_queued_and_acknowledged_immediately(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fake_wechat = _FakeWeChat()
