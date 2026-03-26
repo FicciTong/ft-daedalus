@@ -44,12 +44,15 @@ def _send_bound_text(
     chunks = _chunk_text(text, config.text_chunk_limit)
     if not chunks:
         raise RuntimeError("No text to send.")
-    wechat = client or WeChatClient(WeChatAccount.load(config.account_file))
+    wechat = client or WeChatClient(
+        WeChatAccount.load(config.account_file),
+        min_send_interval_seconds=config.min_send_interval_seconds,
+    )
     for chunk in chunks:
         try:
             wechat.send_text(
                 to_user_id=state.bound_user_id,
-                context_token=state.bound_context_token,
+                context_token=None,
                 text=chunk,
             )
             event_kind = "relay_outgoing"
@@ -247,7 +250,10 @@ def main() -> int:
         account = WeChatAccount.load(config.account_file)
         print(f"wechat_account_id={account.account_id}")
         print(f"wechat_user_id={account.user_id}")
-        client = WeChatClient(account)
+        client = WeChatClient(
+            account,
+            min_send_interval_seconds=config.min_send_interval_seconds,
+        )
         response = client.get_updates(state.get_updates_buf)
         print(
             "wechat_probe="
@@ -277,7 +283,10 @@ def main() -> int:
     account = WeChatAccount.load(config.account_file)
     daemon = BridgeDaemon(
         config=config,
-        wechat=WeChatClient(account),
+        wechat=WeChatClient(
+            account,
+            min_send_interval_seconds=config.min_send_interval_seconds,
+        ),
         runner=LiveCodexSessionManager(
             codex_bin=config.codex_bin,
             default_cwd=config.default_cwd,

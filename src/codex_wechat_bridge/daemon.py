@@ -53,22 +53,24 @@ class BridgeDaemon:
         self.runner = runner
         self.state = state
         self._lock = threading.RLock()
-        self._last_poll_started_at = time.monotonic()
-        self._last_poll_completed_at = time.monotonic()
         self.config.state_dir.mkdir(parents=True, exist_ok=True)
         if self.state.progress_updates_enabled is None:
             self.state.progress_updates_enabled = self.config.progress_updates_default
         self._bootstrap_runtime()
         self._start_mirror_thread()
-        self._start_watchdog_thread()
         systemd_notify("READY=1")
         systemd_notify("STATUS=bridge running")
 
     def run_forever(self) -> None:
         while True:
-            self._last_poll_started_at = time.monotonic()
-            response = self.wechat.get_updates(self.state.get_updates_buf)
-            self._last_poll_completed_at = time.monotonic()
+            try:
+                response = self.wechat.get_updates(self.state.get_updates_buf)
+            except Exception as exc:  # noqa: BLE001
+                with self._lock:
+                    self._log_event("poll_error", {"error": str(exc)})
+                systemd_notify("STATUS=bridge poll error; retrying")
+                time.sleep(2.0)
+                continue
             with self._lock:
                 self.state.get_updates_buf = response.get(
                     "get_updates_buf", self.state.get_updates_buf
@@ -374,11 +376,21 @@ class BridgeDaemon:
         ]
         return "\n".join(lines)
 
-    def _reply(self, to_user_id: str, context_token: str | None, text: str) -> None:
+    def _reply(
+        self,
+        to_user_id: str,
+        context_token: str | None,
+        text: str,
+        *,
+        use_context_token: bool = True,
+    ) -> None:
+        effective_context = context_token if use_context_token else None
         for chunk in self._chunk_text(text):
             try:
                 self.wechat.send_text(
-                    to_user_id=to_user_id, context_token=context_token, text=chunk
+                    to_user_id=to_user_id,
+                    context_token=effective_context,
+                    text=chunk,
                 )
                 self._log_event("outgoing", {"to": to_user_id, "text": chunk[:400]})
             except Exception as exc:  # noqa: BLE001
@@ -398,14 +410,6 @@ class BridgeDaemon:
         )
         thread.start()
 
-    def _start_watchdog_thread(self) -> None:
-        thread = threading.Thread(
-            target=self._watchdog_loop,
-            name="codex-wechat-systemd-watchdog",
-            daemon=True,
-        )
-        thread.start()
-
     def _mirror_loop(self) -> None:
         while True:
             time.sleep(1.0)
@@ -415,28 +419,10 @@ class BridgeDaemon:
                 except Exception as exc:  # noqa: BLE001
                     self._log_event("mirror_error", {"error": str(exc)})
 
-    def _watchdog_loop(self) -> None:
-        interval = 15.0
-        deadline = 70.0
-        while True:
-            time.sleep(interval)
-            age = time.monotonic() - max(
-                self._last_poll_started_at,
-                self._last_poll_completed_at,
-            )
-            if age >= deadline:
-                systemd_notify(
-                    "STATUS=bridge poll loop stale; waiting for systemd watchdog restart"
-                )
-                continue
-            systemd_notify("WATCHDOG=1")
-            systemd_notify("STATUS=bridge healthy")
-
     def _mirror_desktop_final_if_any(self) -> None:
         thread_id = self._current_mirror_thread_id()
         to_user_id = self.state.bound_user_id
-        context_token = self.state.bound_context_token
-        if not thread_id or not to_user_id or not context_token:
+        if not thread_id or not to_user_id:
             return
         scan = self.runner.latest_mirror_since(
             thread_id=thread_id,
@@ -454,14 +440,24 @@ class BridgeDaemon:
                     continue
                 self.state.set_last_progress_summary(thread_id, progress)
                 self._save_state()
-                self._reply(to_user_id, context_token, progress)
+                self._reply(
+                    to_user_id,
+                    self.state.bound_context_token,
+                    progress,
+                    use_context_token=False,
+                )
                 self._log_event(
                     "mirrored_progress",
                     {"thread": self._short_thread(thread_id), "to": to_user_id},
                 )
         if not scan.final_text:
             return
-        self._reply(to_user_id, context_token, scan.final_text)
+        self._reply(
+            to_user_id,
+            self.state.bound_context_token,
+            scan.final_text,
+            use_context_token=False,
+        )
         self._log_event(
             "mirrored_final",
             {"thread": self._short_thread(thread_id), "to": to_user_id},
@@ -553,7 +549,7 @@ class BridgeDaemon:
             try:
                 self.wechat.send_text(
                     to_user_id=to_user_id,
-                    context_token=context_token,
+                    context_token=None,
                     text=text,
                 )
                 self._log_event("outgoing", {"to": to_user_id, "text": text[:400]})

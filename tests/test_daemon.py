@@ -81,9 +81,6 @@ class _TestDaemon(BridgeDaemon):
     def _start_mirror_thread(self) -> None:
         return None
 
-    def _start_watchdog_thread(self) -> None:
-        return None
-
 
 class DaemonTests(unittest.TestCase):
     def _make_config(self, state_dir: Path, allowed_users: frozenset[str]) -> BridgeConfig:
@@ -211,7 +208,7 @@ class DaemonTests(unittest.TestCase):
                 state=state,
             )
             daemon._bind_peer("user@im.wechat", "ctx-1")
-            self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", "ctx-1", "PENDING_FINAL_OK"))
+            self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", None, "PENDING_FINAL_OK"))
             self.assertEqual(state.pending_outbox, [])
 
     def test_notify_command_toggles_progress_mode(self) -> None:
@@ -274,7 +271,7 @@ class DaemonTests(unittest.TestCase):
                 state=state,
             )
             daemon._mirror_desktop_final_if_any()
-            self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", "ctx-1", "DESKTOP_FINAL_OK"))
+            self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", None, "DESKTOP_FINAL_OK"))
             self.assertEqual(state.get_mirror_offset(thread_id), 150)
 
     def test_mirror_progress_first_when_enabled(self) -> None:
@@ -298,8 +295,8 @@ class DaemonTests(unittest.TestCase):
                 state=state,
             )
             daemon._mirror_desktop_final_if_any()
-            self.assertEqual(fake_wechat.sent[0], ("user@im.wechat", "ctx-1", "我先检查 bridge 当前状态。"))
-            self.assertEqual(fake_wechat.sent[1], ("user@im.wechat", "ctx-1", "FINAL_OK"))
+            self.assertEqual(fake_wechat.sent[0], ("user@im.wechat", None, "我先检查 bridge 当前状态。"))
+            self.assertEqual(fake_wechat.sent[1], ("user@im.wechat", None, "FINAL_OK"))
             self.assertEqual(state.get_last_progress_summary(thread_id), "我先检查 bridge 当前状态。")
 
     def test_mirror_follows_current_tmux_thread(self) -> None:
@@ -336,7 +333,7 @@ class DaemonTests(unittest.TestCase):
             daemon._mirror_desktop_final_if_any()
             self.assertEqual(state.active_session_id, new_thread)
             self.assertEqual(state.sessions[new_thread].tmux_session, "codex")
-            self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", "ctx-1", "NEW_THREAD_FINAL_OK"))
+            self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", None, "NEW_THREAD_FINAL_OK"))
             self.assertEqual(state.get_mirror_offset(new_thread), 30)
 
 

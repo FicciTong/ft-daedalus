@@ -5,6 +5,8 @@ import base64
 import json
 import secrets
 from pathlib import Path
+import threading
+import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
@@ -52,8 +54,16 @@ class WeChatAccount:
 
 
 class WeChatClient:
-    def __init__(self, account: WeChatAccount) -> None:
+    def __init__(
+        self,
+        account: WeChatAccount,
+        *,
+        min_send_interval_seconds: float = 0.5,
+    ) -> None:
         self.account = account
+        self.min_send_interval_seconds = max(0.0, float(min_send_interval_seconds))
+        self._send_lock = threading.Lock()
+        self._last_send_at = 0.0
 
     def _post(self, endpoint: str, payload: dict[str, Any], timeout: float = 40.0) -> dict[str, Any]:
         body = json.dumps(payload).encode()
@@ -85,42 +95,49 @@ class WeChatClient:
         )
 
     def send_text(self, *, to_user_id: str, context_token: str | None, text: str) -> dict[str, Any]:
-        payload = {
-            "msg": {
-                "from_user_id": "",
-                "to_user_id": to_user_id,
-                "client_id": _generate_client_id(),
-                "message_type": 2,
-                "message_state": 2,
-                "item_list": [{"type": 1, "text_item": {"text": text}}],
-                "context_token": context_token,
-            },
-            "base_info": {},
-        }
-        response = self._post("ilink/bot/sendmessage", payload, timeout=20.0)
-        errcode = response.get("errcode")
-        ret = response.get("ret")
-        if errcode in (None, 0) and ret in (None, 0):
-            return response
-        # Official WeChat chat contexts can expire even when the user/chat binding is
-        # still valid. Retry once without the context token so delivery can continue
-        # instead of forcing a manual rebind.
-        if ret == -2 and context_token:
-            retry_payload = {
+        with self._send_lock:
+            now = time.monotonic()
+            remaining = self.min_send_interval_seconds - (now - self._last_send_at)
+            if remaining > 0:
+                time.sleep(remaining)
+            self._last_send_at = time.monotonic()
+
+            payload = {
                 "msg": {
-                    **payload["msg"],
-                    "context_token": None,
+                    "from_user_id": "",
+                    "to_user_id": to_user_id,
+                    "client_id": _generate_client_id(),
+                    "message_type": 2,
+                    "message_state": 2,
+                    "item_list": [{"type": 1, "text_item": {"text": text}}],
+                    "context_token": context_token,
                 },
-                "base_info": payload["base_info"],
+                "base_info": {},
             }
-            response = self._post("ilink/bot/sendmessage", retry_payload, timeout=20.0)
+            response = self._post("ilink/bot/sendmessage", payload, timeout=20.0)
             errcode = response.get("errcode")
             ret = response.get("ret")
             if errcode in (None, 0) and ret in (None, 0):
                 return response
-        raise RuntimeError(
-            f"WeChat send failed: ret={ret} errcode={errcode} errmsg={response.get('errmsg')}"
-        )
+            # Official WeChat chat contexts can expire even when the user/chat binding is
+            # still valid. Retry once without the context token so delivery can continue
+            # instead of forcing a manual rebind.
+            if ret == -2 and context_token:
+                retry_payload = {
+                    "msg": {
+                        **payload["msg"],
+                        "context_token": None,
+                    },
+                    "base_info": payload["base_info"],
+                }
+                response = self._post("ilink/bot/sendmessage", retry_payload, timeout=20.0)
+                errcode = response.get("errcode")
+                ret = response.get("ret")
+                if errcode in (None, 0) and ret in (None, 0):
+                    return response
+            raise RuntimeError(
+                f"WeChat send failed: ret={ret} errcode={errcode} errmsg={response.get('errmsg')}"
+            )
 
 
 def body_from_item_list(item_list: list[dict[str, Any]] | None) -> str:

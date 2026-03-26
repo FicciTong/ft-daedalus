@@ -208,22 +208,34 @@ systemctl --user restart codex-wechat-bridge
 
 ## 🛟 Reliability Guardrails
 
-The bridge now has three built-in reliability layers:
+The bridge now has four built-in reliability layers:
 
-1. **systemd watchdog**
-   - the service uses `Type=notify` + `WatchdogSec=90`
-   - if the WeChat long-poll loop hangs instead of crashing, systemd restarts it
+1. **poll-loop retry instead of false watchdog kills**
+   - long-poll failures are logged as `poll_error` and retried in-process
+   - the service still runs under `systemd` with `Restart=always`, but we no
+     longer use a watchdog that can misread healthy long-polls as hangs
 2. **stale context retry**
    - if WeChat rejects a send with `ret=-2`, the bridge retries once without
      `context_token`
-3. **final-reply fallback**
+3. **context-free desktop mirroring**
+   - mirrored desktop progress/final messages and `send-bound` relays are sent
+     without `context_token` on purpose
+   - immediate command replies (for example `/status`) still use the live inbound
+     context when available
+4. **final-reply fallback + pending outbox**
    - if rollout JSONL misses a `final_answer`, the bridge falls back to the
-     visible answer in the live `tmux codex` pane instead of only returning
-     “未捕获到 final reply”
-4. **pending outbox**
+     visible answer in the live `tmux codex` pane
    - if delivery still fails, the message is queued locally
    - when you next send any WeChat message (for example `/status`), the bridge
      automatically flushes the queued progress/final messages back to you
+
+You can also pace outbound delivery more conservatively with:
+
+```bash
+CODEX_WECHAT_BRIDGE_MIN_SEND_INTERVAL_SECONDS=0.5
+```
+
+That value defaults to `0.5` seconds and applies to all WeChat sends.
 
 Last-resort operator recovery is still:
 

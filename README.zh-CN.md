@@ -230,19 +230,30 @@ systemctl --user restart codex-wechat-bridge
 
 ## 🛟 可靠性保障
 
-现在这套 bridge 内置了三层保障：
+现在这套 bridge 内置了四层保障：
 
-1. **systemd watchdog**
-   - 服务采用 `Type=notify` + `WatchdogSec=90`
-   - 如果微信长轮询卡死但进程没退出，systemd 会自动重启
+1. **长轮询内部重试，不再用误杀式 watchdog**
+   - 长轮询失败会记成 `poll_error` 并在进程内重试
+   - 服务仍然跑在 `systemd` 下，保留 `Restart=always`
+   - 但不再使用会把健康长轮询误判成卡死的 watchdog
 2. **过期 context 自动重发**
    - 如果微信发送返回 `ret=-2`，bridge 会自动去掉 `context_token` 再试一次
-3. **final reply 兜底**
+3. **桌面镜像/relay 默认不绑 context**
+   - 桌面镜像出来的 progress/final，以及 `send-bound` 直推，默认都不带 `context_token`
+   - 这样优先保证送达，不把稳定性绑死在过期 chat context 上
+   - 即时命令回复（例如 `/status`）仍然优先使用当前入站 context
+4. **final reply 兜底 + pending outbox**
    - 如果 rollout JSONL 没抓到 `final_answer`，bridge 会退回 live `tmux codex` pane 里的可见答复
-   - 不再只回“未捕获到 final reply”
-4. **pending outbox**
    - 如果这样还是发不出去，消息会先落到本地 outbox
    - 你下次任意发一条微信消息进来（例如 `/status`），bridge 会自动把排队的 progress/final 补发给你
+
+如果你想把发消息节奏再放慢一点，还可以在 env 里设置：
+
+```bash
+CODEX_WECHAT_BRIDGE_MIN_SEND_INTERVAL_SECONDS=0.5
+```
+
+默认就是 `0.5` 秒，所有微信出站消息都走这个节流。
 
 最后兜底的 operator 操作还是：
 

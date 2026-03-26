@@ -17,6 +17,7 @@ class BridgeConfig:
     progress_updates_default: bool
     poll_timeout_ms: int = 35_000
     text_chunk_limit: int = 3500
+    min_send_interval_seconds: float = 0.5
 
     @property
     def state_file(self) -> Path:
@@ -71,6 +72,15 @@ def _parse_bool(raw: str | None, *, default: bool = False) -> bool:
     return default
 
 
+def _parse_float(raw: str | None, *, default: float) -> float:
+    if raw is None:
+        return default
+    try:
+        return float(raw.strip())
+    except ValueError:
+        return default
+
+
 def load_config() -> BridgeConfig:
     env_file = Path(
         os.environ.get(
@@ -120,6 +130,13 @@ def load_config() -> BridgeConfig:
         ),
         default=True,
     )
+    min_send_interval_seconds = _parse_float(
+        os.environ.get(
+            "CODEX_WECHAT_BRIDGE_MIN_SEND_INTERVAL_SECONDS",
+            file_env.get("CODEX_WECHAT_BRIDGE_MIN_SEND_INTERVAL_SECONDS"),
+        ),
+        default=0.5,
+    )
     return BridgeConfig(
         codex_bin=codex_bin,
         account_file=account_file,
@@ -129,4 +146,5 @@ def load_config() -> BridgeConfig:
         canonical_tmux_session=canonical_tmux_session,
         allowed_users=allowed_users,
         progress_updates_default=progress_updates_default,
+        min_send_interval_seconds=min_send_interval_seconds,
     )
