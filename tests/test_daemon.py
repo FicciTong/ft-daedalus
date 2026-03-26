@@ -197,6 +197,32 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(daemon._notify_text("off"), "notify=final-only")
             self.assertFalse(daemon.state.progress_updates_enabled)
 
+    def test_recent_replays_latest_outgoing_messages(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            config = self._make_config(state_dir, frozenset())
+            config.state_dir.mkdir(parents=True, exist_ok=True)
+            config.event_log_file.write_text(
+                "\n".join(
+                    [
+                        '{"ts":"2026-03-26T05:00:00+00:00","kind":"outgoing","payload":{"to":"user@im.wechat","text":"progress one"}}',
+                        '{"ts":"2026-03-26T05:00:01+00:00","kind":"relay_outgoing","payload":{"to":"user@im.wechat","text":"FINAL_OK"}}',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            daemon = _TestDaemon(
+                config=config,
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(bound_user_id="user@im.wechat"),
+            )
+            text = daemon._recent_text("2")
+            self.assertIn("recent:", text)
+            self.assertIn("progress one", text)
+            self.assertIn("FINAL_OK", text)
+
     def test_mirror_desktop_final_back_to_wechat(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"

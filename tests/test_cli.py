@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -49,6 +50,12 @@ class CliTests(unittest.TestCase):
                 fake_wechat.sent,
                 [("user@im.wechat", "ctx-1", "hello bound chat")],
             )
+            lines = (Path(tmpdir) / "events.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(lines), 1)
+            event = json.loads(lines[0])
+            self.assertEqual(event["kind"], "relay_outgoing")
+            self.assertEqual(event["payload"]["to"], "user@im.wechat")
+            self.assertEqual(event["payload"]["text"], "hello bound chat")
 
     def test_send_bound_text_requires_binding(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

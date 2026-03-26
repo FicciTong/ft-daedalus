@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import UTC, datetime
 import json
 import subprocess
 import shutil
@@ -50,6 +51,22 @@ def _send_bound_text(
             context_token=state.bound_context_token,
             text=chunk,
         )
+        config.state_dir.mkdir(parents=True, exist_ok=True)
+        with config.event_log_file.open("a", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps(
+                    {
+                        "ts": datetime.now(UTC).isoformat(),
+                        "kind": "relay_outgoing",
+                        "payload": {
+                            "to": state.bound_user_id,
+                            "text": chunk[:400],
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
     return 0
 
 

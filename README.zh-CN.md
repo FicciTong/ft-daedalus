@@ -296,6 +296,7 @@ journalctl --user -u codex-wechat-bridge -n 100 --no-pager
 - `/status`
 - `/health`
 - `/notify on|off|status`
+- `/recent [n]`
 - `/sessions`
 - `/new [label]`
 - `/switch <index|thread_id-prefix|label|tmux>`
@@ -317,6 +318,7 @@ uv run codex-wechat-bridge send-bound "hello from desktop"
 ```text
 /health
 /notify on
+/recent
 /status
 /sessions
 /switch 1
@@ -329,6 +331,7 @@ uv run codex-wechat-bridge send-bound "hello from desktop"
 
 - `/health` = bridge / tmux / 当前 thread 现在健不健康
 - `/notify` = 切 `progress+final` 或 `final-only`
+- `/recent` = 把最近几条已发到微信的 progress/final 再补发一遍
 - `/status` = 当前接的是哪个 live session
 - `/sessions` = 手机可读的短列表，用来快速 `/switch 1`
 - `send-bound` = 桌面/脚本侧显式把一段消息推到当前绑定微信会话

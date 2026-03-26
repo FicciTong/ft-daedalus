@@ -284,6 +284,7 @@ Commands:
 - `/status`
 - `/health`
 - `/notify on|off|status`
+- `/recent [n]`
 - `/sessions`
 - `/new [label]`
 - `/switch <index|thread_id-prefix|label|tmux>`
@@ -306,6 +307,7 @@ Examples:
 ```text
 /health
 /notify on
+/recent
 /status
 /sessions
 /switch 1
@@ -318,6 +320,7 @@ Phone-friendly semantics:
 
 - `/health` = is the bridge / tmux / thread healthy right now
 - `/notify` = choose `progress+final` or `final-only`
+- `/recent` = replay the latest already-sent progress/final messages
 - `/status` = which live session am I currently attached to
 - `/sessions` = short switchable list, optimized for phone reading
 - `send-bound` = explicit desktop/session-side push into the current bound

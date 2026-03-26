@@ -18,6 +18,7 @@ HELP_TEXT = """可用命令:
 /status          查看当前 active session
 /health          查看 bridge / tmux / session 健康状态
 /notify on|off|status 进度提示开关（微信只收 commentary 第一 Progress 句）
+/recent [n]      补看最近几条已发到微信的 progress/final
 /sessions        列出 bridge 已知 sessions
 /new [label]     新建一个本地 Codex session 并切过去
 /switch <编号|id前缀|label|tmux> 切换 active session
@@ -118,6 +119,8 @@ class BridgeDaemon:
             return self._health_text()
         if command == "/notify":
             return self._notify_text(arg)
+        if command == "/recent":
+            return self._recent_text(arg)
         if command == "/sessions":
             return self._sessions_text()
         if command == "/stop":
@@ -191,6 +194,42 @@ class BridgeDaemon:
             self._save_state()
             return "notify=final-only"
         return "用法: /notify on|off|status"
+
+    def _recent_text(self, arg: str) -> str:
+        limit = 6
+        if arg.strip().isdigit():
+            limit = max(1, min(int(arg.strip()), 12))
+        target_user = self.state.bound_user_id
+        if not target_user:
+            return "recent=empty\nhint=先发 /status 绑定当前微信会话"
+        path = self.config.event_log_file
+        if not path.exists():
+            return "recent=empty\nhint=还没有出站记录"
+
+        lines = path.read_text(encoding="utf-8").splitlines()
+        collected: list[str] = []
+        for raw in reversed(lines):
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            if event.get("kind") not in {"outgoing", "relay_outgoing"}:
+                continue
+            payload = event.get("payload", {}) or {}
+            if payload.get("to") != target_user:
+                continue
+            text = str(payload.get("text", "")).strip()
+            if not text:
+                continue
+            ts = str(event.get("ts", ""))[11:19] or "--:--:--"
+            collected.append(f"[{ts}] {text}")
+            if len(collected) >= limit:
+                break
+
+        if not collected:
+            return "recent=empty\nhint=当前会话还没有可补看的已发送消息"
+        collected.reverse()
+        return "recent:\n" + "\n\n".join(collected)
 
     def _handle_prompt(self, body: str) -> str:
         active_record = self.runner.require_live_session(self.state)
