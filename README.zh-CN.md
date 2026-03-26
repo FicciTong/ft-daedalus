@@ -1,4 +1,4 @@
-# codex-wechat-bridge
+# ft-daedalus
 
 > 📱 手机微信  
 > 🖥️ 本地 `tmux` 里的 Codex  
@@ -119,8 +119,8 @@ openclaw channels login --channel openclaw-weixin
 
 ```bash
 cd ~/dev
-git clone https://github.com/FicciTong/codex-wechat-bridge.git
-cd codex-wechat-bridge
+git clone https://github.com/FicciTong/ft-daedalus.git
+cd ft-daedalus
 uv sync
 ```
 
@@ -129,7 +129,7 @@ uv sync
 如果你要把这套东西交给别人装，最短路径就是：
 
 ```bash
-cd ~/dev/codex-wechat-bridge
+cd ~/dev/ft-cosmos/ft-daedalus
 bash scripts/install-user-service.sh
 ```
 
@@ -146,7 +146,7 @@ bash scripts/install-user-service.sh
 如果只想单独看健康状态：
 
 ```bash
-cd ~/dev/codex-wechat-bridge
+cd ~/dev/ft-cosmos/ft-daedalus
 bash scripts/doctor.sh
 ```
 
@@ -155,7 +155,7 @@ bash scripts/doctor.sh
 canonical 登录命令：
 
 ```bash
-cd ~/dev/codex-wechat-bridge
+cd ~/dev/ft-cosmos/ft-daedalus
 uv run codex-wechat-bridge auth-openclaw
 ```
 
@@ -296,14 +296,14 @@ tmux new -s codex 'codex -C /home/ft/dev/ft-cosmos --no-alt-screen'
 前台跑：
 
 ```bash
-cd ~/dev/codex-wechat-bridge
+cd ~/dev/ft-cosmos/ft-daedalus
 uv run codex-wechat-bridge run
 ```
 
 健康检查：
 
 ```bash
-cd ~/dev/codex-wechat-bridge
+cd ~/dev/ft-cosmos/ft-daedalus
 uv run codex-wechat-bridge doctor
 ```
 
@@ -357,7 +357,7 @@ journalctl --user -u codex-wechat-bridge -n 100 --no-pager
 但你仍然想把一段消息主动推到**当前已绑定**的微信聊天窗口，可以用：
 
 ```bash
-cd ~/dev/codex-wechat-bridge
+cd ~/dev/ft-cosmos/ft-daedalus
 uv run codex-wechat-bridge send-bound "hello from desktop"
 ```
 
@@ -436,7 +436,7 @@ systemctl --user status codex-wechat-bridge
 2. 跑 doctor：
 
 ```bash
-cd ~/dev/codex-wechat-bridge
+cd ~/dev/ft-cosmos/ft-daedalus
 uv run codex-wechat-bridge doctor
 ```
 

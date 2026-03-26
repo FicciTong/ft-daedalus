@@ -5,10 +5,10 @@ After=network-online.target
 [Service]
 Type=notify
 NotifyAccess=all
-WorkingDirectory=%h/dev/codex-wechat-bridge
+WorkingDirectory=%h/dev/ft-cosmos/ft-daedalus
 EnvironmentFile=-%h/.config/codex-wechat-bridge.env
 Environment=PATH=%h/.local/share/mise/installs/node/24.13.1/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/dev/codex-wechat-bridge/.venv/bin/codex-wechat-bridge run
+ExecStart=%h/dev/ft-cosmos/ft-daedalus/.venv/bin/codex-wechat-bridge run
 Restart=always
 RestartSec=5
 

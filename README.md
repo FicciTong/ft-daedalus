@@ -1,4 +1,4 @@
-# codex-wechat-bridge
+# ft-daedalus
 
 > 📱 WeChat on your phone  
 > 🖥️ Codex in your local `tmux`  
@@ -104,8 +104,8 @@ to run those raw commands manually.
 
 ```bash
 cd ~/dev
-git clone https://github.com/FicciTong/codex-wechat-bridge.git
-cd codex-wechat-bridge
+git clone https://github.com/FicciTong/ft-daedalus.git
+cd ft-daedalus
 uv sync
 ```
 
@@ -114,7 +114,7 @@ uv sync
 If you want to hand this to someone else, the shortest install path is:
 
 ```bash
-cd ~/dev/codex-wechat-bridge
+cd ~/dev/ft-cosmos/ft-daedalus
 bash scripts/install-user-service.sh
 ```
 
@@ -132,7 +132,7 @@ This script:
 If you only want the health summary later:
 
 ```bash
-cd ~/dev/codex-wechat-bridge
+cd ~/dev/ft-cosmos/ft-daedalus
 bash scripts/doctor.sh
 ```
 
@@ -141,7 +141,7 @@ bash scripts/doctor.sh
 The canonical login path for this bridge is:
 
 ```bash
-cd ~/dev/codex-wechat-bridge
+cd ~/dev/ft-cosmos/ft-daedalus
 uv run codex-wechat-bridge auth-openclaw
 ```
 
@@ -282,14 +282,14 @@ Important discipline:
 Foreground:
 
 ```bash
-cd ~/dev/codex-wechat-bridge
+cd ~/dev/ft-cosmos/ft-daedalus
 uv run codex-wechat-bridge run
 ```
 
 Health check:
 
 ```bash
-cd ~/dev/codex-wechat-bridge
+cd ~/dev/ft-cosmos/ft-daedalus
 uv run codex-wechat-bridge doctor
 ```
 
@@ -350,7 +350,7 @@ For scripts or non-bridge sessions that still need to push a message into the
 currently bound WeChat chat, use:
 
 ```bash
-cd ~/dev/codex-wechat-bridge
+cd ~/dev/ft-cosmos/ft-daedalus
 uv run codex-wechat-bridge send-bound "hello from desktop"
 ```
 
@@ -432,7 +432,7 @@ systemctl --user status codex-wechat-bridge
 2. run doctor:
 
 ```bash
-cd ~/dev/codex-wechat-bridge
+cd ~/dev/ft-cosmos/ft-daedalus
 uv run codex-wechat-bridge doctor
 ```
 
