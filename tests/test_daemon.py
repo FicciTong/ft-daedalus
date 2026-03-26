@@ -111,7 +111,7 @@ class DaemonTests(unittest.TestCase):
             account_file=state_dir / "account.json",
             state_dir=state_dir,
             default_cwd=Path("/tmp"),
-            openclaw_profile="codex-wechat-bridge",
+            openclaw_profile="daedalus-wechat",
             canonical_tmux_session="codex",
             allowed_users=allowed_users,
             progress_updates_default=True,

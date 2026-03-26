@@ -19,7 +19,7 @@ def _random_wechat_uin() -> str:
 
 
 def _generate_client_id() -> str:
-    return f"codex-wechat-bridge:{secrets.token_hex(8)}"
+    return f"daedalus-wechat:{secrets.token_hex(8)}"
 
 
 def _derive_account_id(token: str, path: Path) -> str:

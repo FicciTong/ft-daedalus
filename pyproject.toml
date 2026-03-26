@@ -3,14 +3,14 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "codex-wechat-bridge"
+name = "daedalus-wechat"
 version = "0.1.0"
-description = "Bridge a local Codex session into WeChat using the official ilink bot protocol"
+description = "Current ft-daedalus tool: a WeChat operator surface for one canonical local tmux live session"
 requires-python = ">=3.13"
 dependencies = []
 
 [project.scripts]
-codex-wechat-bridge = "codex_wechat_bridge.cli:main"
+daedalus-wechat = "codex_wechat_bridge.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

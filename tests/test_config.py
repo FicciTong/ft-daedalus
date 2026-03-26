@@ -23,14 +23,14 @@ class ConfigTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             env_file = Path(tmpdir) / "bridge.env"
             env_file.write_text(
-                "CODEX_WECHAT_BRIDGE_ALLOWED_USERS=user-a@im.wechat,user-b@im.wechat\n"
-                "CODEX_WECHAT_BRIDGE_TMUX_SESSION=my-tmux\n"
-                "CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES=on\n"
-                "CODEX_WECHAT_BRIDGE_OUTBOX_RETRY_INTERVAL_SECONDS=0.75\n"
+                "DAEDALUS_WECHAT_ALLOWED_USERS=user-a@im.wechat,user-b@im.wechat\n"
+                "DAEDALUS_WECHAT_TMUX_SESSION=my-tmux\n"
+                "DAEDALUS_WECHAT_PROGRESS_UPDATES=on\n"
+                "DAEDALUS_WECHAT_OUTBOX_RETRY_INTERVAL_SECONDS=0.75\n"
             )
             with patch.dict(
                 os.environ,
-                {"CODEX_WECHAT_BRIDGE_ENV_FILE": str(env_file)},
+                {"DAEDALUS_WECHAT_ENV_FILE": str(env_file)},
                 clear=False,
             ):
                 config = load_config()
@@ -48,7 +48,7 @@ class ConfigTests(unittest.TestCase):
             env_file.write_text("")
             with patch.dict(
                 os.environ,
-                {"CODEX_WECHAT_BRIDGE_ENV_FILE": str(env_file)},
+                {"DAEDALUS_WECHAT_ENV_FILE": str(env_file)},
                 clear=False,
             ):
                 config = load_config()

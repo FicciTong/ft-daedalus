@@ -1,13 +1,26 @@
 # ft-daedalus
 
+**English name:** Daedalus  
+**Chinese name:** 天工
+
+`ft-daedalus` is the **operator / tooling repo** under `ft-cosmos` governance.
+It is a public tools repo for owner/operator surfaces and small practical
+runtime utilities. It is **not** limited to one tool forever.
+
+The current canonical tool in this repo is:
+
+- **`daedalus-wechat`** — a WeChat operator surface for one canonical local
+  live `tmux` session
+
 > 📱 WeChat on your phone  
 > 🖥️ Codex in your local `tmux`  
 > 🔁 One canonical live session
 
 [中文说明 / Chinese Guide](./README.zh-CN.md)
 
-Bridge a **local Codex tmux session** into WeChat using the **official**
-OpenClaw Weixin channel (`@tencent-weixin/openclaw-weixin`).
+Today, `daedalus-wechat` bridges a **local Codex tmux session** into WeChat
+using the **official** OpenClaw Weixin channel
+(`@tencent-weixin/openclaw-weixin`).
 
 This is **not** a cloud-task wrapper. It preserves **local session continuity**
 by routing WeChat messages into one canonical live tmux shell:
@@ -15,6 +28,10 @@ by routing WeChat messages into one canonical live tmux shell:
 - tmux session name: `codex`
 - live agent inside that shell: local `codex`
 - WeChat acts as a remote operator surface for that same local shell
+
+That is the **current** shape of the repo, not the permanent limit of the repo.
+If `ft-daedalus` grows more tools later, they should live here as separate
+operator/tooling surfaces with the same governance posture.
 
 ## ✨ At A Glance
 
@@ -130,7 +147,7 @@ This script:
    `systemctl`)
 2. runs `uv sync`
 3. installs the user systemd unit
-4. creates `~/.config/codex-wechat-bridge.env` if missing
+4. creates `~/.config/daedalus-wechat.env` if missing
 5. runs the official WeChat QR login flow
 6. restarts the bridge
 7. runs bridge doctor
@@ -148,13 +165,13 @@ The canonical login path for this bridge is:
 
 ```bash
 cd ~/dev/ft-cosmos/ft-daedalus
-uv run codex-wechat-bridge auth-openclaw
+uv run daedalus-wechat auth-openclaw
 ```
 
 What this does:
 
 1. bootstraps the official `@tencent-weixin/openclaw-weixin` plugin into the
-   dedicated OpenClaw profile `codex-wechat-bridge`
+   dedicated OpenClaw profile `daedalus-wechat`
 2. enables the plugin for that profile
 3. runs the official QR-code login flow
 4. imports the resulting account into the bridge state dir
@@ -162,11 +179,11 @@ What this does:
 By default the bridge stores its imported account at:
 
 ```bash
-~/.local/state/codex-wechat-bridge/account.json
+~/.local/state/daedalus-wechat/account.json
 ```
 
 If `doctor` later reports `errcode=-14` / session timeout, just run
-`uv run codex-wechat-bridge auth-openclaw` again.
+`uv run daedalus-wechat auth-openclaw` again.
 
 If outbound sends later fail with `ret=-2`, the bridge now automatically retries
 once **without** `context_token`. This keeps delivery alive even when the old
@@ -180,7 +197,7 @@ chat context expires. If you still do not see a message, send:
 If you intentionally want a different OpenClaw profile:
 
 ```bash
-export CODEX_WECHAT_BRIDGE_OPENCLAW_PROFILE=my-profile
+export DAEDALUS_WECHAT_OPENCLAW_PROFILE=my-profile
 ```
 
 ## 🛡️ Security Boundary
@@ -191,25 +208,25 @@ bot conversation.
 If this machine matters, configure an allowlist in:
 
 ```bash
-~/.config/codex-wechat-bridge.env
+~/.config/daedalus-wechat.env
 ```
 
 Example:
 
 ```bash
-CODEX_WECHAT_BRIDGE_ALLOWED_USERS=o9cq80y6O1DAYqilESlM_NbeqtTc@im.wechat
+DAEDALUS_WECHAT_ALLOWED_USERS=o9cq80y6O1DAYqilESlM_NbeqtTc@im.wechat
 ```
 
 You can provide multiple users, comma-separated:
 
 ```bash
-CODEX_WECHAT_BRIDGE_ALLOWED_USERS=user-a@im.wechat,user-b@im.wechat
+DAEDALUS_WECHAT_ALLOWED_USERS=user-a@im.wechat,user-b@im.wechat
 ```
 
 After changing the env file:
 
 ```bash
-systemctl --user restart codex-wechat-bridge
+systemctl --user restart daedalus-wechat
 ```
 
 ## 🛟 Reliability Guardrails
@@ -244,7 +261,7 @@ The bridge now has four built-in reliability layers:
 You can also pace outbound delivery more conservatively with:
 
 ```bash
-CODEX_WECHAT_BRIDGE_MIN_SEND_INTERVAL_SECONDS=0.5
+DAEDALUS_WECHAT_MIN_SEND_INTERVAL_SECONDS=0.5
 ```
 
 That value defaults to `0.5` seconds and applies to all WeChat sends.
@@ -289,14 +306,14 @@ Foreground:
 
 ```bash
 cd ~/dev/ft-cosmos/ft-daedalus
-uv run codex-wechat-bridge run
+uv run daedalus-wechat run
 ```
 
 Health check:
 
 ```bash
 cd ~/dev/ft-cosmos/ft-daedalus
-uv run codex-wechat-bridge doctor
+uv run daedalus-wechat doctor
 ```
 
 ## ⚙️ Install As A User Service
@@ -305,32 +322,32 @@ This repo includes a user-level systemd unit:
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp ops/systemd/user/codex-wechat-bridge.service ~/.config/systemd/user/
+cp ops/systemd/user/daedalus-wechat.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now codex-wechat-bridge
+systemctl --user enable --now daedalus-wechat
 ```
 
 The bridge reads:
 
 ```bash
-~/.config/codex-wechat-bridge.env
+~/.config/daedalus-wechat.env
 ```
 
 That is the canonical place for both foreground CLI and background service:
 
-- `CODEX_WECHAT_BRIDGE_DEFAULT_CWD`
-- `CODEX_WECHAT_BRIDGE_TMUX_SESSION`
-- `CODEX_WECHAT_BRIDGE_CODEX_BIN`
-- `CODEX_WECHAT_BRIDGE_ALLOWED_USERS`
-- `CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES`
+- `DAEDALUS_WECHAT_DEFAULT_CWD`
+- `DAEDALUS_WECHAT_TMUX_SESSION`
+- `DAEDALUS_WECHAT_CODEX_BIN`
+- `DAEDALUS_WECHAT_ALLOWED_USERS`
+- `DAEDALUS_WECHAT_PROGRESS_UPDATES`
 - optional OpenClaw profile overrides
 
 Useful commands:
 
 ```bash
-systemctl --user status codex-wechat-bridge
-systemctl --user restart codex-wechat-bridge
-journalctl --user -u codex-wechat-bridge -n 100 --no-pager
+systemctl --user status daedalus-wechat
+systemctl --user restart daedalus-wechat
+journalctl --user -u daedalus-wechat -n 100 --no-pager
 ```
 
 ## 💬 WeChat Commands
@@ -357,7 +374,7 @@ currently bound WeChat chat, use:
 
 ```bash
 cd ~/dev/ft-cosmos/ft-daedalus
-uv run codex-wechat-bridge send-bound "hello from desktop"
+uv run daedalus-wechat send-bound "hello from desktop"
 ```
 
 Plain text messages are sent to whatever Codex thread is **currently active
@@ -417,13 +434,13 @@ canonical tmux owner.
 
 ## 🧩 Optional Environment Variables
 
-- `CODEX_WECHAT_BRIDGE_DEFAULT_CWD`
-- `CODEX_WECHAT_BRIDGE_STATE_DIR`
-- `CODEX_WECHAT_BRIDGE_ACCOUNT_FILE`
-- `CODEX_WECHAT_BRIDGE_CODEX_BIN`
-- `CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES`
-- `CODEX_WECHAT_BRIDGE_OPENCLAW_PROFILE`
-- `CODEX_WECHAT_BRIDGE_TMUX_SESSION`
+- `DAEDALUS_WECHAT_DEFAULT_CWD`
+- `DAEDALUS_WECHAT_STATE_DIR`
+- `DAEDALUS_WECHAT_ACCOUNT_FILE`
+- `DAEDALUS_WECHAT_CODEX_BIN`
+- `DAEDALUS_WECHAT_PROGRESS_UPDATES`
+- `DAEDALUS_WECHAT_OPENCLAW_PROFILE`
+- `DAEDALUS_WECHAT_TMUX_SESSION`
 
 ## 🧯 Failure Recovery
 
@@ -432,20 +449,20 @@ If WeChat stops replying:
 1. check the service:
 
 ```bash
-systemctl --user status codex-wechat-bridge
+systemctl --user status daedalus-wechat
 ```
 
 2. run doctor:
 
 ```bash
 cd ~/dev/ft-cosmos/ft-daedalus
-uv run codex-wechat-bridge doctor
+uv run daedalus-wechat doctor
 ```
 
 3. if login expired:
 
 ```bash
-uv run codex-wechat-bridge auth-openclaw
+uv run daedalus-wechat auth-openclaw
 ```
 
 4. if the bridge is healthy but Codex is missing, restore the canonical tmux:

@@ -31,7 +31,7 @@ class CliTests(unittest.TestCase):
             account_file=state_dir / "account.json",
             state_dir=state_dir,
             default_cwd=Path("/tmp"),
-            openclaw_profile="codex-wechat-bridge",
+            openclaw_profile="daedalus-wechat",
             canonical_tmux_session="codex",
             allowed_users=frozenset(),
             progress_updates_default=True,

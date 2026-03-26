@@ -1,4 +1,4 @@
-"""codex-wechat-bridge."""
+"""Implementation package for the current daedalus-wechat tool."""
 
 __all__ = ["__version__"]
 

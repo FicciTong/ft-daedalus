@@ -89,63 +89,63 @@ def _parse_float(raw: str | None, *, default: float) -> float:
 def load_config() -> BridgeConfig:
     env_file = Path(
         os.environ.get(
-            "CODEX_WECHAT_BRIDGE_ENV_FILE", "~/.config/codex-wechat-bridge.env"
+            "DAEDALUS_WECHAT_ENV_FILE", "~/.config/daedalus-wechat.env"
         )
     ).expanduser()
     file_env = _load_env_file(env_file)
     default_cwd = Path(
         os.environ.get(
-            "CODEX_WECHAT_BRIDGE_DEFAULT_CWD",
-            file_env.get("CODEX_WECHAT_BRIDGE_DEFAULT_CWD", "/home/ft/dev/ft-cosmos"),
+            "DAEDALUS_WECHAT_DEFAULT_CWD",
+            file_env.get("DAEDALUS_WECHAT_DEFAULT_CWD", "/home/ft/dev/ft-cosmos"),
         )
     ).expanduser()
     state_dir = Path(
         os.environ.get(
-            "CODEX_WECHAT_BRIDGE_STATE_DIR", "~/.local/state/codex-wechat-bridge"
+            "DAEDALUS_WECHAT_STATE_DIR", "~/.local/state/daedalus-wechat"
         )
     ).expanduser()
     account_file = Path(
-        os.environ.get("CODEX_WECHAT_BRIDGE_ACCOUNT_FILE", str(state_dir / "account.json"))
+        os.environ.get("DAEDALUS_WECHAT_ACCOUNT_FILE", str(state_dir / "account.json"))
     ).expanduser()
     codex_bin = os.environ.get(
-        "CODEX_WECHAT_BRIDGE_CODEX_BIN",
-        file_env.get("CODEX_WECHAT_BRIDGE_CODEX_BIN", "codex"),
+        "DAEDALUS_WECHAT_CODEX_BIN",
+        file_env.get("DAEDALUS_WECHAT_CODEX_BIN", "codex"),
     )
     openclaw_profile = os.environ.get(
-        "CODEX_WECHAT_BRIDGE_OPENCLAW_PROFILE",
-        file_env.get("CODEX_WECHAT_BRIDGE_OPENCLAW_PROFILE", "codex-wechat-bridge"),
-    ).strip() or "codex-wechat-bridge"
+        "DAEDALUS_WECHAT_OPENCLAW_PROFILE",
+        file_env.get("DAEDALUS_WECHAT_OPENCLAW_PROFILE", "daedalus-wechat"),
+    ).strip() or "daedalus-wechat"
     canonical_tmux_session = (
         os.environ.get(
-            "CODEX_WECHAT_BRIDGE_TMUX_SESSION",
-            file_env.get("CODEX_WECHAT_BRIDGE_TMUX_SESSION", "codex"),
+            "DAEDALUS_WECHAT_TMUX_SESSION",
+            file_env.get("DAEDALUS_WECHAT_TMUX_SESSION", "codex"),
         ).strip()
         or "codex"
     )
     allowed_users = _parse_allowed_users(
         os.environ.get(
-            "CODEX_WECHAT_BRIDGE_ALLOWED_USERS",
-            file_env.get("CODEX_WECHAT_BRIDGE_ALLOWED_USERS", ""),
+            "DAEDALUS_WECHAT_ALLOWED_USERS",
+            file_env.get("DAEDALUS_WECHAT_ALLOWED_USERS", ""),
         )
     )
     progress_updates_default = _parse_bool(
         os.environ.get(
-            "CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES",
-            file_env.get("CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES"),
+            "DAEDALUS_WECHAT_PROGRESS_UPDATES",
+            file_env.get("DAEDALUS_WECHAT_PROGRESS_UPDATES"),
         ),
         default=True,
     )
     min_send_interval_seconds = _parse_float(
         os.environ.get(
-            "CODEX_WECHAT_BRIDGE_MIN_SEND_INTERVAL_SECONDS",
-            file_env.get("CODEX_WECHAT_BRIDGE_MIN_SEND_INTERVAL_SECONDS"),
+            "DAEDALUS_WECHAT_MIN_SEND_INTERVAL_SECONDS",
+            file_env.get("DAEDALUS_WECHAT_MIN_SEND_INTERVAL_SECONDS"),
         ),
         default=0.5,
     )
     outbox_retry_interval_seconds = _parse_float(
         os.environ.get(
-            "CODEX_WECHAT_BRIDGE_OUTBOX_RETRY_INTERVAL_SECONDS",
-            file_env.get("CODEX_WECHAT_BRIDGE_OUTBOX_RETRY_INTERVAL_SECONDS"),
+            "DAEDALUS_WECHAT_OUTBOX_RETRY_INTERVAL_SECONDS",
+            file_env.get("DAEDALUS_WECHAT_OUTBOX_RETRY_INTERVAL_SECONDS"),
         ),
         default=1.0,
     )

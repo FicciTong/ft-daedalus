@@ -102,7 +102,7 @@ def _send_bound_text(
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="codex-wechat-bridge")
+    parser = argparse.ArgumentParser(prog="daedalus-wechat")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("run", help="Run the WeChat bridge daemon")
     sub.add_parser("status", help="Print current bridge state")
@@ -142,7 +142,7 @@ def _import_latest_openclaw_account(config, state: BridgeState) -> int:
         )
     if not candidates:
         raise RuntimeError(
-            "No OpenClaw Weixin account found. Run `codex-wechat-bridge auth-openclaw` first."
+            "No OpenClaw Weixin account found. Run `daedalus-wechat auth-openclaw` first."
         )
     account_src = candidates[0]
     sync_src = root / f"{account_src.stem}.sync.json"

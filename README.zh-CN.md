@@ -1,13 +1,25 @@
 # ft-daedalus
 
+**英文名：** Daedalus  
+**中文名：** 天工
+
+`ft-daedalus` 是受 `ft-cosmos` 治理的 **operator / tooling 仓库**。  
+它是一个公开的工具仓库，用来承载 owner/operator surface 和一些小而真
+的运行工具。它**不代表以后只有这一件工具**。
+
+当前这个仓库里已经正式落下来的 canonical 工具是：
+
+- **`daedalus-wechat`** —— 把微信接成一个 canonical 本地 live `tmux`
+  会话的 operator surface
+
 > 📱 手机微信  
 > 🖥️ 本地 `tmux` 里的 Codex  
 > 🔁 同一个 canonical live session
 
 [English Version](./README.md)
 
-这是一个把**本地 Codex tmux 会话**桥接到微信的工具，走的是**官方**
-OpenClaw Weixin 通道（`@tencent-weixin/openclaw-weixin`）。
+今天，`daedalus-wechat` 这件工具把**本地 Codex tmux 会话**桥接到微信，
+走的是**官方** OpenClaw Weixin 通道（`@tencent-weixin/openclaw-weixin`）。
 
 它**不是**云端任务转发器，也**不是**“换个平台聊同一个机器人”的空壳。  
 它的核心目标只有一个：
@@ -19,6 +31,10 @@ OpenClaw Weixin 通道（`@tencent-weixin/openclaw-weixin`）。
 - canonical tmux 名：`codex`
 - tmux 里跑的 agent：本地 `codex`
 - 微信是远程 operator surface，不是另一个独立 bot
+
+这只是仓库当前已经落成的第一件工具，不是这个仓库的永久边界。以后如果
+`ft-daedalus` 再长出别的工具，它们也应该作为独立 operator/tooling
+surface 落在这里。
 
 ## ✨ 一眼看懂
 
@@ -144,7 +160,7 @@ bash scripts/install-user-service.sh
 1. 检查依赖命令（`codex`、`tmux`、`python3`、`uv`、`openclaw`、`systemctl`）
 2. 执行 `uv sync`
 3. 安装 user-level systemd 服务
-4. 创建 `~/.config/codex-wechat-bridge.env`
+4. 创建 `~/.config/daedalus-wechat.env`
 5. 走官方微信扫码登录
 6. 重启 bridge
 7. 运行 doctor 自检
@@ -162,12 +178,12 @@ canonical 登录命令：
 
 ```bash
 cd ~/dev/ft-cosmos/ft-daedalus
-uv run codex-wechat-bridge auth-openclaw
+uv run daedalus-wechat auth-openclaw
 ```
 
 它会自动：
 
-1. 在专用 OpenClaw profile `codex-wechat-bridge` 下 bootstrap 官方插件
+1. 在专用 OpenClaw profile `daedalus-wechat` 下 bootstrap 官方插件
 2. 启用插件
 3. 走官方二维码登录
 4. 把账号导入 bridge 的本地状态目录
@@ -175,7 +191,7 @@ uv run codex-wechat-bridge auth-openclaw
 默认账号文件位置：
 
 ```bash
-~/.local/state/codex-wechat-bridge/account.json
+~/.local/state/daedalus-wechat/account.json
 ```
 
 如果以后 doctor 报：
@@ -186,7 +202,7 @@ uv run codex-wechat-bridge auth-openclaw
 直接重新跑一次：
 
 ```bash
-uv run codex-wechat-bridge auth-openclaw
+uv run daedalus-wechat auth-openclaw
 ```
 
 如果后面微信发不出去并出现 `ret=-2`，bridge 现在会自动再试一次：
@@ -203,7 +219,7 @@ uv run codex-wechat-bridge auth-openclaw
 如果你要故意改 OpenClaw profile：
 
 ```bash
-export CODEX_WECHAT_BRIDGE_OPENCLAW_PROFILE=my-profile
+export DAEDALUS_WECHAT_OPENCLAW_PROFILE=my-profile
 ```
 
 ## 🛡️ 安全边界
@@ -213,25 +229,25 @@ export CODEX_WECHAT_BRIDGE_OPENCLAW_PROFILE=my-profile
 如果这台机器重要，请配置 allowlist：
 
 ```bash
-~/.config/codex-wechat-bridge.env
+~/.config/daedalus-wechat.env
 ```
 
 示例：
 
 ```bash
-CODEX_WECHAT_BRIDGE_ALLOWED_USERS=o9cq80y6O1DAYqilESlM_NbeqtTc@im.wechat
+DAEDALUS_WECHAT_ALLOWED_USERS=o9cq80y6O1DAYqilESlM_NbeqtTc@im.wechat
 ```
 
 多个用户就逗号分隔：
 
 ```bash
-CODEX_WECHAT_BRIDGE_ALLOWED_USERS=user-a@im.wechat,user-b@im.wechat
+DAEDALUS_WECHAT_ALLOWED_USERS=user-a@im.wechat,user-b@im.wechat
 ```
 
 改完后重启：
 
 ```bash
-systemctl --user restart codex-wechat-bridge
+systemctl --user restart daedalus-wechat
 ```
 
 ## 🛟 可靠性保障
@@ -259,7 +275,7 @@ systemctl --user restart codex-wechat-bridge
 如果你想把发消息节奏再放慢一点，还可以在 env 里设置：
 
 ```bash
-CODEX_WECHAT_BRIDGE_MIN_SEND_INTERVAL_SECONDS=0.5
+DAEDALUS_WECHAT_MIN_SEND_INTERVAL_SECONDS=0.5
 ```
 
 默认就是 `0.5` 秒，所有微信出站消息都走这个节流。
@@ -303,14 +319,14 @@ tmux new -s codex 'codex -C /home/ft/dev/ft-cosmos --no-alt-screen'
 
 ```bash
 cd ~/dev/ft-cosmos/ft-daedalus
-uv run codex-wechat-bridge run
+uv run daedalus-wechat run
 ```
 
 健康检查：
 
 ```bash
 cd ~/dev/ft-cosmos/ft-daedalus
-uv run codex-wechat-bridge doctor
+uv run daedalus-wechat doctor
 ```
 
 ## ⚙️ 安装成用户服务
@@ -319,15 +335,15 @@ uv run codex-wechat-bridge doctor
 
 ```bash
 mkdir -p ~/.config/systemd/user
-cp ops/systemd/user/codex-wechat-bridge.service ~/.config/systemd/user/
+cp ops/systemd/user/daedalus-wechat.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now codex-wechat-bridge
+systemctl --user enable --now daedalus-wechat
 ```
 
 bridge 读取的 canonical env 文件是：
 
 ```bash
-~/.config/codex-wechat-bridge.env
+~/.config/daedalus-wechat.env
 ```
 
 这里是前台 CLI 和后台 service 共用的配置入口。
@@ -335,9 +351,9 @@ bridge 读取的 canonical env 文件是：
 常用命令：
 
 ```bash
-systemctl --user status codex-wechat-bridge
-systemctl --user restart codex-wechat-bridge
-journalctl --user -u codex-wechat-bridge -n 100 --no-pager
+systemctl --user status daedalus-wechat
+systemctl --user restart daedalus-wechat
+journalctl --user -u daedalus-wechat -n 100 --no-pager
 ```
 
 ## 💬 微信命令
@@ -364,7 +380,7 @@ journalctl --user -u codex-wechat-bridge -n 100 --no-pager
 
 ```bash
 cd ~/dev/ft-cosmos/ft-daedalus
-uv run codex-wechat-bridge send-bound "hello from desktop"
+uv run daedalus-wechat send-bound "hello from desktop"
 ```
 
 普通文本消息会送进当前 `tmux codex` 里正在活着的 Codex thread。
@@ -421,13 +437,13 @@ tmux attach -t codex
 
 ## 🧩 可选环境变量
 
-- `CODEX_WECHAT_BRIDGE_DEFAULT_CWD`
-- `CODEX_WECHAT_BRIDGE_STATE_DIR`
-- `CODEX_WECHAT_BRIDGE_ACCOUNT_FILE`
-- `CODEX_WECHAT_BRIDGE_CODEX_BIN`
-- `CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES`
-- `CODEX_WECHAT_BRIDGE_OPENCLAW_PROFILE`
-- `CODEX_WECHAT_BRIDGE_TMUX_SESSION`
+- `DAEDALUS_WECHAT_DEFAULT_CWD`
+- `DAEDALUS_WECHAT_STATE_DIR`
+- `DAEDALUS_WECHAT_ACCOUNT_FILE`
+- `DAEDALUS_WECHAT_CODEX_BIN`
+- `DAEDALUS_WECHAT_PROGRESS_UPDATES`
+- `DAEDALUS_WECHAT_OPENCLAW_PROFILE`
+- `DAEDALUS_WECHAT_TMUX_SESSION`
 
 ## 🧯 故障恢复
 
@@ -436,20 +452,20 @@ tmux attach -t codex
 1. 看 service：
 
 ```bash
-systemctl --user status codex-wechat-bridge
+systemctl --user status daedalus-wechat
 ```
 
 2. 跑 doctor：
 
 ```bash
 cd ~/dev/ft-cosmos/ft-daedalus
-uv run codex-wechat-bridge doctor
+uv run daedalus-wechat doctor
 ```
 
 3. 如果登录过期：
 
 ```bash
-uv run codex-wechat-bridge auth-openclaw
+uv run daedalus-wechat auth-openclaw
 ```
 
 4. 如果 bridge 健康但 Codex 不在了，重建 canonical tmux：
