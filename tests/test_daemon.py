@@ -25,6 +25,7 @@ class _FakeRunner:
     def __init__(self) -> None:
         self.rollout_sizes: dict[str, int] = {}
         self.finals: dict[tuple[str, int], tuple[str, int]] = {}
+        self.runtime_thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
 
     def try_live_session(self, state: BridgeState):
         return None
@@ -34,7 +35,7 @@ class _FakeRunner:
             tmux_session="codex",
             exists=True,
             pane_command="node",
-            thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+            thread_id=self.runtime_thread_id,
         )
 
     def attach_hint(self, record: SessionRecord) -> str:
@@ -185,6 +186,43 @@ class DaemonTests(unittest.TestCase):
             daemon._mirror_desktop_final_if_any()
             self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", "ctx-1", "DESKTOP_FINAL_OK"))
             self.assertEqual(state.get_mirror_offset(thread_id), 150)
+
+    def test_mirror_follows_current_tmux_thread(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_thread = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            new_thread = "11111111-2222-3333-4444-555555555555"
+            state = BridgeState(
+                active_session_id=old_thread,
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                mirror_offsets={old_thread: 10, new_thread: 20},
+                sessions={
+                    old_thread: SessionRecord(
+                        thread_id=old_thread,
+                        label="old",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="codex",
+                    )
+                },
+            )
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            runner.runtime_thread_id = new_thread
+            runner.finals[(new_thread, 20)] = ("NEW_THREAD_FINAL_OK", 30)
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            daemon._mirror_desktop_final_if_any()
+            self.assertEqual(state.active_session_id, new_thread)
+            self.assertEqual(state.sessions[new_thread].tmux_session, "codex")
+            self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", "ctx-1", "NEW_THREAD_FINAL_OK"))
+            self.assertEqual(state.get_mirror_offset(new_thread), 30)
 
 
 if __name__ == "__main__":

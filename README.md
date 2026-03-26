@@ -48,6 +48,8 @@ So:
 - if you want remote control from your phone, use WeChat
 - if you want desktop-originated final replies to come back to WeChat, first
   send any normal message or command once so the current chat context is bound
+- if you manually `resume` a different thread inside `tmux codex`, the mirror
+  follows that **current canonical tmux thread**, not a stale saved thread id
 
 ## Prerequisites
 

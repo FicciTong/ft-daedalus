@@ -327,7 +327,7 @@ class BridgeDaemon:
                     self._log_event("mirror_error", {"error": str(exc)})
 
     def _mirror_desktop_final_if_any(self) -> None:
-        thread_id = self.state.active_session_id
+        thread_id = self._current_mirror_thread_id()
         to_user_id = self.state.bound_user_id
         context_token = self.state.bound_context_token
         if not thread_id or not to_user_id or not context_token:
@@ -347,6 +347,23 @@ class BridgeDaemon:
             "mirrored_final",
             {"thread": self._short_thread(thread_id), "to": to_user_id},
         )
+
+    def _current_mirror_thread_id(self) -> str | None:
+        runtime = self.runner.current_runtime_status()
+        if runtime.exists and runtime.thread_id:
+            if self.state.active_session_id != runtime.thread_id:
+                self.state.active_session_id = runtime.thread_id
+                existing = self.state.sessions.get(runtime.thread_id)
+                self.state.touch_session(
+                    runtime.thread_id,
+                    label=existing.label if existing else "live-codex",
+                    cwd=existing.cwd if existing else str(self.config.default_cwd),
+                    source=existing.source if existing else "tmux-live",
+                    tmux_session=runtime.tmux_session,
+                )
+                self._save_state()
+            return runtime.thread_id
+        return self.state.active_session_id
 
     def _chunk_text(self, text: str) -> list[str]:
         text = text.strip()
