@@ -5,9 +5,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from codex_wechat_bridge.cli import _send_bound_text
-from codex_wechat_bridge.config import BridgeConfig
-from codex_wechat_bridge.state import BridgeState
+from daedalus_wechat.cli import _send_bound_text
+from daedalus_wechat.config import BridgeConfig
+from daedalus_wechat.state import BridgeState
 
 
 class _FakeWeChat:

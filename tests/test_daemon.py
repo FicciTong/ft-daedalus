@@ -4,11 +4,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from codex_wechat_bridge.config import BridgeConfig
-from codex_wechat_bridge.daemon import BridgeDaemon
-from codex_wechat_bridge.live_session import LiveRuntimeStatus
-from codex_wechat_bridge.state import SessionRecord
-from codex_wechat_bridge.state import BridgeState
+from daedalus_wechat.config import BridgeConfig
+from daedalus_wechat.daemon import BridgeDaemon
+from daedalus_wechat.live_session import LiveRuntimeStatus
+from daedalus_wechat.state import SessionRecord
+from daedalus_wechat.state import BridgeState
 
 
 class _FakeWeChat:
@@ -90,11 +90,11 @@ class _FakeRunner:
     def latest_final_since(self, *, thread_id: str, start_offset: int):
         value = self.finals.get((thread_id, start_offset))
         if value is None:
-            from codex_wechat_bridge.live_session import FinalScan
+            from daedalus_wechat.live_session import FinalScan
 
             return FinalScan(final_text="", end_offset=start_offset)
         text, end_offset = value
-        from codex_wechat_bridge.live_session import FinalScan
+        from daedalus_wechat.live_session import FinalScan
 
         return FinalScan(final_text=text, end_offset=end_offset)
 
@@ -103,15 +103,15 @@ class _FakeRunner:
         if value is None:
             value = self.finals.get((thread_id, start_offset))
             if value is None:
-                from codex_wechat_bridge.live_session import MirrorScan
+                from daedalus_wechat.live_session import MirrorScan
 
                 return MirrorScan(progress_texts=[], final_text="", end_offset=start_offset)
             text, end_offset = value
-            from codex_wechat_bridge.live_session import MirrorScan
+            from daedalus_wechat.live_session import MirrorScan
 
             return MirrorScan(progress_texts=[], final_text=text, end_offset=end_offset)
         progress_texts, final_text, end_offset = value
-        from codex_wechat_bridge.live_session import MirrorScan
+        from daedalus_wechat.live_session import MirrorScan
 
         return MirrorScan(progress_texts=progress_texts, final_text=final_text, end_offset=end_offset)
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from codex_wechat_bridge.wechat_api import WeChatAccount, WeChatClient
+from daedalus_wechat.wechat_api import WeChatAccount, WeChatClient
 
 
 class _RetryClient(WeChatClient):

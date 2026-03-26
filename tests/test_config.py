@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from codex_wechat_bridge.config import _parse_allowed_users, load_config
+from daedalus_wechat.config import _parse_allowed_users, load_config
 
 
 class ConfigTests(unittest.TestCase):

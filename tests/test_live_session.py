@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from codex_wechat_bridge.live_session import LiveCodexSessionManager
-from codex_wechat_bridge.state import SessionRecord
+from daedalus_wechat.live_session import LiveCodexSessionManager
+from daedalus_wechat.state import SessionRecord
 
 
 class LiveSessionTests(unittest.TestCase):
@@ -72,9 +72,9 @@ class LiveSessionTests(unittest.TestCase):
                 encoding="utf-8",
             )
             ticks = iter([0.0, 0.1, 0.2, 0.3, 2.6, 2.7, 2.8])
-            with patch("codex_wechat_bridge.live_session.time.sleep", lambda _: None):
+            with patch("daedalus_wechat.live_session.time.sleep", lambda _: None):
                 with patch(
-                    "codex_wechat_bridge.live_session.time.monotonic",
+                    "daedalus_wechat.live_session.time.monotonic",
                     side_effect=lambda: next(ticks),
                 ):
                     reply = self.runner._wait_for_final_reply(
