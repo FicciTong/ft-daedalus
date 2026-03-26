@@ -28,6 +28,7 @@ class BridgeState:
     bound_user_id: str | None = None
     bound_context_token: str | None = None
     progress_updates_enabled: bool | None = None
+    delivery_seq: int = 0
     mirror_offsets: dict[str, int] = field(default_factory=dict)
     last_progress_summaries: dict[str, str] = field(default_factory=dict)
     pending_outbox: list[dict[str, str]] = field(default_factory=list)
@@ -59,6 +60,7 @@ class BridgeState:
             bound_user_id=raw.get("bound_user_id"),
             bound_context_token=raw.get("bound_context_token"),
             progress_updates_enabled=raw.get("progress_updates_enabled"),
+            delivery_seq=int(raw.get("delivery_seq", 0) or 0),
             mirror_offsets={
                 str(key): int(value)
                 for key, value in (raw.get("mirror_offsets", {}) or {}).items()
@@ -72,6 +74,13 @@ class BridgeState:
                     "to": str(item.get("to", "")),
                     "text": str(item.get("text", "")),
                     "created_at": str(item.get("created_at", now_iso())),
+                    "kind": str(item.get("kind", "message")),
+                    "origin": str(item.get("origin", "bridge")),
+                    "thread_id": (
+                        str(item.get("thread_id")).strip()
+                        if item.get("thread_id")
+                        else ""
+                    ),
                 }
                 for item in (raw.get("pending_outbox", []) or [])
                 if str(item.get("to", "")).strip() and str(item.get("text", "")).strip()
@@ -89,6 +98,7 @@ class BridgeState:
                     "bound_user_id": self.bound_user_id,
                     "bound_context_token": self.bound_context_token,
                     "progress_updates_enabled": self.progress_updates_enabled,
+                    "delivery_seq": self.delivery_seq,
                     "mirror_offsets": self.mirror_offsets,
                     "last_progress_summaries": self.last_progress_summaries,
                     "pending_outbox": self.pending_outbox,
@@ -137,6 +147,23 @@ class BridgeState:
         self.last_progress_summaries[thread_id] = str(summary)
 
     def enqueue_pending(self, *, to_user_id: str, text: str) -> None:
+        self.enqueue_pending_with_meta(
+            to_user_id=to_user_id,
+            text=text,
+            kind="message",
+            origin="bridge",
+            thread_id=None,
+        )
+
+    def enqueue_pending_with_meta(
+        self,
+        *,
+        to_user_id: str,
+        text: str,
+        kind: str,
+        origin: str,
+        thread_id: str | None,
+    ) -> None:
         body = text.strip()
         if not to_user_id or not body:
             return
@@ -145,6 +172,9 @@ class BridgeState:
                 "to": str(to_user_id),
                 "text": body,
                 "created_at": now_iso(),
+                "kind": str(kind),
+                "origin": str(origin),
+                "thread_id": str(thread_id or ""),
             }
         )
         self.pending_outbox = self.pending_outbox[-100:]
@@ -159,3 +189,7 @@ class BridgeState:
                 kept.append(item)
         self.pending_outbox = kept
         return matched
+
+    def next_delivery_seq(self) -> int:
+        self.delivery_seq += 1
+        return self.delivery_seq

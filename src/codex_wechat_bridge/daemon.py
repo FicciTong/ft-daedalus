@@ -8,10 +8,11 @@ import threading
 import time
 
 from .config import BridgeConfig
+from .delivery_ledger import append_delivery, read_recent_for_user
 from .live_session import LiveCodexSessionManager
 from .state import BridgeState
-from .systemd_notify import notify as systemd_notify
 from .wechat_api import WeChatClient
+from .systemd_notify import notify as systemd_notify
 
 
 HELP_TEXT = """可用命令:
@@ -110,9 +111,20 @@ class BridgeDaemon:
         self._bind_peer(incoming.from_user_id, incoming.context_token)
         if body.startswith("/") or body.startswith("\\"):
             reply = self._handle_command(body)
+            reply_kind = "command"
+            reply_origin = "wechat-command"
         else:
             reply = self._handle_prompt(body)
-        self._reply(incoming.from_user_id, incoming.context_token, reply)
+            reply_kind = "final"
+            reply_origin = "wechat-prompt"
+        self._reply(
+            incoming.from_user_id,
+            incoming.context_token,
+            reply,
+            kind=reply_kind,
+            origin=reply_origin,
+            thread_id=self.state.active_session_id,
+        )
 
     def _handle_command(self, body: str) -> str:
         if body.startswith("\\"):
@@ -207,39 +219,39 @@ class BridgeDaemon:
 
     def _recent_text(self, arg: str) -> str:
         limit = 6
-        if arg.strip().isdigit():
-            limit = max(1, min(int(arg.strip()), 12))
+        after_seq: int | None = None
+        normalized = arg.strip()
+        if normalized.isdigit():
+            limit = max(1, min(int(normalized), 20))
+        elif normalized.lower().startswith("after "):
+            tail = normalized.split(maxsplit=1)[1].strip()
+            if tail.isdigit():
+                after_seq = int(tail)
+                limit = 20
         target_user = self.state.bound_user_id
         if not target_user:
             return "recent=empty\nhint=先发 /status 绑定当前微信会话"
-        path = self.config.event_log_file
+        path = self.config.delivery_ledger_file
         if not path.exists():
             return "recent=empty\nhint=还没有出站记录"
-
-        lines = path.read_text(encoding="utf-8").splitlines()
-        collected: list[str] = []
-        for raw in reversed(lines):
-            try:
-                event = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if event.get("kind") not in {"outgoing", "relay_outgoing"}:
-                continue
-            payload = event.get("payload", {}) or {}
-            if payload.get("to") != target_user:
-                continue
-            text = str(payload.get("text", "")).strip()
-            if not text:
-                continue
-            ts = str(event.get("ts", ""))[11:19] or "--:--:--"
-            collected.append(f"[{ts}] {text}")
-            if len(collected) >= limit:
-                break
-
-        if not collected:
+        items = read_recent_for_user(
+            ledger_file=path,
+            to_user_id=target_user,
+            limit=limit,
+            after_seq=after_seq,
+        )
+        if not items:
             return "recent=empty\nhint=当前会话还没有可补看的已发送消息"
-        collected.reverse()
-        return "recent:\n" + "\n\n".join(collected)
+        lines = []
+        for item in items:
+            ts = str(item.get("ts", ""))[11:19] or "--:--:--"
+            seq = int(item.get("seq", 0) or 0)
+            status = str(item.get("status", "unknown"))
+            kind = str(item.get("kind", "message"))
+            text = str(item.get("text", "")).strip()
+            lines.append(f"[{seq}][{status}][{kind}][{ts}] {text}")
+        last_seq = int(items[-1].get("seq", 0) or 0)
+        return "recent:\n" + "\n\n".join(lines) + f"\n\nnext=/recent after {last_seq}"
 
     def _handle_prompt(self, body: str) -> str:
         active_record = self.runner.require_live_session(self.state)
@@ -383,6 +395,9 @@ class BridgeDaemon:
         text: str,
         *,
         use_context_token: bool = True,
+        kind: str = "message",
+        origin: str = "bridge",
+        thread_id: str | None = None,
     ) -> None:
         effective_context = context_token if use_context_token else None
         for chunk in self._chunk_text(text):
@@ -393,12 +408,41 @@ class BridgeDaemon:
                     text=chunk,
                 )
                 self._log_event("outgoing", {"to": to_user_id, "text": chunk[:400]})
+                append_delivery(
+                    state=self.state,
+                    state_file=self.config.state_file,
+                    ledger_file=self.config.delivery_ledger_file,
+                    to_user_id=to_user_id,
+                    text=chunk,
+                    status="sent",
+                    kind=kind,
+                    origin=origin,
+                    thread_id=thread_id,
+                )
             except Exception as exc:  # noqa: BLE001
-                self.state.enqueue_pending(to_user_id=to_user_id, text=chunk)
+                self.state.enqueue_pending_with_meta(
+                    to_user_id=to_user_id,
+                    text=chunk,
+                    kind=kind,
+                    origin=origin,
+                    thread_id=thread_id,
+                )
                 self._save_state()
                 self._log_event(
                     "queued_outgoing",
                     {"to": to_user_id, "text": chunk[:400], "error": str(exc)},
+                )
+                append_delivery(
+                    state=self.state,
+                    state_file=self.config.state_file,
+                    ledger_file=self.config.delivery_ledger_file,
+                    to_user_id=to_user_id,
+                    text=chunk,
+                    status="queued",
+                    kind=kind,
+                    origin=origin,
+                    thread_id=thread_id,
+                    error=str(exc),
                 )
                 return
 
@@ -445,6 +489,9 @@ class BridgeDaemon:
                     self.state.bound_context_token,
                     progress,
                     use_context_token=False,
+                    kind="progress",
+                    origin="desktop-mirror",
+                    thread_id=thread_id,
                 )
                 self._log_event(
                     "mirrored_progress",
@@ -457,6 +504,9 @@ class BridgeDaemon:
             self.state.bound_context_token,
             scan.final_text,
             use_context_token=False,
+            kind="final",
+            origin="desktop-mirror",
+            thread_id=thread_id,
         )
         self._log_event(
             "mirrored_final",
@@ -546,6 +596,9 @@ class BridgeDaemon:
             text = item.get("text", "").strip()
             if not text:
                 continue
+            kind = str(item.get("kind", "message"))
+            origin = str(item.get("origin", "bridge"))
+            thread_id = str(item.get("thread_id", "")).strip() or None
             try:
                 self.wechat.send_text(
                     to_user_id=to_user_id,
@@ -557,12 +610,35 @@ class BridgeDaemon:
                     "flushed_outgoing",
                     {"to": to_user_id, "text": text[:400]},
                 )
+                append_delivery(
+                    state=self.state,
+                    state_file=self.config.state_file,
+                    ledger_file=self.config.delivery_ledger_file,
+                    to_user_id=to_user_id,
+                    text=text,
+                    status="flushed",
+                    kind=kind,
+                    origin=origin,
+                    thread_id=thread_id,
+                )
             except Exception as exc:  # noqa: BLE001
                 kept.append(item)
                 kept.extend(pending[idx + 1 :])
                 self._log_event(
                     "queued_outgoing",
                     {"to": to_user_id, "text": text[:400], "error": str(exc)},
+                )
+                append_delivery(
+                    state=self.state,
+                    state_file=self.config.state_file,
+                    ledger_file=self.config.delivery_ledger_file,
+                    to_user_id=to_user_id,
+                    text=text,
+                    status="queued",
+                    kind=kind,
+                    origin=origin,
+                    thread_id=thread_id,
+                    error=str(exc),
                 )
                 break
         self.state.pending_outbox = kept + self.state.pending_outbox

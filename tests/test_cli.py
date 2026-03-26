@@ -61,6 +61,12 @@ class CliTests(unittest.TestCase):
             self.assertEqual(event["kind"], "relay_outgoing")
             self.assertEqual(event["payload"]["to"], "user@im.wechat")
             self.assertEqual(event["payload"]["text"], "hello bound chat")
+            ledger_lines = (Path(tmpdir) / "deliveries.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(ledger_lines), 1)
+            delivery = json.loads(ledger_lines[0])
+            self.assertEqual(delivery["seq"], 1)
+            self.assertEqual(delivery["status"], "sent")
+            self.assertEqual(delivery["kind"], "relay")
 
     def test_send_bound_text_requires_binding(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -92,6 +98,11 @@ class CliTests(unittest.TestCase):
             self.assertEqual(len(lines), 1)
             event = json.loads(lines[0])
             self.assertEqual(event["kind"], "relay_queued")
+            ledger_lines = (Path(tmpdir) / "deliveries.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(ledger_lines), 1)
+            delivery = json.loads(ledger_lines[0])
+            self.assertEqual(delivery["status"], "queued")
+            self.assertEqual(delivery["kind"], "relay")
 
 
 if __name__ == "__main__":

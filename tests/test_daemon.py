@@ -271,11 +271,11 @@ class DaemonTests(unittest.TestCase):
             state_dir = Path(tmpdir)
             config = self._make_config(state_dir, frozenset())
             config.state_dir.mkdir(parents=True, exist_ok=True)
-            config.event_log_file.write_text(
+            config.delivery_ledger_file.write_text(
                 "\n".join(
                     [
-                        '{"ts":"2026-03-26T05:00:00+00:00","kind":"outgoing","payload":{"to":"user@im.wechat","text":"progress one"}}',
-                        '{"ts":"2026-03-26T05:00:01+00:00","kind":"relay_outgoing","payload":{"to":"user@im.wechat","text":"FINAL_OK"}}',
+                        '{"seq":1,"ts":"2026-03-26T05:00:00+00:00","to":"user@im.wechat","status":"sent","kind":"progress","origin":"desktop-mirror","text":"progress one"}',
+                        '{"seq":2,"ts":"2026-03-26T05:00:01+00:00","to":"user@im.wechat","status":"sent","kind":"final","origin":"desktop-mirror","text":"FINAL_OK"}',
                     ]
                 )
                 + "\n",
@@ -291,6 +291,36 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("recent:", text)
             self.assertIn("progress one", text)
             self.assertIn("FINAL_OK", text)
+            self.assertIn("[1][sent][progress]", text)
+            self.assertIn("next=/recent after 2", text)
+
+    def test_recent_after_seq_uses_stable_delivery_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            config = self._make_config(state_dir, frozenset())
+            config.state_dir.mkdir(parents=True, exist_ok=True)
+            config.delivery_ledger_file.write_text(
+                "\n".join(
+                    [
+                        '{"seq":1,"ts":"2026-03-26T05:00:00+00:00","to":"user@im.wechat","status":"sent","kind":"progress","origin":"desktop-mirror","text":"one"}',
+                        '{"seq":2,"ts":"2026-03-26T05:00:01+00:00","to":"user@im.wechat","status":"queued","kind":"final","origin":"desktop-mirror","text":"two"}',
+                        '{"seq":3,"ts":"2026-03-26T05:00:02+00:00","to":"user@im.wechat","status":"flushed","kind":"final","origin":"desktop-mirror","text":"three"}',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            daemon = _TestDaemon(
+                config=config,
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(bound_user_id="user@im.wechat"),
+            )
+            text = daemon._recent_text("after 1")
+            self.assertNotIn("one", text)
+            self.assertIn("two", text)
+            self.assertIn("three", text)
+            self.assertIn("next=/recent after 3", text)
 
     def test_mirror_desktop_final_back_to_wechat(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

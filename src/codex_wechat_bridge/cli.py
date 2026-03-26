@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .config import load_config
 from .daemon import BridgeDaemon
+from .delivery_ledger import append_delivery
 from .live_session import LiveCodexSessionManager
 from .state import BridgeState
 from .wechat_api import WeChatAccount, WeChatClient
@@ -49,6 +50,7 @@ def _send_bound_text(
         min_send_interval_seconds=config.min_send_interval_seconds,
     )
     for chunk in chunks:
+        ledger_text = chunk
         try:
             wechat.send_text(
                 to_user_id=state.bound_user_id,
@@ -56,11 +58,19 @@ def _send_bound_text(
                 text=chunk,
             )
             event_kind = "relay_outgoing"
+            status = "sent"
         except Exception as exc:  # noqa: BLE001
-            state.enqueue_pending(to_user_id=state.bound_user_id, text=chunk)
+            state.enqueue_pending_with_meta(
+                to_user_id=state.bound_user_id,
+                text=chunk,
+                kind="relay",
+                origin="desktop-direct",
+                thread_id=state.active_session_id,
+            )
             state.save(config.state_file)
             event_kind = "relay_queued"
             chunk = f"{chunk[:400]} [queued: {str(exc)[:160]}]"
+            status = "queued"
         config.state_dir.mkdir(parents=True, exist_ok=True)
         with config.event_log_file.open("a", encoding="utf-8") as fh:
             fh.write(
@@ -77,6 +87,17 @@ def _send_bound_text(
                 )
                 + "\n"
             )
+        append_delivery(
+            state=state,
+            state_file=config.state_file,
+            ledger_file=config.delivery_ledger_file,
+            to_user_id=state.bound_user_id,
+            text=ledger_text,
+            status=status,
+            kind="relay",
+            origin="desktop-direct",
+            thread_id=state.active_session_id,
+        )
     return 0
 
 

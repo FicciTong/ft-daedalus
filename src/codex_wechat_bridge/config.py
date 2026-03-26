@@ -28,6 +28,10 @@ class BridgeConfig:
         return self.state_dir / "events.jsonl"
 
     @property
+    def delivery_ledger_file(self) -> Path:
+        return self.state_dir / "deliveries.jsonl"
+
+    @property
     def openclaw_state_dir(self) -> Path:
         if self.openclaw_profile == "default":
             return Path.home() / ".openclaw"
