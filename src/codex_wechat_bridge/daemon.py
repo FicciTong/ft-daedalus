@@ -165,7 +165,7 @@ class BridgeDaemon:
             self._reply(
                 incoming.from_user_id,
                 incoming.context_token,
-                "⚠️ 收到语音，但微信这次没有给出可用转写。我已经刷新会话绑定；你可以重试语音，或直接发文字。",
+                "收到语音，但无转写。",
                 kind="progress",
                 origin="wechat-voice",
                 thread_id=self.state.active_session_id,
@@ -214,7 +214,7 @@ class BridgeDaemon:
         self._reply(
             incoming.from_user_id,
             incoming.context_token,
-            "已注入当前 terminal；后续 progress/final 会继续发到微信。",
+            "已注入 terminal。",
             kind="progress",
             origin="wechat-prompt-submitted",
             thread_id=thread_id,
@@ -529,13 +529,13 @@ class BridgeDaemon:
                 return
 
     def _render_reply_text(self, text: str, *, kind: str, origin: str) -> str:
-        body = text.strip()
+        body = self._strip_known_tags(text.strip())
         if not body:
             body = "(空回复)"
         if kind == "final":
             return self._append_tag(body, "FINAL")
         if self._is_system_reply(kind=kind, origin=origin):
-            return self._append_tag(body, "SYSTEM")
+            return self._append_tag(body, "SYSTEM", inline=True)
         return body
 
     def _is_system_reply(self, *, kind: str, origin: str) -> bool:
@@ -549,11 +549,21 @@ class BridgeDaemon:
             "wechat-prompt-error",
         }
 
-    def _append_tag(self, text: str, tag: str) -> str:
+    def _append_tag(self, text: str, tag: str, *, inline: bool = False) -> str:
         normalized = text.rstrip()
-        if normalized.endswith(tag):
+        if normalized.endswith(f" {tag}") or normalized.endswith(tag):
             return normalized
+        if inline:
+            return f"{normalized} {tag}"
         return f"{normalized}\n\n{tag}"
+
+    def _strip_known_tags(self, text: str) -> str:
+        normalized = text.rstrip()
+        for known in ("SYSTEM", "FINAL"):
+            for suffix in (f"\n\n{known}", f" {known}"):
+                if normalized.endswith(suffix):
+                    normalized = normalized[: -len(suffix)].rstrip()
+        return normalized
 
     def _start_mirror_thread(self) -> None:
         thread = threading.Thread(

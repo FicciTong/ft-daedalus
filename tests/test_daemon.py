@@ -364,7 +364,7 @@ class DaemonTests(unittest.TestCase):
             daemon._handle_incoming(incoming)
             self.assertEqual(daemon.state.bound_user_id, "user@im.wechat")
             self.assertEqual(daemon.state.bound_context_token, "ctx-voice")
-            self.assertIn("没有给出可用转写", fake_wechat.sent[-1][2])
+            self.assertIn("无转写", fake_wechat.sent[-1][2])
             self.assertTrue(fake_wechat.sent[-1][2].endswith("SYSTEM"))
 
     def test_voice_without_message_type_is_still_accepted(self) -> None:
@@ -440,7 +440,7 @@ class DaemonTests(unittest.TestCase):
                 (
                     "user@im.wechat",
                     "ctx-text",
-                    "已注入当前 terminal；后续 progress/final 会继续发到微信。\n\nSYSTEM",
+                    "已注入 terminal。 SYSTEM",
                 ),
             )
 
@@ -618,6 +618,27 @@ class DaemonTests(unittest.TestCase):
             assert incoming is not None
             daemon._handle_incoming(incoming)
             self.assertTrue(fake_wechat.sent[-1][2].endswith("SYSTEM"))
+
+    def test_final_and_system_tags_are_mutually_exclusive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            final_text = daemon._render_reply_text(
+                "规则已收口。\n\nSYSTEM",
+                kind="final",
+                origin="bridge",
+            )
+            system_text = daemon._render_reply_text(
+                "已注入 terminal。\n\nFINAL",
+                kind="progress",
+                origin="wechat-prompt-submitted",
+            )
+            self.assertEqual(final_text, "规则已收口。\n\nFINAL")
+            self.assertEqual(system_text, "已注入 terminal。 SYSTEM")
 
 
 if __name__ == "__main__":
