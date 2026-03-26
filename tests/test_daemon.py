@@ -211,6 +211,47 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(fake_wechat.sent[-1], ("user@im.wechat", None, "PENDING_FINAL_OK"))
             self.assertEqual(state.pending_outbox, [])
 
+    def test_bind_peer_preserves_remaining_pending_after_mid_flush_failure(self) -> None:
+        class _FlakyWeChat(_FakeWeChat):
+            def __init__(self) -> None:
+                super().__init__()
+                self.calls = 0
+
+            def send_text(self, *, to_user_id: str, context_token: str | None, text: str):
+                self.calls += 1
+                if self.calls == 2:
+                    raise RuntimeError("ret=-2")
+                return super().send_text(
+                    to_user_id=to_user_id,
+                    context_token=context_token,
+                    text=text,
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            state = BridgeState(
+                active_session_id=thread_id,
+                pending_outbox=[
+                    {"to": "user@im.wechat", "text": "FIRST", "created_at": "2026-03-26T00:00:00+00:00"},
+                    {"to": "user@im.wechat", "text": "SECOND", "created_at": "2026-03-26T00:00:01+00:00"},
+                    {"to": "user@im.wechat", "text": "THIRD", "created_at": "2026-03-26T00:00:02+00:00"},
+                ],
+            )
+            runner = _FakeRunner()
+            fake_wechat = _FlakyWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            daemon._bind_peer("user@im.wechat", "ctx-1")
+            self.assertEqual(fake_wechat.sent, [("user@im.wechat", None, "FIRST")])
+            self.assertEqual(
+                [item["text"] for item in state.pending_outbox],
+                ["SECOND", "THIRD"],
+            )
+
     def test_notify_command_toggles_progress_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             daemon = _TestDaemon(

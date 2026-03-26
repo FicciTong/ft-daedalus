@@ -542,7 +542,7 @@ class BridgeDaemon:
         if not pending:
             return
         kept: list[dict[str, str]] = []
-        for item in pending:
+        for idx, item in enumerate(pending):
             text = item.get("text", "").strip()
             if not text:
                 continue
@@ -559,6 +559,7 @@ class BridgeDaemon:
                 )
             except Exception as exc:  # noqa: BLE001
                 kept.append(item)
+                kept.extend(pending[idx + 1 :])
                 self._log_event(
                     "queued_outgoing",
                     {"to": to_user_id, "text": text[:400], "error": str(exc)},
