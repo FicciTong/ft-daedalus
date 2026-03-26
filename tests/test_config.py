@@ -26,6 +26,7 @@ class ConfigTests(unittest.TestCase):
                 "CODEX_WECHAT_BRIDGE_ALLOWED_USERS=user-a@im.wechat,user-b@im.wechat\n"
                 "CODEX_WECHAT_BRIDGE_TMUX_SESSION=my-tmux\n"
                 "CODEX_WECHAT_BRIDGE_PROGRESS_UPDATES=on\n"
+                "CODEX_WECHAT_BRIDGE_OUTBOX_RETRY_INTERVAL_SECONDS=0.75\n"
             )
             with patch.dict(
                 os.environ,
@@ -39,6 +40,7 @@ class ConfigTests(unittest.TestCase):
             )
             self.assertEqual(config.canonical_tmux_session, "my-tmux")
             self.assertTrue(config.progress_updates_default)
+            self.assertEqual(config.outbox_retry_interval_seconds, 0.75)
 
     def test_load_config_defaults_progress_updates_on(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -51,6 +53,7 @@ class ConfigTests(unittest.TestCase):
             ):
                 config = load_config()
             self.assertTrue(config.progress_updates_default)
+            self.assertEqual(config.outbox_retry_interval_seconds, 1.0)
 
 
 if __name__ == "__main__":

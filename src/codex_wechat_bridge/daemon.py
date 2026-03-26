@@ -170,8 +170,10 @@ class BridgeDaemon:
                 origin="wechat-voice",
                 thread_id=self.state.active_session_id,
             )
+            self._flush_bound_outbox_if_any()
             return
         if not body:
+            self._flush_bound_outbox_if_any()
             return
         if body.startswith("/") or body.startswith("\\"):
             with self._lock:
@@ -185,6 +187,7 @@ class BridgeDaemon:
                 origin="wechat-command",
                 thread_id=thread_id,
             )
+            self._flush_bound_outbox_if_any()
             return
         with self._lock:
             active_record = self.runner.require_live_session(self.state)
@@ -219,6 +222,7 @@ class BridgeDaemon:
             origin="wechat-prompt-submitted",
             thread_id=thread_id,
         )
+        self._flush_bound_outbox_if_any()
 
     def _handle_command(self, body: str) -> str:
         if body.startswith("\\"):
@@ -594,7 +598,7 @@ class BridgeDaemon:
 
     def _outbox_retry_loop(self) -> None:
         while True:
-            time.sleep(5.0)
+            time.sleep(self.config.outbox_retry_interval_seconds)
             try:
                 self._flush_bound_outbox_if_any()
             except Exception as exc:  # noqa: BLE001
@@ -737,7 +741,6 @@ class BridgeDaemon:
             if changed and self.state.active_session_id:
                 self._sync_mirror_cursor(self.state.active_session_id)
             self._save_state()
-        self._flush_pending_outbox(from_user_id, context_token)
 
     def _flush_bound_outbox_if_any(self) -> None:
         with self._lock:

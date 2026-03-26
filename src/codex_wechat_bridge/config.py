@@ -18,6 +18,7 @@ class BridgeConfig:
     poll_timeout_ms: int = 35_000
     text_chunk_limit: int = 3500
     min_send_interval_seconds: float = 0.5
+    outbox_retry_interval_seconds: float = 1.0
 
     @property
     def state_file(self) -> Path:
@@ -141,6 +142,13 @@ def load_config() -> BridgeConfig:
         ),
         default=0.5,
     )
+    outbox_retry_interval_seconds = _parse_float(
+        os.environ.get(
+            "CODEX_WECHAT_BRIDGE_OUTBOX_RETRY_INTERVAL_SECONDS",
+            file_env.get("CODEX_WECHAT_BRIDGE_OUTBOX_RETRY_INTERVAL_SECONDS"),
+        ),
+        default=1.0,
+    )
     return BridgeConfig(
         codex_bin=codex_bin,
         account_file=account_file,
@@ -151,4 +159,5 @@ def load_config() -> BridgeConfig:
         allowed_users=allowed_users,
         progress_updates_default=progress_updates_default,
         min_send_interval_seconds=min_send_interval_seconds,
+        outbox_retry_interval_seconds=outbox_retry_interval_seconds,
     )

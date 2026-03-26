@@ -208,7 +208,7 @@ class DaemonTests(unittest.TestCase):
             daemon._bind_peer("user@im.wechat", "ctx-1")
             self.assertEqual(state.get_mirror_offset(thread_id), 42)
 
-    def test_bind_peer_flushes_pending_outbox(self) -> None:
+    def test_bind_peer_does_not_flush_pending_outbox(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
             state = BridgeState(
@@ -230,11 +230,8 @@ class DaemonTests(unittest.TestCase):
                 state=state,
             )
             daemon._bind_peer("user@im.wechat", "ctx-1")
-            self.assertEqual(
-                fake_wechat.sent[-1],
-                ("user@im.wechat", None, "PENDING_FINAL_OK"),
-            )
-            self.assertEqual(state.pending_outbox, [])
+            self.assertEqual(fake_wechat.sent, [])
+            self.assertEqual(len(state.pending_outbox), 1)
 
     def test_background_flush_uses_existing_binding(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -266,7 +263,7 @@ class DaemonTests(unittest.TestCase):
             )
             self.assertEqual(state.pending_outbox, [])
 
-    def test_bind_peer_preserves_remaining_pending_after_mid_flush_failure(self) -> None:
+    def test_flush_pending_outbox_preserves_remaining_after_mid_flush_failure(self) -> None:
         class _FlakyWeChat(_FakeWeChat):
             def __init__(self) -> None:
                 super().__init__()
@@ -301,10 +298,46 @@ class DaemonTests(unittest.TestCase):
                 state=state,
             )
             daemon._bind_peer("user@im.wechat", "ctx-1")
+            daemon._flush_bound_outbox_if_any()
             self.assertEqual(fake_wechat.sent, [("user@im.wechat", None, "FIRST")])
             self.assertEqual(
                 [item["text"] for item in state.pending_outbox],
                 ["SECOND", "THIRD"],
+            )
+
+    def test_command_reply_precedes_pending_outbox_flush(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_wechat = _FakeWeChat()
+            state = BridgeState(
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "PENDING_FINAL_OK",
+                        "created_at": "2026-03-26T00:00:00+00:00",
+                    }
+                ]
+            )
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-cmd",
+                    "message_id": "msg-status",
+                    "item_list": [{"type": 1, "text_item": {"text": "/status"}}],
+                }
+            )
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            self.assertTrue(fake_wechat.sent[0][2].startswith("⚙️ status="))
+            self.assertEqual(
+                fake_wechat.sent[1],
+                ("user@im.wechat", None, "PENDING_FINAL_OK"),
             )
 
     def test_notify_command_toggles_progress_mode(self) -> None:
