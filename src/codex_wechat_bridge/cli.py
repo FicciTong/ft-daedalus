@@ -158,6 +158,15 @@ def main() -> int:
         return _import_latest_openclaw_account(config, state)
 
     if args.command == "doctor":
+        print(
+            "allowed_users="
+            + (
+                ",".join(sorted(config.allowed_users))
+                if config.allowed_users
+                else "ALL (no allowlist configured)"
+            )
+        )
+        print(f"codex_bin={config.codex_bin}")
         print(f"account_file={config.account_file}")
         print(f"openclaw_profile={config.openclaw_profile}")
         print(f"default_cwd={config.default_cwd}")

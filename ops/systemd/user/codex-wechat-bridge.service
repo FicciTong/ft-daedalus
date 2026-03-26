@@ -5,8 +5,8 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/dev/codex-wechat-bridge
+EnvironmentFile=-%h/.config/codex-wechat-bridge.env
 Environment=PATH=%h/.local/share/mise/installs/node/24.13.1/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-Environment=CODEX_WECHAT_BRIDGE_CODEX_BIN=%h/.local/share/mise/installs/node/24.13.1/bin/codex
 ExecStart=%h/dev/codex-wechat-bridge/.venv/bin/codex-wechat-bridge run
 Restart=always
 RestartSec=5

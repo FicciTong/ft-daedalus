@@ -56,6 +56,10 @@ You need these on the machine that owns the local Codex session:
 - `openclaw`
 - WeChat on your phone
 
+This means: **yes, OpenClaw is a real prerequisite for this implementation.**
+The bridge uses the official OpenClaw Weixin channel path; it does not replace
+that dependency.
+
 Quick checks:
 
 ```bash
@@ -81,6 +85,9 @@ openclaw channels login --channel openclaw-weixin
 This bridge wraps that official route for you, so you usually do **not** need
 to run those raw commands manually.
 
+If your friend does not already have `openclaw`, they need to install it first
+before this bridge can work.
+
 ## Install
 
 ```bash
@@ -88,6 +95,33 @@ cd ~/dev
 git clone https://github.com/FicciTong/codex-wechat-bridge.git
 cd codex-wechat-bridge
 uv sync
+```
+
+## Fastest Friend Install
+
+If you want to hand this to someone else, the shortest install path is:
+
+```bash
+cd ~/dev/codex-wechat-bridge
+bash scripts/install-user-service.sh
+```
+
+This script does all of the following:
+
+1. checks required commands (`codex`, `tmux`, `python3`, `uv`, `openclaw`,
+   `systemctl`)
+2. runs `uv sync`
+3. installs the user systemd unit
+4. creates `~/.config/codex-wechat-bridge.env` if missing
+5. runs the official WeChat QR login flow
+6. restarts the bridge
+7. runs bridge doctor
+
+If you only want the health summary later:
+
+```bash
+cd ~/dev/codex-wechat-bridge
+bash scripts/doctor.sh
 ```
 
 ## Official WeChat Login
@@ -120,6 +154,35 @@ If you intentionally want a different OpenClaw profile:
 
 ```bash
 export CODEX_WECHAT_BRIDGE_OPENCLAW_PROFILE=my-profile
+```
+
+## Security Boundary
+
+By default, if you do nothing, the bridge allows any sender who can reach the
+bot conversation.
+
+If this machine matters, **configure an allowlist** in:
+
+```bash
+~/.config/codex-wechat-bridge.env
+```
+
+Example:
+
+```bash
+CODEX_WECHAT_BRIDGE_ALLOWED_USERS=o9cq80y6O1DAYqilESlM_NbeqtTc@im.wechat
+```
+
+You can provide multiple users, comma-separated:
+
+```bash
+CODEX_WECHAT_BRIDGE_ALLOWED_USERS=user-a@im.wechat,user-b@im.wechat
+```
+
+After changing the env file:
+
+```bash
+systemctl --user restart codex-wechat-bridge
 ```
 
 ## Canonical Desktop Session
@@ -175,6 +238,20 @@ cp ops/systemd/user/codex-wechat-bridge.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now codex-wechat-bridge
 ```
+
+The bridge reads:
+
+```bash
+~/.config/codex-wechat-bridge.env
+```
+
+That is the canonical place for both foreground CLI and background service:
+
+- `CODEX_WECHAT_BRIDGE_DEFAULT_CWD`
+- `CODEX_WECHAT_BRIDGE_TMUX_SESSION`
+- `CODEX_WECHAT_BRIDGE_CODEX_BIN`
+- `CODEX_WECHAT_BRIDGE_ALLOWED_USERS`
+- optional profile overrides
 
 Useful commands:
 

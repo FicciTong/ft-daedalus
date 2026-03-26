@@ -61,6 +61,17 @@ class BridgeDaemon:
                 if incoming is None:
                     continue
                 self._log_event("incoming", {"body": incoming.body, "from": incoming.from_user_id})
+                if not self._is_authorized_sender(incoming.from_user_id):
+                    self._reply(
+                        incoming.from_user_id,
+                        incoming.context_token,
+                        "❌ 当前微信账号未被授权控制此 bridge。",
+                    )
+                    self._log_event(
+                        "unauthorized",
+                        {"from": incoming.from_user_id},
+                    )
+                    continue
                 try:
                     self._handle_incoming(incoming)
                 except Exception as exc:  # noqa: BLE001
@@ -298,6 +309,11 @@ class BridgeDaemon:
             body=body,
             message_id=str(raw.get("message_id", "")),
         )
+
+    def _is_authorized_sender(self, from_user_id: str) -> bool:
+        if not self.config.allowed_users:
+            return True
+        return from_user_id in self.config.allowed_users
 
     def _save_state(self) -> None:
         self.state.save(self.config.state_file)
