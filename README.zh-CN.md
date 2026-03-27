@@ -52,6 +52,7 @@ surface 落在这里。
 微信消息图标：
 
 - `⚙️` = bridge / 服务 / 绑定 / 命令提示
+- `📋` = plan 更新
 - `⏳` = progress commentary
 - `✅` = 这一轮真的结束了
 

@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 from .config import BridgeConfig
 from .delivery_ledger import append_delivery, read_recent_for_user
-from .live_session import LiveCodexSessionManager
+from .live_session import LiveCodexSessionManager, PLAN_MARKER
 from .state import BridgeState
 from .wechat_api import WeChatClient
 from .systemd_notify import notify as systemd_notify
@@ -546,6 +546,8 @@ class BridgeDaemon:
             body = "(空回复)"
         if kind == "final":
             return self._prepend_icon(body, "✅")
+        if kind == "plan":
+            return self._prepend_icon(body, "📋")
         if self._is_system_reply(kind=kind, origin=origin):
             return self._prepend_icon(body, "⚙️")
         if kind == "progress":
@@ -571,7 +573,7 @@ class BridgeDaemon:
 
     def _strip_known_tags(self, text: str) -> str:
         normalized = text.rstrip()
-        for icon in ("⚙️", "⏳", "✅"):
+        for icon in ("⚙️", "⏳", "✅", "📋"):
             if normalized.startswith(f"{icon} "):
                 normalized = normalized[len(icon) + 1 :].lstrip()
         for known in ("SYSTEM", "FINAL"):
@@ -633,22 +635,25 @@ class BridgeDaemon:
             for progress in scan.progress_texts:
                 if not progress:
                     continue
-                with self._lock:
-                    if progress == self.state.get_last_progress_summary(thread_id):
-                        continue
-                    self.state.set_last_progress_summary(thread_id, progress)
-                    self._save_state()
+                kind = self._classify_mirror_text_kind(progress)
+                body = self._strip_plan_marker(progress)
+                if kind == "progress":
+                    with self._lock:
+                        if body == self.state.get_last_progress_summary(thread_id):
+                            continue
+                        self.state.set_last_progress_summary(thread_id, body)
+                        self._save_state()
                 self._reply(
                     to_user_id,
                     bound_context_token,
-                    progress,
+                    body,
                     use_context_token=False,
-                    kind="progress",
+                    kind=kind,
                     origin="desktop-mirror",
                     thread_id=thread_id,
                 )
                 self._log_event(
-                    "mirrored_progress",
+                    "mirrored_plan" if kind == "plan" else "mirrored_progress",
                     {"thread": self._short_thread(thread_id), "to": to_user_id},
                 )
         if not scan.final_text:
@@ -688,6 +693,16 @@ class BridgeDaemon:
 
     def _progress_updates_enabled(self) -> bool:
         return bool(self.state.progress_updates_enabled)
+
+    def _classify_mirror_text_kind(self, text: str) -> str:
+        if text.startswith(PLAN_MARKER):
+            return "plan"
+        return "progress"
+
+    def _strip_plan_marker(self, text: str) -> str:
+        if text.startswith(PLAN_MARKER):
+            return text[len(PLAN_MARKER) :].lstrip()
+        return text
 
     def _chunk_text(self, text: str) -> list[str]:
         text = text.strip()

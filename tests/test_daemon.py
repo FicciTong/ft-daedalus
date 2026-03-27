@@ -6,7 +6,7 @@ from pathlib import Path
 
 from daedalus_wechat.config import BridgeConfig
 from daedalus_wechat.daemon import BridgeDaemon
-from daedalus_wechat.live_session import LiveRuntimeStatus
+from daedalus_wechat.live_session import LiveRuntimeStatus, PLAN_MARKER
 from daedalus_wechat.state import SessionRecord
 from daedalus_wechat.state import BridgeState
 
@@ -691,9 +691,43 @@ class DaemonTests(unittest.TestCase):
                 kind="progress",
                 origin="desktop-mirror",
             )
+            plan_text = daemon._render_reply_text(
+                "Plan\n1. 进行中: 实现 plan icon",
+                kind="plan",
+                origin="desktop-mirror",
+            )
             self.assertEqual(final_text, "✅ 规则已收口。")
             self.assertEqual(system_text, "⚙️ 已注入 terminal。")
             self.assertEqual(progress_text, "⏳ 我先检查 bridge 当前状态。")
+            self.assertEqual(plan_text, "📋 Plan\n1. 进行中: 实现 plan icon")
+
+    def test_mirror_plan_with_dedicated_icon(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                active_session_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                progress_updates_enabled=True,
+            )
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            thread_id = runner.runtime_thread_id
+            runner.progresses[(thread_id, 0)] = (
+                [PLAN_MARKER + "Plan\n1. 进行中: 实现 plan icon"],
+                "",
+                10,
+            )
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            daemon._mirror_desktop_final_if_any()
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                ("user@im.wechat", None, "📋 Plan\n1. 进行中: 实现 plan icon"),
+            )
 
     def test_desktop_progress_pending_queue_keeps_only_latest_for_thread(self) -> None:
         state = BridgeState()

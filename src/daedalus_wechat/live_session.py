@@ -21,6 +21,7 @@ STATUS_LINE_RE = re.compile(r"\bgpt-[^\n]*·[^\n]*\b[0-9a-f]{8}-[0-9a-f-]{28}\b"
 EPHEMERAL_LINE_RE = re.compile(
     r"^[•✻◦]\s+(Working|Baked|Thinking|Waiting|Context compacted|Updated Plan)\b"
 )
+PLAN_MARKER = "__DAEDALUS_PLAN__\n"
 
 
 @dataclass(frozen=True)
@@ -577,15 +578,25 @@ class LiveCodexSessionManager:
         return ""
 
     def _extract_progress_text(self, event: dict) -> str:
-        if event.get("type") != "event_msg":
-            return ""
+        event_type = event.get("type")
         payload = event.get("payload") or {}
-        if payload.get("type") != "agent_message":
-            return ""
-        if payload.get("phase") != "commentary":
-            return ""
-        message = str(payload.get("message", "")).strip()
-        return self._normalize_progress_text(message)
+        if event_type == "event_msg":
+            if payload.get("type") != "agent_message":
+                return ""
+            if payload.get("phase") != "commentary":
+                return ""
+            message = str(payload.get("message", "")).strip()
+            return self._normalize_progress_text(message)
+        if event_type == "response_item":
+            if payload.get("type") != "function_call":
+                return ""
+            if payload.get("name") != "update_plan":
+                return ""
+            plan_text = self._extract_plan_text(payload.get("arguments"))
+            if not plan_text:
+                return ""
+            return f"{PLAN_MARKER}{plan_text}"
+        return ""
 
     def _normalize_progress_text(self, text: str) -> str:
         lines = [line.rstrip() for line in text.splitlines()]
@@ -602,6 +613,41 @@ class LiveCodexSessionManager:
                 blank_pending = False
             normalized.append(stripped)
         return "\n".join(normalized).strip()
+
+    def _extract_plan_text(self, arguments: object) -> str:
+        if isinstance(arguments, str):
+            raw = arguments.strip()
+            if not raw:
+                return ""
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                return ""
+        elif isinstance(arguments, dict):
+            payload = arguments
+        else:
+            return ""
+        explanation = str(payload.get("explanation", "")).strip()
+        plan = payload.get("plan") or []
+        if not explanation and not plan:
+            return ""
+        lines = ["Plan"]
+        if explanation:
+            lines.append(explanation)
+        status_labels = {
+            "in_progress": "进行中",
+            "pending": "待办",
+            "completed": "完成",
+        }
+        for index, item in enumerate(plan, start=1):
+            if not isinstance(item, dict):
+                continue
+            step = str(item.get("step", "")).strip()
+            if not step:
+                continue
+            status = status_labels.get(str(item.get("status", "")).strip(), "状态未知")
+            lines.append(f"{index}. {status}: {step}")
+        return "\n".join(lines).strip()
 
     def _wait_for_thread_id(self, tmux_session: str) -> str:
         deadline = time.monotonic() + 20.0

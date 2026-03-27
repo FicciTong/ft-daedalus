@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from daedalus_wechat.live_session import LiveCodexSessionManager
+from daedalus_wechat.live_session import LiveCodexSessionManager, PLAN_MARKER
 from daedalus_wechat.state import SessionRecord
 
 
@@ -52,6 +52,30 @@ class LiveSessionTests(unittest.TestCase):
         self.assertEqual(
             self.runner._extract_progress_text(event),
             "我先检查 bridge 当前状态，然后再看事件日志。\n后面这句不该发。",
+        )
+
+    def test_extract_progress_text_reads_update_plan_function_call(self) -> None:
+        event = {
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "update_plan",
+                "arguments": json.dumps(
+                    {
+                        "explanation": "切到更小的主线切片。",
+                        "plan": [
+                            {"step": "检查 bridge 当前状态", "status": "completed"},
+                            {"step": "实现 plan icon", "status": "in_progress"},
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        }
+        self.assertEqual(
+            self.runner._extract_progress_text(event),
+            PLAN_MARKER
+            + "Plan\n切到更小的主线切片。\n1. 完成: 检查 bridge 当前状态\n2. 进行中: 实现 plan icon",
         )
 
     def test_wait_for_final_reply_returns_final_without_task_complete(self) -> None:

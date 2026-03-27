@@ -49,6 +49,7 @@ If you want quiet mode on mobile:
 WeChat message icons:
 
 - `⚙️` = bridge / service / binding / command notices
+- `📋` = plan updates
 - `⏳` = progress commentary
 - `✅` = the round is actually done
 
