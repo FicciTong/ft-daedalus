@@ -103,7 +103,7 @@ tmux attach -t codex
 - 想看完整实时流：看桌面 tmux
 - 想手机远程操作：看微信
 - 想让桌面侧 final 回到微信：先在微信发任意一句话或命令，把当前 chat context 绑上
-- 如果你在当前 active tmux session 里手动 `resume` 到别的 thread，镜像会跟随**当前 active tmux thread**
+- 如果你在当前 active tmux session 里手动 `resume` 到别的 thread，owner-facing 绑定仍然留在这个 **tmux session** 上，bridge 只是在内部跟随它下面当前 live 的 thread
 - 如果你真的维护多个 live tmux session，可以用 `/sessions` / `/switch` 在微信里切换
 
 ## 🧰 前置依赖

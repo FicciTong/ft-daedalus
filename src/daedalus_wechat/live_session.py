@@ -161,9 +161,13 @@ class LiveCodexSessionManager:
         )
 
     def current_runtime_status(
-        self, *, active_session_id: str | None = None
+        self, *, active_session_id: str | None = None, active_tmux_session: str | None = None
     ) -> LiveRuntimeStatus:
         live_statuses = self.list_live_runtime_statuses()
+        if active_tmux_session:
+            for status in live_statuses:
+                if status.tmux_session == active_tmux_session:
+                    return status
         if active_session_id:
             for status in live_statuses:
                 if status.thread_id == active_session_id:
@@ -251,7 +255,10 @@ class LiveCodexSessionManager:
 
     def try_live_session(self, state: BridgeState) -> SessionRecord | None:
         self.sync_live_sessions(state)
-        status = self.current_runtime_status(active_session_id=state.active_session_id)
+        status = self.current_runtime_status(
+            active_session_id=state.active_session_id,
+            active_tmux_session=state.active_tmux_session,
+        )
         if not status.exists or not status.thread_id:
             return None
         existing = state.sessions.get(status.thread_id)
@@ -267,7 +274,10 @@ class LiveCodexSessionManager:
 
     def require_live_session(self, state: BridgeState) -> SessionRecord:
         self.sync_live_sessions(state)
-        status = self.current_runtime_status(active_session_id=state.active_session_id)
+        status = self.current_runtime_status(
+            active_session_id=state.active_session_id,
+            active_tmux_session=state.active_tmux_session,
+        )
         if not status.exists:
             raise RuntimeError(
                 "当前没有 `tmux codex`。请先启动一个固定窗口，例如：\n"

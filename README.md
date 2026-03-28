@@ -97,7 +97,8 @@ So:
 - if you want desktop-originated final replies to come back to WeChat, first
   send any normal message or command once so the current chat context is bound
 - if you manually `resume` a different thread inside the currently active tmux
-  session, the mirror follows that **current active tmux thread**
+  session, the owner-facing binding still stays on that **tmux session**, while
+  the bridge follows the current live thread under it
 - if you intentionally run multiple live tmux sessions under the workspace,
   `/sessions` and `/switch` let WeChat bind to a different one
 

@@ -24,6 +24,7 @@ class SessionRecord:
 @dataclass
 class BridgeState:
     active_session_id: str | None = None
+    active_tmux_session: str | None = None
     get_updates_buf: str = ""
     bound_user_id: str | None = None
     bound_context_token: str | None = None
@@ -58,6 +59,7 @@ class BridgeState:
             )
         return cls(
             active_session_id=raw.get("active_session_id"),
+            active_tmux_session=raw.get("active_tmux_session"),
             get_updates_buf=raw.get("get_updates_buf", ""),
             bound_user_id=raw.get("bound_user_id"),
             bound_context_token=raw.get("bound_context_token"),
@@ -100,6 +102,7 @@ class BridgeState:
             json.dumps(
                 {
                     "active_session_id": self.active_session_id,
+                    "active_tmux_session": self.active_tmux_session,
                     "get_updates_buf": self.get_updates_buf,
                     "bound_user_id": self.bound_user_id,
                     "bound_context_token": self.bound_context_token,

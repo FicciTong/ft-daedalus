@@ -195,11 +195,13 @@ class BridgeDaemon:
         with self._lock:
             active_record = self.runner.require_live_session(self.state)
             self.state.active_session_id = active_record.thread_id
+            self.state.active_tmux_session = active_record.tmux_session
             self._sync_mirror_cursor(active_record.thread_id)
             self._save_state()
         refreshed = self.runner.submit_prompt(record=active_record, prompt=incoming.body)
         with self._lock:
             self.state.active_session_id = refreshed.thread_id
+            self.state.active_tmux_session = refreshed.tmux_session
             self.state.touch_session(
                 refreshed.thread_id,
                 label=refreshed.label,
@@ -252,6 +254,7 @@ class BridgeDaemon:
             return self._sessions_text(live_records)
         if command == "/stop":
             self.state.active_session_id = None
+            self.state.active_tmux_session = None
             self._save_state()
             return "已清空 active session。"
         if command == "/attach-last":
@@ -259,6 +262,7 @@ class BridgeDaemon:
             if not record:
                 return "没有找到最近的 ft-cosmos 本地 Codex session。"
             self.state.active_session_id = record.thread_id
+            self.state.active_tmux_session = record.tmux_session
             self._sync_mirror_cursor(record.thread_id)
             self._save_state()
             return (
@@ -271,6 +275,7 @@ class BridgeDaemon:
             label = arg or f"session-{datetime.now(UTC).strftime('%m%d-%H%M%S')}"
             record = self.runner.create_new_session(state=self.state, label=label)
             self.state.active_session_id = record.thread_id
+            self.state.active_tmux_session = record.tmux_session
             self._sync_mirror_cursor(record.thread_id)
             self._save_state()
             return (
@@ -296,10 +301,12 @@ class BridgeDaemon:
                 source=record.source,
             )
             refreshed.updated_at = datetime.now(UTC).isoformat()
+            self.state.active_session_id = refreshed.thread_id
+            self.state.active_tmux_session = refreshed.tmux_session
             self._sync_mirror_cursor(refreshed.thread_id)
             self._save_state()
             return (
-                f"已切换到 session:\n{match}\n"
+                f"已切换到 session:\n{refreshed.thread_id}\n"
                 f"label={refreshed.label}\n"
                 f"tmux={refreshed.tmux_session}\n"
                 f"attach={self.runner.attach_hint(refreshed)}"
@@ -365,7 +372,21 @@ class BridgeDaemon:
         record = self.runner.try_live_session(self.state)
         if record:
             self.state.active_session_id = record.thread_id
+            self.state.active_tmux_session = record.tmux_session
             self._save_state()
+
+    def _is_active_record(self, record) -> bool:
+        return self._is_active_thread(record.thread_id, record.tmux_session)
+
+    def _is_active_thread(
+        self, thread_id: str | None, tmux_session: str | None = None
+    ) -> bool:
+        if not tmux_session and thread_id:
+            record = self.state.sessions.get(thread_id)
+            tmux_session = record.tmux_session if record else None
+        if self.state.active_tmux_session and tmux_session:
+            return tmux_session == self.state.active_tmux_session
+        return bool(thread_id and thread_id == self.state.active_session_id)
 
     def _resolve_session(
         self, query: str, live_records: list | None = None
@@ -419,7 +440,8 @@ class BridgeDaemon:
     def _status_text(self) -> str:
         self.runner.sync_live_sessions(self.state)
         runtime = self.runner.current_runtime_status(
-            active_session_id=self.state.active_session_id
+            active_session_id=self.state.active_session_id,
+            active_tmux_session=self.state.active_tmux_session,
         )
         if not runtime.exists:
             return (
@@ -441,6 +463,7 @@ class BridgeDaemon:
                 "hint=attach 后 resume --last"
             )
         self.state.active_session_id = runtime.thread_id
+        self.state.active_tmux_session = runtime.tmux_session
         self._save_state()
         record = self.state.sessions.get(self.state.active_session_id)
         if not record:
@@ -461,7 +484,8 @@ class BridgeDaemon:
 
     def _sessions_text(self, live_records: list | None = None) -> str:
         runtime = self.runner.current_runtime_status(
-            active_session_id=self.state.active_session_id
+            active_session_id=self.state.active_session_id,
+            active_tmux_session=self.state.active_tmux_session,
         )
         listed = self._listed_sessions(live_records)
         inventory = []
@@ -484,7 +508,7 @@ class BridgeDaemon:
         live_thread_ids = {record.thread_id for record in (live_records or [])}
         lines = [f"sessions={len(listed)}"]
         for idx, record in enumerate(listed[:20], start=1):
-            marker = "*" if record.thread_id == self.state.active_session_id else " "
+            marker = "*" if self._is_active_record(record) else " "
             live_marker = " live" if record.thread_id in live_thread_ids else ""
             lines.append(
                 f"{marker}{idx} {record.label} | {self._short_thread(record.thread_id)} | {record.tmux_session or '-'}{live_marker}"
@@ -501,7 +525,8 @@ class BridgeDaemon:
     def _health_text(self) -> str:
         self.runner.sync_live_sessions(self.state)
         runtime = self.runner.current_runtime_status(
-            active_session_id=self.state.active_session_id
+            active_session_id=self.state.active_session_id,
+            active_tmux_session=self.state.active_tmux_session,
         )
         if not runtime.exists:
             status = "degraded"
@@ -733,11 +758,19 @@ class BridgeDaemon:
     def _current_mirror_thread_id(self) -> str | None:
         with self._lock:
             active_session_id = self.state.active_session_id
-        runtime = self.runner.current_runtime_status(active_session_id=active_session_id)
+            active_tmux_session = self.state.active_tmux_session
+        runtime = self.runner.current_runtime_status(
+            active_session_id=active_session_id,
+            active_tmux_session=active_tmux_session,
+        )
         if runtime.exists and runtime.thread_id:
             with self._lock:
-                if self.state.active_session_id != runtime.thread_id:
+                if (
+                    self.state.active_session_id != runtime.thread_id
+                    or self.state.active_tmux_session != runtime.tmux_session
+                ):
                     self.state.active_session_id = runtime.thread_id
+                    self.state.active_tmux_session = runtime.tmux_session
                     existing = self.state.sessions.get(runtime.thread_id)
                     self.state.touch_session(
                         runtime.thread_id,
@@ -957,11 +990,13 @@ class BridgeDaemon:
             )
         if self.state.outbox_waiting_for_bind:
             lines.append("wait=next-wechat-message")
+        if self.state.active_tmux_session:
+            lines.append(f"active_tmux={self.state.active_tmux_session}")
         for kind, count in sorted(kind_counts.items()):
             lines.append(f"{kind}={count}")
         lines.append(f"threads={len(thread_counts)}")
         for idx, thread_id in enumerate(thread_order[:5], start=1):
-            marker = "*" if thread_id == self.state.active_session_id else ""
+            marker = "*" if self._is_active_thread(thread_id) else ""
             lines.append(
                 f"thread[{idx}]={marker}{self._queue_thread_display(thread_id)}|count={thread_counts[thread_id]}"
             )
