@@ -664,6 +664,9 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("/notify on", help_text)
             self.assertIn("/recent after 128", help_text)
             self.assertIn("/queue", help_text)
+            self.assertIn("当前可切换的 live tmux 列表", help_text)
+            self.assertIn("当前 active live tmux session", help_text)
+            self.assertIn("同一时刻只会有一个 active live session", help_text)
 
     def test_queue_text_summarizes_pending_outbox(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -23,7 +23,7 @@ HELP_TEXT = """FT bridge 命令总览
 会话:
 /status            当前 active session / tmux / cwd
 /health            bridge / tmux / thread 健康检查
-/sessions          可切换 session 列表
+/sessions          当前可切换的 live tmux 列表
 /switch <target>   切换到某个 session
 /attach-last       接最近一个 ft-cosmos session
 /new [label]       新建一个本地 Codex session
@@ -43,9 +43,10 @@ HELP_TEXT = """FT bridge 命令总览
 /help              显示这页
 /menu              同 /help
 
-普通文本消息 = 直接发给当前 `tmux codex` 里的 live session。
 普通文本消息 = 直接发给当前 active live tmux session。
 如果当前 active tmux 还没打开 Codex，bridge 会明确提示你先启动/恢复。
+/sessions 只显示当前 workspace 下、看起来像 live Codex runtime 的 tmux。
+同一时刻只会有一个 active live session。
 """
 
 
