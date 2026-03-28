@@ -163,6 +163,7 @@ class BridgeState:
         kind: str,
         origin: str,
         thread_id: str | None,
+        error: str | None = None,
     ) -> None:
         body = text.strip()
         if not to_user_id or not body:
@@ -178,14 +179,40 @@ class BridgeState:
                     and (item.get("thread_id") or "") == str(thread_id or "")
                 )
             ]
+        dedupe_key = (
+            str(to_user_id),
+            body,
+            str(kind),
+            str(origin),
+            str(thread_id or ""),
+        )
+        now = now_iso()
+        for item in self.pending_outbox:
+            item_key = (
+                str(item.get("to", "")),
+                str(item.get("text", "")).strip(),
+                str(item.get("kind", "message")),
+                str(item.get("origin", "bridge")),
+                str(item.get("thread_id", "")),
+            )
+            if item_key != dedupe_key:
+                continue
+            item["last_attempt_at"] = now
+            item["attempt_count"] = int(item.get("attempt_count", 1) or 1) + 1
+            if error:
+                item["last_error"] = str(error)
+            return
         self.pending_outbox.append(
             {
                 "to": str(to_user_id),
                 "text": body,
-                "created_at": now_iso(),
+                "created_at": now,
                 "kind": str(kind),
                 "origin": str(origin),
                 "thread_id": str(thread_id or ""),
+                "attempt_count": 1,
+                "last_attempt_at": now,
+                "last_error": str(error or ""),
             }
         )
         self.pending_outbox = self.pending_outbox[-100:]

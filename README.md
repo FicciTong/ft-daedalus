@@ -245,17 +245,21 @@ The bridge now has four built-in reliability layers:
 2. **stale context retry**
    - if WeChat rejects a send with `ret=-2`, the bridge retries once without
      `context_token`
-3. **context-free desktop mirroring**
-   - mirrored desktop progress/final messages and `send-bound` relays are sent
-     without `context_token` on purpose
-   - immediate command replies (for example `/status`) still use the live inbound
-     context when available
+3. **bound-context-first mirroring**
+   - mirrored desktop `progress / plan / final` now prefer the latest bound
+     inbound `context_token` first
+   - the WeChat client still falls back through its retry logic when the token
+     has gone stale
+   - immediate command replies (for example `/status`) still use the live
+     inbound context when available
 4. **final-reply fallback + pending outbox**
    - if rollout JSONL misses a `final_answer`, the bridge falls back to the
      visible answer in the live `tmux codex` pane
    - if delivery still fails, the message is queued locally
-   - when you next send any WeChat message (for example `/status`), the bridge
-     automatically flushes the queued progress/final messages back to you
+   - queue entries are deduplicated by message identity instead of multiplying
+     on repeated retry failures
+   - the bridge still flushes pending messages aggressively when later inbound
+     traffic refreshes the live chat binding
 5. **asynchronous prompt lane + voice fallback**
    - WeChat prompts are queued and processed by a dedicated worker, so a long
      running prompt no longer blocks later `/status` or `/help`
@@ -275,6 +279,7 @@ Last-resort operator recovery is still:
 
 ```bash
 /status
+/queue
 /recent 6
 ```
 
@@ -366,6 +371,7 @@ Commands:
 - `/status`
 - `/health`
 - `/notify on|off|status`
+- `/queue`
 - `/recent [n]`
 - `/recent after <seq>`
 - `/sessions`

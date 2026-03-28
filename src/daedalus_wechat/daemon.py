@@ -37,6 +37,7 @@ HELP_TEXT = """FT bridge 命令总览
 追溯:
 /recent 10         看最近 10 条 delivery ledger
 /recent after 128  从 seq=128 之后继续看
+/queue             看当前待发送队列概况
 
 帮助:
 /help              显示这页
@@ -241,6 +242,8 @@ class BridgeDaemon:
             return self._notify_text(arg)
         if command == "/recent":
             return self._recent_text(arg)
+        if command == "/queue":
+            return self._queue_text()
         if command == "/sessions":
             return self._sessions_text()
         if command == "/stop":
@@ -515,6 +518,7 @@ class BridgeDaemon:
                             kind=kind,
                             origin=origin,
                             thread_id=thread_id,
+                            error=str(exc),
                         )
                     self._save_state()
                     self._log_event(
@@ -647,7 +651,6 @@ class BridgeDaemon:
                     to_user_id,
                     bound_context_token,
                     body,
-                    use_context_token=False,
                     kind=kind,
                     origin="desktop-mirror",
                     thread_id=thread_id,
@@ -662,7 +665,6 @@ class BridgeDaemon:
             to_user_id,
             bound_context_token,
             scan.final_text,
-            use_context_token=False,
             kind="final",
             origin="desktop-mirror",
             thread_id=thread_id,
@@ -791,7 +793,7 @@ class BridgeDaemon:
             try:
                 self.wechat.send_text(
                     to_user_id=to_user_id,
-                    context_token=None,
+                    context_token=context_token,
                     text=text,
                 )
                 with self._lock:
@@ -841,6 +843,43 @@ class BridgeDaemon:
 
     def _save_state(self) -> None:
         self.state.save(self.config.state_file)
+
+    def _queue_text(self) -> str:
+        items = list(self.state.pending_outbox)
+        if not items:
+            return "queue=0\nstatus=empty"
+        now = datetime.now(UTC)
+        oldest_seconds: float = 0.0
+        stuck_count = 0
+        kind_counts: dict[str, int] = {}
+        for item in items:
+            kind = str(item.get("kind", "message"))
+            kind_counts[kind] = kind_counts.get(kind, 0) + 1
+            created_at = str(item.get("created_at", "")).strip()
+            if created_at:
+                try:
+                    dt = datetime.fromisoformat(created_at)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=UTC)
+                    age = max(0.0, (now - dt.astimezone(UTC)).total_seconds())
+                    oldest_seconds = max(oldest_seconds, age)
+                    if age >= 120:
+                        stuck_count += 1
+                except ValueError:
+                    pass
+        lines = [
+            f"queue={len(items)}",
+            f"oldest_age_s={int(oldest_seconds)}",
+            f"stuck_ge_120s={stuck_count}",
+        ]
+        for kind, count in sorted(kind_counts.items()):
+            lines.append(f"{kind}={count}")
+        preview = items[0]
+        lines.append(
+            "head="
+            + str(preview.get("text", "")).strip().replace("\n", " ")[:120]
+        )
+        return "\n".join(lines)
 
     def _log_event(self, kind: str, payload: dict) -> None:
         with self._lock:

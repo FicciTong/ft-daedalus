@@ -261,14 +261,15 @@ systemctl --user restart daedalus-wechat
    - 但不再使用会把健康长轮询误判成卡死的 watchdog
 2. **过期 context 自动重发**
    - 如果微信发送返回 `ret=-2`，bridge 会自动去掉 `context_token` 再试一次
-3. **桌面镜像/relay 默认不绑 context**
-   - 桌面镜像出来的 progress/final，以及 `send-bound` 直推，默认都不带 `context_token`
-   - 这样优先保证送达，不把稳定性绑死在过期 chat context 上
-   - 即时命令回复（例如 `/status`）仍然优先使用当前入站 context
+3. **桌面镜像优先吃最新绑定 context**
+   - 桌面镜像出来的 `progress / plan / final` 现在会优先使用最新绑定的入站 `context_token`
+   - 如果这个 token 已经过期，微信客户端层仍会按重试逻辑继续兜底
+   - 即时命令回复（例如 `/status`）也仍然优先使用当前入站 context
 4. **final reply 兜底 + pending outbox**
    - 如果 rollout JSONL 没抓到 `final_answer`，bridge 会退回 live `tmux codex` pane 里的可见答复
    - 如果这样还是发不出去，消息会先落到本地 outbox
-   - 你下次任意发一条微信消息进来（例如 `/status`），bridge 会自动把排队的 progress/final 补发给你
+   - 相同消息不会因为重复重试而无限堆叠进 outbox
+   - 后续如果有新的入站消息刷新了 live binding，bridge 会优先继续冲洗 pending 队列
 5. **prompt 异步队列 + 语音兜底**
    - 微信发来的 prompt 会进入单独 worker 队列处理，所以一条长任务不再把后面的 `/status`、`/help` 一起堵死
    - 如果微信这次只给了语音消息但没有可用转写文本，bridge 仍然会刷新绑定、补发队列，并明确告诉你“这次语音没有可用转写”，而不是静默吞掉
@@ -285,6 +286,7 @@ DAEDALUS_WECHAT_MIN_SEND_INTERVAL_SECONDS=0.5
 
 ```bash
 /status
+/queue
 /recent 6
 ```
 
@@ -368,6 +370,7 @@ journalctl --user -u daedalus-wechat -n 100 --no-pager
 - `/status`
 - `/health`
 - `/notify on|off|status`
+- `/queue`
 - `/recent [n]`
 - `/recent after <seq>`
 - `/sessions`
