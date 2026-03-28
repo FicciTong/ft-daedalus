@@ -270,6 +270,8 @@ systemctl --user restart daedalus-wechat
    - 如果 rollout JSONL 没抓到 `final_answer`，bridge 会退回 live `tmux codex` pane 里的可见答复
    - 如果这样还是发不出去，消息会先落到本地 outbox
    - 相同消息不会因为重复重试而无限堆叠进 outbox
+   - 桌面镜像 backlog 现在按真实顺序保留，不再把同一 thread 里的旧 progress 静默折叠成只剩最新一条
+   - `/queue` 现在会更诚实地显示当前持久化 backlog，包括头尾预览和 overflow drop 计数
    - 如果仍然是 `ret=-2`，后台重试会暂停，等下一条微信入站消息刷新 live binding 后再继续冲洗队列
    - 后续如果有新的入站消息刷新了 live binding，bridge 会优先继续冲洗 pending 队列
 5. **prompt 异步队列 + 语音兜底**

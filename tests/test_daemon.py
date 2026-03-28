@@ -422,6 +422,7 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("plan=1", text)
             self.assertIn("final=1", text)
             self.assertIn("head=FIRST PLAN", text)
+            self.assertIn("tail=SECOND FINAL", text)
 
     def test_duplicate_pending_message_is_not_appended_twice(self) -> None:
         state = BridgeState()
@@ -844,7 +845,7 @@ class DaemonTests(unittest.TestCase):
                 ("user@im.wechat", "ctx-1", "📋 Plan\n1. 进行中: 实现 plan icon"),
             )
 
-    def test_desktop_progress_pending_queue_keeps_only_latest_for_thread(self) -> None:
+    def test_desktop_progress_pending_queue_preserves_backlog_for_thread(self) -> None:
         state = BridgeState()
         state.enqueue_pending_with_meta(
             to_user_id="user@im.wechat",
@@ -870,10 +871,25 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(
             [(item["origin"], item["text"]) for item in state.pending_outbox],
             [
+                ("desktop-mirror", "old progress"),
                 ("wechat-prompt-submitted", "system ack"),
                 ("desktop-mirror", "new progress"),
             ],
         )
+
+    def test_pending_outbox_tracks_overflow_drop_count(self) -> None:
+        state = BridgeState()
+        for idx in range(1005):
+            state.enqueue_pending_with_meta(
+                to_user_id="user@im.wechat",
+                text=f"msg-{idx}",
+                kind="progress",
+                origin="desktop-mirror",
+                thread_id="thread-1",
+            )
+        self.assertEqual(len(state.pending_outbox), 1000)
+        self.assertEqual(state.pending_outbox_overflow_dropped, 5)
+        self.assertEqual(state.pending_outbox[0]["text"], "msg-5")
 
     def test_reply_failure_queues_remaining_chunks(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

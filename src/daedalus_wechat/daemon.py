@@ -859,7 +859,12 @@ class BridgeDaemon:
     def _queue_text(self) -> str:
         items = list(self.state.pending_outbox)
         if not items:
-            return "queue=0\nstatus=empty"
+            lines = ["queue=0", "status=empty"]
+            if self.state.pending_outbox_overflow_dropped:
+                lines.append(
+                    f"overflow_dropped={self.state.pending_outbox_overflow_dropped}"
+                )
+            return "\n".join(lines)
         now = datetime.now(UTC)
         oldest_seconds: float = 0.0
         stuck_count = 0
@@ -884,6 +889,10 @@ class BridgeDaemon:
             f"oldest_age_s={int(oldest_seconds)}",
             f"stuck_ge_120s={stuck_count}",
         ]
+        if self.state.pending_outbox_overflow_dropped:
+            lines.append(
+                f"overflow_dropped={self.state.pending_outbox_overflow_dropped}"
+            )
         if self.state.outbox_waiting_for_bind:
             lines.append("wait=next-wechat-message")
         for kind, count in sorted(kind_counts.items()):
@@ -893,6 +902,12 @@ class BridgeDaemon:
             "head="
             + str(preview.get("text", "")).strip().replace("\n", " ")[:120]
         )
+        if len(items) > 1:
+            tail = items[-1]
+            lines.append(
+                "tail="
+                + str(tail.get("text", "")).strip().replace("\n", " ")[:120]
+            )
         return "\n".join(lines)
 
     def _log_event(self, kind: str, payload: dict) -> None:

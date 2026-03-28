@@ -261,6 +261,10 @@ The bridge now has four built-in reliability layers:
    - if delivery still fails, the message is queued locally
    - queue entries are deduplicated by message identity instead of multiplying
      on repeated retry failures
+   - mirrored desktop backlog is preserved in queue order; it is no longer
+     collapsed down to only the newest progress item for a thread
+   - `/queue` now shows the current persisted backlog more truthfully,
+     including head/tail preview and any overflow drop count
    - if WeChat still rejects the send with `ret=-2`, background retry pauses
      and waits for the next inbound WeChat message instead of retry-thrashing
    - the bridge still flushes pending messages aggressively when later inbound

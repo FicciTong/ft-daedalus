@@ -33,6 +33,7 @@ class BridgeState:
     mirror_offsets: dict[str, int] = field(default_factory=dict)
     last_progress_summaries: dict[str, str] = field(default_factory=dict)
     pending_outbox: list[dict[str, str]] = field(default_factory=list)
+    pending_outbox_overflow_dropped: int = 0
     sessions: dict[str, SessionRecord] = field(default_factory=dict)
 
     @classmethod
@@ -87,6 +88,9 @@ class BridgeState:
                 for item in (raw.get("pending_outbox", []) or [])
                 if str(item.get("to", "")).strip() and str(item.get("text", "")).strip()
             ],
+            pending_outbox_overflow_dropped=int(
+                raw.get("pending_outbox_overflow_dropped", 0) or 0
+            ),
             sessions=sessions,
         )
 
@@ -105,6 +109,7 @@ class BridgeState:
                     "mirror_offsets": self.mirror_offsets,
                     "last_progress_summaries": self.last_progress_summaries,
                     "pending_outbox": self.pending_outbox,
+                    "pending_outbox_overflow_dropped": self.pending_outbox_overflow_dropped,
                     "sessions": {
                         key: asdict(value) for key, value in self.sessions.items()
                     },
@@ -171,17 +176,6 @@ class BridgeState:
         body = text.strip()
         if not to_user_id or not body:
             return
-        if kind == "progress" and origin == "desktop-mirror":
-            self.pending_outbox = [
-                item
-                for item in self.pending_outbox
-                if not (
-                    item.get("to") == str(to_user_id)
-                    and item.get("kind") == "progress"
-                    and item.get("origin") == "desktop-mirror"
-                    and (item.get("thread_id") or "") == str(thread_id or "")
-                )
-            ]
         dedupe_key = (
             str(to_user_id),
             body,
@@ -218,7 +212,11 @@ class BridgeState:
                 "last_error": str(error or ""),
             }
         )
-        self.pending_outbox = self.pending_outbox[-100:]
+        max_items = 1000
+        overflow = len(self.pending_outbox) - max_items
+        if overflow > 0:
+            self.pending_outbox_overflow_dropped += overflow
+            self.pending_outbox = self.pending_outbox[-max_items:]
 
     def pop_pending_for(self, to_user_id: str) -> list[dict[str, str]]:
         matched: list[dict[str, str]] = []
