@@ -10,11 +10,11 @@
 当前这个仓库里已经正式落下来的 canonical 工具是：
 
 - **`daedalus-wechat`** —— 把微信接成一个 canonical 本地 live `tmux`
-  会话的 operator surface
+  runtime 的 operator surface，并支持在多个本地 live session 之间切换
 
 > 📱 手机微信  
 > 🖥️ 本地 `tmux` 里的 Codex  
-> 🔁 同一个 canonical live session
+> 🔁 同一时刻只盯一个 active live session
 
 [English Version](./README.md)
 
@@ -28,9 +28,11 @@
 
 默认约定：
 
-- canonical tmux 名：`codex`
+- 默认 canonical tmux 名：`codex`
 - tmux 里跑的 agent：本地 `codex`
 - 微信是远程 operator surface，不是另一个独立 bot
+- 如果你有意识地维护多个同 workspace 下的 live tmux session，微信可以
+  list / switch，但仍然一次只对准一个 active session
 
 这只是仓库当前已经落成的第一件工具，不是这个仓库的永久边界。以后如果
 `ft-daedalus` 再长出别的工具，它们也应该作为独立 operator/tooling
@@ -63,14 +65,15 @@ surface 落在这里。
 - **不会**修改 Codex 本体
 - **不会**放进 `ft-cosmos`
 - **不会**走 Codex cloud tasks
-- **不会**把多个 live shell 混成一个聊天窗口
+- **不会**把多个 live shell 同时混流到一个聊天窗口
 - **会**使用官方 `openclaw-weixin` 登录链路
-- **会**把 `tmux codex` 当成 canonical runtime truth
+- **会**把 workspace 下的 live tmux session 当成可切换 runtime target，
+  同时保留 `tmux codex` 作为 canonical default
 - **会**在当前微信会话绑定后，把桌面侧产生的 final reply 镜像回微信
 
 ## 🧠 正确理解方式
 
-你需要把它理解成两层表面、一个 owner：
+你需要把它理解成两层表面、同一时刻一个 active owner：
 
 ### 1. 桌面 live owner
 
@@ -100,7 +103,8 @@ tmux attach -t codex
 - 想看完整实时流：看桌面 tmux
 - 想手机远程操作：看微信
 - 想让桌面侧 final 回到微信：先在微信发任意一句话或命令，把当前 chat context 绑上
-- 如果你在 `tmux codex` 里手动 `resume` 到别的 thread，镜像会跟随**当前 canonical tmux thread**
+- 如果你在当前 active tmux session 里手动 `resume` 到别的 thread，镜像会跟随**当前 active tmux thread**
+- 如果你真的维护多个 live tmux session，可以用 `/sessions` / `/switch` 在微信里切换
 
 ## 🧰 前置依赖
 
@@ -391,7 +395,7 @@ cd ~/dev/ft-cosmos/ft-daedalus
 uv run daedalus-wechat send-bound "hello from desktop"
 ```
 
-普通文本消息会送进当前 `tmux codex` 里正在活着的 Codex thread。
+普通文本消息会送进**当前 active live tmux session** 里正在活着的 Codex thread。
 
 示例：
 
@@ -404,6 +408,7 @@ uv run daedalus-wechat send-bound "hello from desktop"
 /switch 1
 /switch attached-last
 /switch codex
+/switch 123
 帮我检查今天的 package outcome
 ```
 
@@ -414,7 +419,7 @@ uv run daedalus-wechat send-bound "hello from desktop"
 - `/recent` = 从永久 delivery ledger 里回看最近几条记录
 - `/recent after <seq>` = 从某个稳定序号之后继续看，不再依赖滑动窗口
 - `/status` = 当前接的是哪个 live session
-- `/sessions` = 手机可读的短列表，用来快速 `/switch 1`
+- `/sessions` = 手机可读的 live workspace tmux 列表，用来快速 `/switch 1`
 - `send-bound` = 桌面/脚本侧显式把一段消息推到当前绑定微信会话
 
 ## 🗓️ 日常使用建议
@@ -430,7 +435,7 @@ uv run daedalus-wechat send-bound "hello from desktop"
 
 - 直接在微信里正常说话
 - 如果不确定接的是谁，就发 `/status`
-- 如果你真的在管多个 session，再用 `/sessions` / `/switch`
+- 如果你真的在管多个 live tmux session，再用 `/sessions` / `/switch`
 
 ### 你回到电脑前的时候
 
@@ -441,7 +446,7 @@ tmux attach -t codex
 ```
 
 不要期待另一个独立开的桌面 Codex 窗口会自动和微信实时同步。  
-真正的 live owner 是 canonical tmux。
+只有看起来像 live Codex runtime 且 cwd 落在 configured workspace 下的 tmux session，才会出现在可切换列表里。
 
 ## 🧩 可选环境变量
 

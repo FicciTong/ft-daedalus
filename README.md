@@ -10,11 +10,12 @@ runtime utilities. It is **not** limited to one tool forever.
 The current canonical tool in this repo is:
 
 - **`daedalus-wechat`** — a WeChat operator surface for one canonical local
-  live `tmux` session
+  live `tmux` runtime, with optional switching across multiple local live
+  sessions
 
 > 📱 WeChat on your phone  
 > 🖥️ Codex in your local `tmux`  
-> 🔁 One canonical live session
+> 🔁 One active live session at a time
 
 [中文说明 / Chinese Guide](./README.zh-CN.md)
 
@@ -23,11 +24,14 @@ using the **official** OpenClaw Weixin channel
 (`@tencent-weixin/openclaw-weixin`).
 
 This is **not** a cloud-task wrapper. It preserves **local session continuity**
-by routing WeChat messages into one canonical live tmux shell:
+by routing WeChat messages into one active local live tmux shell:
 
-- tmux session name: `codex`
+- default canonical tmux session name: `codex`
 - live agent inside that shell: local `codex`
 - WeChat acts as a remote operator surface for that same local shell
+- if you intentionally manage more than one live tmux session under the same
+  workspace, WeChat can list and switch them, but still targets only **one
+  active session at a time**
 
 That is the **current** shape of the repo, not the permanent limit of the repo.
 If `ft-daedalus` grows more tools later, they should live here as separate
@@ -60,9 +64,10 @@ This bridge:
 - does **not** modify Codex
 - does **not** live inside `ft-cosmos`
 - does **not** use Codex cloud tasks
-- does **not** multiplex many live shells into one WeChat chat
+- does **not** stream many live shells into one WeChat chat at once
 - **does** use the official `openclaw-weixin` login flow
-- **does** treat `tmux codex` as the canonical runtime truth
+- **does** treat workspace live tmux sessions as switchable runtime targets,
+  with `tmux codex` as the canonical default
 - **does** mirror desktop-originated final replies back to WeChat once the chat
   context is bound
 
@@ -72,10 +77,11 @@ Future lane for later reliability hardening:
 
 ## 🧠 Mental Model
 
-There are two surfaces, but only **one canonical live owner**:
+There are two surfaces, but only **one active live owner at a time**:
 
 1. **Desktop live owner**
-   - `tmux attach -t codex`
+   - usually `tmux attach -t codex`
+   - or attach to whichever live tmux session you intentionally switched to
    - shows everything: prompt injection, live model output, tool chatter
 
 2. **WeChat operator surface**
@@ -90,8 +96,10 @@ So:
 - if you want remote control from your phone, use WeChat
 - if you want desktop-originated final replies to come back to WeChat, first
   send any normal message or command once so the current chat context is bound
-- if you manually `resume` a different thread inside `tmux codex`, the mirror
-  follows that **current canonical tmux thread**, not a stale saved thread id
+- if you manually `resume` a different thread inside the currently active tmux
+  session, the mirror follows that **current active tmux thread**
+- if you intentionally run multiple live tmux sessions under the workspace,
+  `/sessions` and `/switch` let WeChat bind to a different one
 
 ## 🧰 Prerequisites
 
@@ -398,7 +406,7 @@ uv run daedalus-wechat send-bound "hello from desktop"
 ```
 
 Plain text messages are sent to whatever Codex thread is **currently active
-inside `tmux codex`**.
+inside the active live tmux session**.
 
 Examples:
 
@@ -411,6 +419,7 @@ Examples:
 /switch 1
 /switch attached-last
 /switch codex
+/switch 123
 帮我检查今天的 package outcome
 ```
 
@@ -421,7 +430,7 @@ Phone-friendly semantics:
 - `/recent` = replay from the permanent delivery ledger
 - `/recent after <seq>` = continue from a known ledger position using stable sequence numbers
 - `/status` = which live session am I currently attached to
-- `/sessions` = short switchable list, optimized for phone reading
+- `/sessions` = short switchable list of currently live workspace tmux sessions
 - `send-bound` = explicit desktop/session-side push into the current bound
   WeChat chat
 
@@ -439,7 +448,7 @@ Phone-friendly semantics:
 - talk to WeChat normally
 - use `/status` if you want to confirm which session is active
 - use `/sessions` and `/switch` only if you intentionally manage more than one
-  session
+  live tmux session under the same workspace
 
 ### Back at the desktop
 
@@ -449,8 +458,10 @@ Attach to the canonical owner:
 tmux attach -t codex
 ```
 
-Do **not** expect a separate desktop Codex window to live-sync if it is not the
-canonical tmux owner.
+Do **not** expect an arbitrary unrelated shell to live-sync into the bridge.
+
+Only tmux sessions that look like live Codex runtimes **and** belong to the
+configured workspace are listed as switchable targets.
 
 ## 🧩 Optional Environment Variables
 

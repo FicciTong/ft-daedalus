@@ -48,28 +48,109 @@ class _FakeRunner:
         self.progresses: dict[tuple[str, int], tuple[list[str], str, int]] = {}
         self.runtime_thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
         self.submitted: list[tuple[str, str]] = []
+        self.runtime_statuses: list[LiveRuntimeStatus] = [
+            LiveRuntimeStatus(
+                tmux_session="codex",
+                exists=True,
+                pane_command="node",
+                thread_id=self.runtime_thread_id,
+                pane_cwd="/tmp",
+            )
+        ]
 
     def try_live_session(self, state: BridgeState):
+        self.sync_live_sessions(state)
+        for status in self._live_statuses():
+            if (
+                state.active_session_id
+                and status.thread_id == state.active_session_id
+                and status.exists
+            ):
+                return state.touch_session(
+                    status.thread_id,
+                    label=self._label_for(state, status),
+                    cwd=status.pane_cwd or "/tmp",
+                    source=self._source_for(state, status),
+                    tmux_session=status.tmux_session,
+                )
         return None
 
-    def current_runtime_status(self) -> LiveRuntimeStatus:
-        return LiveRuntimeStatus(
+    def sync_live_sessions(self, state: BridgeState) -> list[SessionRecord]:
+        records: list[SessionRecord] = []
+        for status in self._live_statuses():
+            if not status.exists or not status.thread_id:
+                continue
+            records.append(
+                state.touch_session(
+                    status.thread_id,
+                    label=self._label_for(state, status),
+                    cwd=status.pane_cwd or "/tmp",
+                    source=self._source_for(state, status),
+                    tmux_session=status.tmux_session,
+                )
+            )
+        return records
+
+    def current_runtime_status(
+        self, *, active_session_id: str | None = None
+    ) -> LiveRuntimeStatus:
+        statuses = self._live_statuses()
+        if active_session_id:
+            for status in statuses:
+                if status.thread_id == active_session_id:
+                    return status
+        for status in statuses:
+            if status.tmux_session == "codex":
+                return status
+        return statuses[0]
+
+    def ensure_resumed_session(
+        self,
+        *,
+        thread_id: str,
+        state: BridgeState,
+        label: str,
+        source: str,
+    ) -> SessionRecord:
+        for status in self.runtime_statuses:
+            if status.thread_id == thread_id:
+                return state.touch_session(
+                    thread_id,
+                    label=label,
+                    cwd=status.pane_cwd or "/tmp",
+                    source=source,
+                    tmux_session=status.tmux_session,
+                )
+        return state.touch_session(
+            thread_id,
+            label=label,
+            cwd="/tmp",
+            source=source,
             tmux_session="codex",
-            exists=True,
-            pane_command="node",
-            thread_id=self.runtime_thread_id,
+        )
+
+    def create_new_session(self, *, state: BridgeState, label: str) -> SessionRecord:
+        status = self.current_runtime_status(active_session_id=state.active_session_id)
+        return state.touch_session(
+            status.thread_id or self.runtime_thread_id,
+            label=label,
+            cwd=status.pane_cwd or "/tmp",
+            source="bridge-new",
+            tmux_session=status.tmux_session,
         )
 
     def attach_hint(self, record: SessionRecord) -> str:
-        return "tmux attach -t codex"
+        return f"tmux attach -t {record.tmux_session or 'codex'}"
 
     def require_live_session(self, state: BridgeState) -> SessionRecord:
+        status = self.current_runtime_status(active_session_id=state.active_session_id)
+        thread_id = status.thread_id or self.runtime_thread_id
         return state.touch_session(
-            self.runtime_thread_id,
-            label="attached-last",
-            cwd="/tmp",
-            source="tmux-live",
-            tmux_session="codex",
+            thread_id,
+            label=self._label_for(state, status),
+            cwd=status.pane_cwd or "/tmp",
+            source=self._source_for(state, status),
+            tmux_session=status.tmux_session,
         )
 
     def submit_prompt(self, *, record: SessionRecord, prompt: str) -> SessionRecord:
@@ -114,6 +195,35 @@ class _FakeRunner:
         from daedalus_wechat.live_session import MirrorScan
 
         return MirrorScan(progress_texts=progress_texts, final_text=final_text, end_offset=end_offset)
+
+    def _label_for(self, state: BridgeState, status: LiveRuntimeStatus) -> str:
+        existing = state.sessions.get(status.thread_id or "")
+        if existing:
+            return existing.label
+        return status.tmux_session
+
+    def _source_for(self, state: BridgeState, status: LiveRuntimeStatus) -> str:
+        existing = state.sessions.get(status.thread_id or "")
+        if existing:
+            return existing.source
+        return "tmux-live"
+
+    def _live_statuses(self) -> list[LiveRuntimeStatus]:
+        normalized: list[LiveRuntimeStatus] = []
+        for status in self.runtime_statuses:
+            if status.tmux_session == "codex":
+                normalized.append(
+                    LiveRuntimeStatus(
+                        tmux_session=status.tmux_session,
+                        exists=status.exists,
+                        pane_command=status.pane_command,
+                        thread_id=self.runtime_thread_id,
+                        pane_cwd=status.pane_cwd,
+                    )
+                )
+                continue
+            normalized.append(status)
+        return normalized
 
 
 class _TestDaemon(BridgeDaemon):
@@ -209,6 +319,171 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("label=attached-last", text)
             self.assertIn("tmux=codex", text)
             self.assertIn("attach=tmux attach -t codex", text)
+
+    def test_sessions_text_lists_multiple_live_tmux_sessions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_a = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            thread_b = "11111111-2222-3333-4444-555555555555"
+            state = BridgeState(
+                active_session_id=thread_b,
+                sessions={
+                    thread_a: SessionRecord(
+                        thread_id=thread_a,
+                        label="codex-main",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="codex",
+                    ),
+                    thread_b: SessionRecord(
+                        thread_id=thread_b,
+                        label="123",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="123",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_a,
+                    pane_cwd="/tmp",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="123",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_b,
+                    pane_cwd="/tmp",
+                ),
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+            text = daemon._handle_command("/sessions")
+            self.assertIn("sessions=2", text)
+            self.assertIn("1 codex-main | 019cdfe5 | codex live", text)
+            self.assertIn("*2 123 | 11111111 | 123 live", text)
+
+    def test_switch_can_target_live_tmux_session_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_a = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            thread_b = "11111111-2222-3333-4444-555555555555"
+            state = BridgeState(
+                active_session_id=thread_a,
+                sessions={
+                    thread_a: SessionRecord(
+                        thread_id=thread_a,
+                        label="codex-main",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="codex",
+                    ),
+                    thread_b: SessionRecord(
+                        thread_id=thread_b,
+                        label="123",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="123",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_a,
+                    pane_cwd="/tmp",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="123",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_b,
+                    pane_cwd="/tmp",
+                ),
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+            text = daemon._handle_command("/switch 123")
+            self.assertEqual(state.active_session_id, thread_b)
+            self.assertIn("已切换到 session:", text)
+            self.assertIn("tmux=123", text)
+            self.assertIn("attach=tmux attach -t 123", text)
+
+    def test_switch_prefers_exact_numeric_tmux_name_over_list_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_a = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            thread_b = "11111111-2222-3333-4444-555555555555"
+            state = BridgeState(
+                active_session_id=thread_a,
+                sessions={
+                    thread_a: SessionRecord(
+                        thread_id=thread_a,
+                        label="codex-main",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="codex",
+                    ),
+                    thread_b: SessionRecord(
+                        thread_id=thread_b,
+                        label="one",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="1",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_a,
+                    pane_cwd="/tmp",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="1",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_b,
+                    pane_cwd="/tmp",
+                ),
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+            text = daemon._handle_command("/switch 1")
+            self.assertEqual(state.active_session_id, thread_b)
+            self.assertIn("tmux=1", text)
 
     def test_bind_peer_syncs_current_cursor(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -761,6 +1036,69 @@ class DaemonTests(unittest.TestCase):
                 ("user@im.wechat", "ctx-1", "✅ NEW_THREAD_FINAL_OK"),
             )
             self.assertEqual(state.get_mirror_offset(new_thread), 30)
+
+    def test_mirror_prefers_active_live_tmux_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_a = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            thread_b = "11111111-2222-3333-4444-555555555555"
+            state = BridgeState(
+                active_session_id=thread_b,
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                mirror_offsets={thread_a: 10, thread_b: 20},
+                sessions={
+                    thread_a: SessionRecord(
+                        thread_id=thread_a,
+                        label="codex-main",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="codex",
+                    ),
+                    thread_b: SessionRecord(
+                        thread_id=thread_b,
+                        label="123",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="123",
+                    ),
+                },
+            )
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_a,
+                    pane_cwd="/tmp",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="123",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_b,
+                    pane_cwd="/tmp",
+                ),
+            ]
+            runner.finals[(thread_b, 20)] = ("ACTIVE_SWITCH_FINAL_OK", 30)
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            daemon._mirror_desktop_final_if_any()
+            self.assertEqual(state.active_session_id, thread_b)
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                ("user@im.wechat", "ctx-1", "✅ ACTIVE_SWITCH_FINAL_OK"),
+            )
+            self.assertEqual(state.get_mirror_offset(thread_b), 30)
 
     def test_command_reply_gets_system_tag(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

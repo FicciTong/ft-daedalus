@@ -48,6 +48,7 @@ class LiveRuntimeStatus:
     exists: bool
     pane_command: str | None
     thread_id: str | None
+    pane_cwd: str | None = None
 
 
 class LiveCodexSessionManager:
@@ -108,7 +109,17 @@ class LiveCodexSessionManager:
         label: str,
         source: str,
     ) -> SessionRecord:
-        tmux_session = self._tmux_name_for(thread_id)
+        existing = state.sessions.get(thread_id)
+        live_status = self._find_live_runtime_status(
+            thread_id=thread_id,
+            tmux_session=existing.tmux_session if existing else None,
+        )
+        tmux_session = (
+            live_status.tmux_session
+            if live_status
+            else existing.tmux_session if existing and existing.tmux_session
+            else self._tmux_name_for(thread_id)
+        )
         if self._tmux_exists(tmux_session):
             current_thread_id = self._extract_thread_id(
                 self._capture_clean_text(tmux_session)
@@ -139,41 +150,76 @@ class LiveCodexSessionManager:
             tmux_session=tmux_session,
         )
 
-    def current_runtime_status(self) -> LiveRuntimeStatus:
-        tmux_session = self.canonical_tmux_session
-        if not self._tmux_exists(tmux_session):
-            return LiveRuntimeStatus(
-                tmux_session=tmux_session,
-                exists=False,
-                pane_command=None,
-                thread_id=None,
-            )
-        pane_command = self._pane_current_command(tmux_session)
-        thread_id = self._extract_thread_id(self._capture_clean_text(tmux_session))
-        return LiveRuntimeStatus(
-            tmux_session=tmux_session,
-            exists=True,
-            pane_command=pane_command,
-            thread_id=thread_id,
+    def current_runtime_status(
+        self, *, active_session_id: str | None = None
+    ) -> LiveRuntimeStatus:
+        live_statuses = self.list_live_runtime_statuses()
+        if active_session_id:
+            for status in live_statuses:
+                if status.thread_id == active_session_id:
+                    return status
+        for status in live_statuses:
+            if status.tmux_session == self.canonical_tmux_session:
+                return status
+        if live_statuses:
+            return live_statuses[0]
+        return self._runtime_status_for_tmux(self.canonical_tmux_session)
+
+    def list_live_runtime_statuses(self) -> list[LiveRuntimeStatus]:
+        statuses: list[LiveRuntimeStatus] = []
+        for tmux_session in self._list_tmux_sessions():
+            status = self._runtime_status_for_tmux(tmux_session)
+            if not status.exists:
+                continue
+            if status.pane_command not in {"node", "codex"}:
+                continue
+            if not status.thread_id:
+                continue
+            if not self._is_workspace_tmux(status.pane_cwd):
+                continue
+            statuses.append(status)
+        return sorted(
+            statuses,
+            key=lambda item: (
+                0 if item.tmux_session == self.canonical_tmux_session else 1,
+                item.tmux_session,
+            ),
         )
 
+    def sync_live_sessions(self, state: BridgeState) -> list[SessionRecord]:
+        records: list[SessionRecord] = []
+        for status in self.list_live_runtime_statuses():
+            existing = state.sessions.get(status.thread_id)
+            records.append(
+                state.touch_session(
+                    status.thread_id,
+                    label=existing.label if existing else status.tmux_session,
+                    cwd=existing.cwd if existing else status.pane_cwd or str(self.default_cwd),
+                    source=existing.source if existing else "tmux-live",
+                    tmux_session=status.tmux_session,
+                )
+            )
+        return records
+
     def try_live_session(self, state: BridgeState) -> SessionRecord | None:
-        status = self.current_runtime_status()
+        self.sync_live_sessions(state)
+        status = self.current_runtime_status(active_session_id=state.active_session_id)
         if not status.exists or not status.thread_id:
             return None
         existing = state.sessions.get(status.thread_id)
-        label = existing.label if existing else "live-codex"
+        label = existing.label if existing else status.tmux_session
         source = existing.source if existing else "tmux-live"
         return state.touch_session(
             status.thread_id,
             label=label,
-            cwd=str(self.default_cwd),
+            cwd=existing.cwd if existing else status.pane_cwd or str(self.default_cwd),
             source=source,
             tmux_session=status.tmux_session,
         )
 
     def require_live_session(self, state: BridgeState) -> SessionRecord:
-        status = self.current_runtime_status()
+        self.sync_live_sessions(state)
+        status = self.current_runtime_status(active_session_id=state.active_session_id)
         if not status.exists:
             raise RuntimeError(
                 "当前没有 `tmux codex`。请先启动一个固定窗口，例如：\n"
@@ -193,12 +239,12 @@ class LiveCodexSessionManager:
                 f"codex resume --last -C {self.default_cwd} --no-alt-screen"
             )
         existing = state.sessions.get(status.thread_id)
-        label = existing.label if existing else "live-codex"
+        label = existing.label if existing else status.tmux_session
         source = existing.source if existing else "tmux-live"
         return state.touch_session(
             status.thread_id,
             label=label,
-            cwd=str(self.default_cwd),
+            cwd=existing.cwd if existing else status.pane_cwd or str(self.default_cwd),
             source=source,
             tmux_session=status.tmux_session,
         )
@@ -675,6 +721,64 @@ class LiveCodexSessionManager:
     def _tmux_name_for(self, thread_id: str) -> str:
         return self.canonical_tmux_session
 
+    def _find_live_runtime_status(
+        self,
+        *,
+        thread_id: str | None = None,
+        tmux_session: str | None = None,
+    ) -> LiveRuntimeStatus | None:
+        for status in self.list_live_runtime_statuses():
+            if thread_id and status.thread_id == thread_id:
+                return status
+            if tmux_session and status.tmux_session == tmux_session:
+                return status
+        return None
+
+    def _runtime_status_for_tmux(self, tmux_session: str) -> LiveRuntimeStatus:
+        if not self._tmux_exists(tmux_session):
+            return LiveRuntimeStatus(
+                tmux_session=tmux_session,
+                exists=False,
+                pane_command=None,
+                thread_id=None,
+                pane_cwd=None,
+            )
+        pane_command = self._pane_current_command(tmux_session)
+        pane_cwd = self._pane_current_path(tmux_session)
+        thread_id = self._extract_thread_id(self._capture_clean_text(tmux_session))
+        return LiveRuntimeStatus(
+            tmux_session=tmux_session,
+            exists=True,
+            pane_command=pane_command,
+            thread_id=thread_id,
+            pane_cwd=pane_cwd,
+        )
+
+    def _list_tmux_sessions(self) -> list[str]:
+        proc = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return []
+        return [
+            line.strip()
+            for line in proc.stdout.decode(errors="replace").splitlines()
+            if line.strip()
+        ]
+
+    def _is_workspace_tmux(self, pane_cwd: str | None) -> bool:
+        if not pane_cwd:
+            return False
+        try:
+            path = Path(pane_cwd).resolve(strict=False)
+        except OSError:
+            return False
+        workspace = self.default_cwd.resolve(strict=False)
+        return path == workspace or workspace in path.parents
+
     def _tmux_exists(self, tmux_session: str) -> bool:
         proc = subprocess.run(
             ["tmux", "has-session", "-t", tmux_session],
@@ -687,6 +791,17 @@ class LiveCodexSessionManager:
     def _pane_current_command(self, tmux_session: str) -> str | None:
         proc = subprocess.run(
             ["tmux", "display-message", "-p", "-t", f"{tmux_session}:0.0", "#{pane_current_command}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return None
+        return proc.stdout.decode(errors="replace").strip() or None
+
+    def _pane_current_path(self, tmux_session: str) -> str | None:
+        proc = subprocess.run(
+            ["tmux", "display-message", "-p", "-t", f"{tmux_session}:0.0", "#{pane_current_path}"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,

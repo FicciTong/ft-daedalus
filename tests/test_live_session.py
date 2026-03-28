@@ -6,7 +6,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from daedalus_wechat.live_session import LiveCodexSessionManager, PLAN_MARKER
+from daedalus_wechat.live_session import (
+    LiveCodexSessionManager,
+    LiveRuntimeStatus,
+    PLAN_MARKER,
+)
+from daedalus_wechat.state import BridgeState
 from daedalus_wechat.state import SessionRecord
 
 
@@ -155,6 +160,87 @@ class LiveSessionTests(unittest.TestCase):
         inject_mock.assert_called_once_with("codex", "hello")
         self.assertEqual(submitted.thread_id, record.thread_id)
         self.assertEqual(submitted.tmux_session, "codex")
+
+    def test_list_live_runtime_statuses_filters_to_workspace_codex_sessions(self) -> None:
+        with patch.object(
+            self.runner,
+            "_list_tmux_sessions",
+            return_value=["codex", "123", "foreign", "idle"],
+        ):
+            with patch.object(
+                self.runner,
+                "_runtime_status_for_tmux",
+                side_effect=[
+                    LiveRuntimeStatus(
+                        tmux_session="codex",
+                        exists=True,
+                        pane_command="node",
+                        thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                        pane_cwd="/tmp",
+                    ),
+                    LiveRuntimeStatus(
+                        tmux_session="123",
+                        exists=True,
+                        pane_command="codex",
+                        thread_id="11111111-2222-3333-4444-555555555555",
+                        pane_cwd="/tmp/subdir",
+                    ),
+                    LiveRuntimeStatus(
+                        tmux_session="foreign",
+                        exists=True,
+                        pane_command="node",
+                        thread_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                        pane_cwd="/var/tmp",
+                    ),
+                    LiveRuntimeStatus(
+                        tmux_session="idle",
+                        exists=True,
+                        pane_command="bash",
+                        thread_id=None,
+                        pane_cwd="/tmp",
+                    ),
+                ],
+            ):
+                statuses = self.runner.list_live_runtime_statuses()
+        self.assertEqual([item.tmux_session for item in statuses], ["codex", "123"])
+
+    def test_sync_live_sessions_preserves_existing_labels(self) -> None:
+        state = BridgeState(
+            sessions={
+                "019cdfe5-fa14-74a3-aa31-5451128ea58d": SessionRecord(
+                    thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                    label="main-live",
+                    cwd="/tmp",
+                    source="tmux-live",
+                    created_at="2026-03-26T00:00:00+00:00",
+                    updated_at="2026-03-26T00:00:00+00:00",
+                    tmux_session="codex",
+                )
+            }
+        )
+        with patch.object(
+            self.runner,
+            "list_live_runtime_statuses",
+            return_value=[
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                    pane_cwd="/tmp",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="123",
+                    exists=True,
+                    pane_command="node",
+                    thread_id="11111111-2222-3333-4444-555555555555",
+                    pane_cwd="/tmp/ft-kairos",
+                ),
+            ],
+        ):
+            records = self.runner.sync_live_sessions(state)
+        self.assertEqual([item.label for item in records], ["main-live", "123"])
+        self.assertEqual(state.sessions["11111111-2222-3333-4444-555555555555"].cwd, "/tmp/ft-kairos")
 
 
 if __name__ == "__main__":
