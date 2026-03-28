@@ -781,6 +781,8 @@ class BridgeDaemon:
                     )
                     self._save_state()
             return runtime.thread_id
+        if active_tmux_session and runtime.tmux_session == active_tmux_session:
+            return None
         with self._lock:
             return self.state.active_session_id
 

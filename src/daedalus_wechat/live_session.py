@@ -161,13 +161,14 @@ class LiveCodexSessionManager:
         )
 
     def current_runtime_status(
-        self, *, active_session_id: str | None = None, active_tmux_session: str | None = None
+        self,
+        *,
+        active_session_id: str | None = None,
+        active_tmux_session: str | None = None,
     ) -> LiveRuntimeStatus:
-        live_statuses = self.list_live_runtime_statuses()
         if active_tmux_session:
-            for status in live_statuses:
-                if status.tmux_session == active_tmux_session:
-                    return status
+            return self._runtime_status_for_tmux(active_tmux_session)
+        live_statuses = self.list_live_runtime_statuses()
         if active_session_id:
             for status in live_statuses:
                 if status.thread_id == active_session_id:
