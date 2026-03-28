@@ -6,7 +6,7 @@ from pathlib import Path
 
 from daedalus_wechat.config import BridgeConfig
 from daedalus_wechat.daemon import BridgeDaemon
-from daedalus_wechat.live_session import LiveRuntimeStatus, PLAN_MARKER
+from daedalus_wechat.live_session import LiveRuntimeStatus, PLAN_MARKER, TmuxRuntimeInventoryItem
 from daedalus_wechat.state import SessionRecord
 from daedalus_wechat.state import BridgeState
 
@@ -60,7 +60,7 @@ class _FakeRunner:
 
     def try_live_session(self, state: BridgeState):
         self.sync_live_sessions(state)
-        for status in self._live_statuses():
+        for status in self.list_live_runtime_statuses():
             if (
                 state.active_session_id
                 and status.thread_id == state.active_session_id
@@ -77,7 +77,7 @@ class _FakeRunner:
 
     def sync_live_sessions(self, state: BridgeState) -> list[SessionRecord]:
         records: list[SessionRecord] = []
-        for status in self._live_statuses():
+        for status in self.list_live_runtime_statuses():
             if not status.exists or not status.thread_id:
                 continue
             records.append(
@@ -94,7 +94,7 @@ class _FakeRunner:
     def current_runtime_status(
         self, *, active_session_id: str | None = None
     ) -> LiveRuntimeStatus:
-        statuses = self._live_statuses()
+        statuses = self.list_live_runtime_statuses()
         if active_session_id:
             for status in statuses:
                 if status.thread_id == active_session_id:
@@ -103,6 +103,37 @@ class _FakeRunner:
             if status.tmux_session == "codex":
                 return status
         return statuses[0]
+
+    def list_live_runtime_statuses(self) -> list[LiveRuntimeStatus]:
+        return [
+            status
+            for status in self._live_statuses()
+            if status.exists
+            and status.pane_command in {"node", "codex"}
+            and bool(status.thread_id)
+            and bool(status.pane_cwd)
+        ]
+
+    def list_tmux_runtime_inventory(self):
+        items = []
+        for status in self._live_statuses():
+            switchable = (
+                status.exists
+                and status.pane_command in {"node", "codex"}
+                and bool(status.thread_id)
+                and bool(status.pane_cwd)
+            )
+            items.append(
+                TmuxRuntimeInventoryItem(
+                    tmux_session=status.tmux_session,
+                    pane_command=status.pane_command,
+                    thread_id=status.thread_id,
+                    pane_cwd=status.pane_cwd,
+                    switchable=switchable,
+                    reason="live" if switchable else "outside-workspace",
+                )
+            )
+        return items
 
     def ensure_resumed_session(
         self,
@@ -320,6 +351,47 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("tmux=codex", text)
             self.assertIn("attach=tmux attach -t codex", text)
 
+
+    def test_sessions_text_shows_excluded_tmux_inventory_items(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_a = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            thread_b = "11111111-2222-3333-4444-555555555555"
+            state = BridgeState(active_session_id=thread_a, sessions={})
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_a,
+                    pane_cwd="/tmp",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="kairos",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_b,
+                    pane_cwd="/tmp",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="openclaw",
+                    exists=True,
+                    pane_command="node",
+                    thread_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                    pane_cwd=None,
+                ),
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+            text = daemon._handle_command("/sessions")
+            self.assertIn("sessions=2", text)
+            self.assertIn("excluded=1", text)
+            self.assertIn("x openclaw | outside-workspace", text)
+
     def test_sessions_text_lists_multiple_live_tmux_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_a = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
@@ -430,6 +502,72 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("已切换到 session:", text)
             self.assertIn("tmux=123", text)
             self.assertIn("attach=tmux attach -t 123", text)
+
+
+    def test_switch_prefers_live_tmux_match_over_historical_tmux_duplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_active = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            thread_live_codex = "11111111-2222-3333-4444-555555555555"
+            thread_old_codex = "22222222-3333-4444-5555-666666666666"
+            state = BridgeState(
+                active_session_id=thread_active,
+                sessions={
+                    thread_active: SessionRecord(
+                        thread_id=thread_active,
+                        label="kairos",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="kairos",
+                    ),
+                    thread_live_codex: SessionRecord(
+                        thread_id=thread_live_codex,
+                        label="codex",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="codex",
+                    ),
+                    thread_old_codex: SessionRecord(
+                        thread_id=thread_old_codex,
+                        label="old-codex",
+                        cwd="/tmp",
+                        source="historical",
+                        created_at="2026-03-20T00:00:00+00:00",
+                        updated_at="2026-03-20T00:00:00+00:00",
+                        tmux_session="codex",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_thread_id = thread_live_codex
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="kairos",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_active,
+                    pane_cwd="/tmp",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_live_codex,
+                    pane_cwd="/tmp",
+                ),
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+            text = daemon._handle_command("/switch codex")
+            self.assertEqual(state.active_session_id, thread_live_codex)
+            self.assertIn("tmux=codex", text)
 
     def test_switch_prefers_exact_numeric_tmux_name_over_list_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

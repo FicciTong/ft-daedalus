@@ -372,6 +372,15 @@ class BridgeDaemon:
     ) -> str | None:
         query = query.strip()
         listed = self._listed_sessions(live_records)
+        live_exact_matches = [
+            record.thread_id
+            for record in listed
+            if query == record.thread_id
+            or query == record.label
+            or query == (record.tmux_session or "")
+        ]
+        if len(live_exact_matches) == 1:
+            return live_exact_matches[0]
         if query in self.state.sessions:
             return query
         exact_candidates = [
@@ -455,13 +464,22 @@ class BridgeDaemon:
             active_session_id=self.state.active_session_id
         )
         listed = self._listed_sessions(live_records)
+        inventory = []
+        if hasattr(self.runner, "list_tmux_runtime_inventory"):
+            inventory = list(self.runner.list_tmux_runtime_inventory())
+        excluded = [item for item in inventory if not item.switchable]
         if not listed:
             if runtime.exists:
-                return (
-                    "sessions=0\n"
-                    f"tmux={runtime.tmux_session}\n"
-                    f"thread={self._short_thread(runtime.thread_id) if runtime.thread_id else 'none'}"
-                )
+                lines = [
+                    "sessions=0",
+                    f"tmux={runtime.tmux_session}",
+                    f"thread={self._short_thread(runtime.thread_id) if runtime.thread_id else 'none'}",
+                ]
+                if excluded:
+                    lines.append(f"excluded={len(excluded)}")
+                    for item in excluded[:5]:
+                        lines.append(f"x {item.tmux_session} | {item.reason}")
+                return "\n".join(lines)
             return "sessions=0"
         live_thread_ids = {record.thread_id for record in (live_records or [])}
         lines = [f"sessions={len(listed)}"]
@@ -471,6 +489,10 @@ class BridgeDaemon:
             lines.append(
                 f"{marker}{idx} {record.label} | {self._short_thread(record.thread_id)} | {record.tmux_session or '-'}{live_marker}"
             )
+        if excluded:
+            lines.append(f"excluded={len(excluded)}")
+            for item in excluded[:5]:
+                lines.append(f"x {item.tmux_session} | {item.reason}")
         return (
             "\n".join(lines)
             + "\nuse=/switch 1"

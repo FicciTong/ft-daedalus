@@ -51,6 +51,16 @@ class LiveRuntimeStatus:
     pane_cwd: str | None = None
 
 
+@dataclass(frozen=True)
+class TmuxRuntimeInventoryItem:
+    tmux_session: str
+    pane_command: str | None
+    thread_id: str | None
+    pane_cwd: str | None
+    switchable: bool
+    reason: str
+
+
 class LiveCodexSessionManager:
     def __init__(
         self,
@@ -165,26 +175,64 @@ class LiveCodexSessionManager:
             return live_statuses[0]
         return self._runtime_status_for_tmux(self.canonical_tmux_session)
 
-    def list_live_runtime_statuses(self) -> list[LiveRuntimeStatus]:
-        statuses: list[LiveRuntimeStatus] = []
+    def list_tmux_runtime_inventory(self) -> list[TmuxRuntimeInventoryItem]:
+        items: list[TmuxRuntimeInventoryItem] = []
         for tmux_session in self._list_tmux_sessions():
             status = self._runtime_status_for_tmux(tmux_session)
             if not status.exists:
+                items.append(
+                    TmuxRuntimeInventoryItem(
+                        tmux_session=tmux_session,
+                        pane_command=None,
+                        thread_id=None,
+                        pane_cwd=None,
+                        switchable=False,
+                        reason="missing",
+                    )
+                )
                 continue
             if status.pane_command not in {"node", "codex"}:
-                continue
-            if not status.thread_id:
-                continue
-            if not self._is_workspace_tmux(status.pane_cwd):
-                continue
-            statuses.append(status)
+                reason = "non-codex-pane"
+                switchable = False
+            elif not status.thread_id:
+                reason = "no-thread"
+                switchable = False
+            elif not self._is_workspace_tmux(status.pane_cwd):
+                reason = "outside-workspace"
+                switchable = False
+            else:
+                reason = "live"
+                switchable = True
+            items.append(
+                TmuxRuntimeInventoryItem(
+                    tmux_session=status.tmux_session,
+                    pane_command=status.pane_command,
+                    thread_id=status.thread_id,
+                    pane_cwd=status.pane_cwd,
+                    switchable=switchable,
+                    reason=reason,
+                )
+            )
         return sorted(
-            statuses,
+            items,
             key=lambda item: (
                 0 if item.tmux_session == self.canonical_tmux_session else 1,
                 item.tmux_session,
             ),
         )
+
+    def list_live_runtime_statuses(self) -> list[LiveRuntimeStatus]:
+        return [
+            LiveRuntimeStatus(
+                tmux_session=item.tmux_session,
+                exists=True,
+                pane_command=item.pane_command,
+                thread_id=item.thread_id,
+                pane_cwd=item.pane_cwd,
+            )
+            for item in self.list_tmux_runtime_inventory()
+            if item.switchable
+        ]
 
     def sync_live_sessions(self, state: BridgeState) -> list[SessionRecord]:
         records: list[SessionRecord] = []
