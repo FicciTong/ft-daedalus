@@ -837,8 +837,65 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("queue=2", text)
             self.assertIn("plan=1", text)
             self.assertIn("final=1", text)
+            self.assertIn("threads=1", text)
+            self.assertIn("thread[1]=thread-a|count=2", text)
             self.assertIn("head=FIRST PLAN", text)
             self.assertIn("tail=SECOND FINAL", text)
+
+    def test_queue_text_breaks_out_multiple_threads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_a = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            thread_b = "11111111-2222-3333-4444-555555555555"
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    active_session_id=thread_b,
+                    sessions={
+                        thread_a: SessionRecord(
+                            thread_id=thread_a,
+                            label="codex",
+                            cwd="/tmp",
+                            source="tmux-live",
+                            created_at="2026-03-26T00:00:00+00:00",
+                            updated_at="2026-03-26T00:00:00+00:00",
+                            tmux_session="codex",
+                        ),
+                        thread_b: SessionRecord(
+                            thread_id=thread_b,
+                            label="kairos",
+                            cwd="/tmp",
+                            source="tmux-live",
+                            created_at="2026-03-26T00:00:00+00:00",
+                            updated_at="2026-03-26T00:00:00+00:00",
+                            tmux_session="kairos",
+                        ),
+                    },
+                    pending_outbox=[
+                        {
+                            "to": "user@im.wechat",
+                            "text": "FIRST PLAN",
+                            "created_at": "2026-03-26T00:00:00+00:00",
+                            "kind": "plan",
+                            "origin": "desktop-mirror",
+                            "thread_id": thread_a,
+                        },
+                        {
+                            "to": "user@im.wechat",
+                            "text": "SECOND FINAL",
+                            "created_at": "2026-03-26T00:01:00+00:00",
+                            "kind": "final",
+                            "origin": "desktop-mirror",
+                            "thread_id": thread_b,
+                        },
+                    ],
+                ),
+            )
+            text = daemon._queue_text()
+            self.assertIn("threads=2", text)
+            self.assertIn("thread[1]=codex|019cdfe5|count=1", text)
+            self.assertIn("thread[2]=*kairos|11111111|count=1", text)
 
     def test_duplicate_pending_message_is_not_appended_twice(self) -> None:
         state = BridgeState()

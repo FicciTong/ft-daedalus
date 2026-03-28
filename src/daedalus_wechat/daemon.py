@@ -925,9 +925,15 @@ class BridgeDaemon:
         oldest_seconds: float = 0.0
         stuck_count = 0
         kind_counts: dict[str, int] = {}
+        thread_counts: dict[str, int] = {}
+        thread_order: list[str] = []
         for item in items:
             kind = str(item.get("kind", "message"))
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
+            thread_id = str(item.get("thread_id", "")).strip() or "unscoped"
+            if thread_id not in thread_counts:
+                thread_order.append(thread_id)
+            thread_counts[thread_id] = thread_counts.get(thread_id, 0) + 1
             created_at = str(item.get("created_at", "")).strip()
             if created_at:
                 try:
@@ -953,6 +959,12 @@ class BridgeDaemon:
             lines.append("wait=next-wechat-message")
         for kind, count in sorted(kind_counts.items()):
             lines.append(f"{kind}={count}")
+        lines.append(f"threads={len(thread_counts)}")
+        for idx, thread_id in enumerate(thread_order[:5], start=1):
+            marker = "*" if thread_id == self.state.active_session_id else ""
+            lines.append(
+                f"thread[{idx}]={marker}{self._queue_thread_display(thread_id)}|count={thread_counts[thread_id]}"
+            )
         preview = items[0]
         lines.append(
             "head="
@@ -965,6 +977,14 @@ class BridgeDaemon:
                 + str(tail.get("text", "")).strip().replace("\n", " ")[:120]
             )
         return "\n".join(lines)
+
+    def _queue_thread_display(self, thread_id: str) -> str:
+        if not thread_id or thread_id == "unscoped":
+            return "unscoped"
+        record = self.state.sessions.get(thread_id)
+        if record:
+            return f"{record.label}|{self._short_thread(thread_id)}"
+        return self._short_thread(thread_id)
 
     def _log_event(self, kind: str, payload: dict) -> None:
         with self._lock:
