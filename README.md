@@ -66,6 +66,10 @@ This bridge:
 - **does** mirror desktop-originated final replies back to WeChat once the chat
   context is bound
 
+Future lane for later reliability hardening:
+
+- [WECHAT_CHANNEL_RELIABILITY_FUTURE_LANE.md](./WECHAT_CHANNEL_RELIABILITY_FUTURE_LANE.md)
+
 ## 🧠 Mental Model
 
 There are two surfaces, but only **one canonical live owner**:
