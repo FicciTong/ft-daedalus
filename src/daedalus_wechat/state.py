@@ -86,6 +86,20 @@ class BridgeState:
                         if item.get("thread_id")
                         else ""
                     ),
+                    "tmux_session": (
+                        str(item.get("tmux_session")).strip()
+                        if item.get("tmux_session")
+                        else (
+                            sessions[str(item.get("thread_id")).strip()].tmux_session or ""
+                            if str(item.get("thread_id", "")).strip() in sessions
+                            else ""
+                        )
+                    ),
+                    "attempt_count": int(item.get("attempt_count", 1) or 1),
+                    "last_attempt_at": str(
+                        item.get("last_attempt_at", item.get("created_at", now_iso()))
+                    ),
+                    "last_error": str(item.get("last_error", "")),
                 }
                 for item in (raw.get("pending_outbox", []) or [])
                 if str(item.get("to", "")).strip() and str(item.get("text", "")).strip()
@@ -164,6 +178,7 @@ class BridgeState:
             kind="message",
             origin="bridge",
             thread_id=None,
+            tmux_session=None,
         )
 
     def enqueue_pending_with_meta(
@@ -174,17 +189,23 @@ class BridgeState:
         kind: str,
         origin: str,
         thread_id: str | None,
+        tmux_session: str | None,
         error: str | None = None,
     ) -> None:
         body = text.strip()
         if not to_user_id or not body:
             return
+        resolved_tmux_session = self._resolve_pending_tmux_session(
+            thread_id=thread_id,
+            tmux_session=tmux_session,
+        )
         dedupe_key = (
             str(to_user_id),
             body,
             str(kind),
             str(origin),
             str(thread_id or ""),
+            str(resolved_tmux_session or ""),
         )
         now = now_iso()
         for item in self.pending_outbox:
@@ -194,6 +215,7 @@ class BridgeState:
                 str(item.get("kind", "message")),
                 str(item.get("origin", "bridge")),
                 str(item.get("thread_id", "")),
+                str(item.get("tmux_session", "")),
             )
             if item_key != dedupe_key:
                 continue
@@ -210,6 +232,7 @@ class BridgeState:
                 "kind": str(kind),
                 "origin": str(origin),
                 "thread_id": str(thread_id or ""),
+                "tmux_session": str(resolved_tmux_session or ""),
                 "attempt_count": 1,
                 "last_attempt_at": now,
                 "last_error": str(error or ""),
@@ -221,16 +244,48 @@ class BridgeState:
             self.pending_outbox_overflow_dropped += overflow
             self.pending_outbox = self.pending_outbox[-max_items:]
 
-    def pop_pending_for(self, to_user_id: str) -> list[dict[str, str]]:
+    def has_pending_for_scope(
+        self, *, to_user_id: str, tmux_session: str | None
+    ) -> bool:
+        active_scope = str(tmux_session or "").strip()
+        for item in self.pending_outbox:
+            if item.get("to") != to_user_id:
+                continue
+            item_scope = str(item.get("tmux_session", "")).strip()
+            if not item_scope or item_scope == active_scope:
+                return True
+        return False
+
+    def pop_pending_for_scope(
+        self, *, to_user_id: str, tmux_session: str | None
+    ) -> list[dict[str, str]]:
         matched: list[dict[str, str]] = []
         kept: list[dict[str, str]] = []
+        active_scope = str(tmux_session or "").strip()
         for item in self.pending_outbox:
-            if item.get("to") == to_user_id:
+            item_scope = str(item.get("tmux_session", "")).strip()
+            if item.get("to") == to_user_id and (
+                not item_scope or item_scope == active_scope
+            ):
                 matched.append(item)
             else:
                 kept.append(item)
         self.pending_outbox = kept
         return matched
+
+    def _resolve_pending_tmux_session(
+        self, *, thread_id: str | None, tmux_session: str | None
+    ) -> str | None:
+        normalized_tmux = str(tmux_session or "").strip()
+        if normalized_tmux:
+            return normalized_tmux
+        normalized_thread = str(thread_id or "").strip()
+        if not normalized_thread:
+            return None
+        record = self.sessions.get(normalized_thread)
+        if not record or not record.tmux_session:
+            return None
+        return record.tmux_session
 
     def next_delivery_seq(self) -> int:
         self.delivery_seq += 1

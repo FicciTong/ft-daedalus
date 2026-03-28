@@ -66,6 +66,7 @@ def _send_bound_text(
                 kind="relay",
                 origin="desktop-direct",
                 thread_id=state.active_session_id,
+                tmux_session=state.active_tmux_session,
             )
             state.save(config.state_file)
             event_kind = "relay_queued"

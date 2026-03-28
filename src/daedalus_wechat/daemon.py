@@ -37,7 +37,7 @@ HELP_TEXT = """FT bridge 命令总览
 追溯:
 /recent 10         看最近 10 条 delivery ledger
 /recent after 128  从 seq=128 之后继续看
-/queue             看当前待发送队列概况
+/queue             看当前待发送队列概况（按 tmux session 分区）
 
 帮助:
 /help              显示这页
@@ -158,6 +158,7 @@ class BridgeDaemon:
                         incoming.from_user_id,
                         incoming.context_token,
                         f"❌ bridge error: {str(exc)[:300]}",
+                        tmux_session=self.state.active_tmux_session,
                     )
                     self._log_event("error", {"error": str(exc)})
 
@@ -172,6 +173,7 @@ class BridgeDaemon:
                 kind="progress",
                 origin="wechat-voice",
                 thread_id=self.state.active_session_id,
+                tmux_session=self.state.active_tmux_session,
             )
             self._flush_bound_outbox_if_any()
             return
@@ -189,6 +191,7 @@ class BridgeDaemon:
                 kind="command",
                 origin="wechat-command",
                 thread_id=thread_id,
+                tmux_session=self.state.active_tmux_session,
             )
             self._flush_bound_outbox_if_any()
             return
@@ -226,6 +229,7 @@ class BridgeDaemon:
             kind="progress",
             origin="wechat-prompt-submitted",
             thread_id=thread_id,
+            tmux_session=refreshed.tmux_session,
         )
         self._flush_bound_outbox_if_any()
 
@@ -563,6 +567,7 @@ class BridgeDaemon:
         kind: str = "message",
         origin: str = "bridge",
         thread_id: str | None = None,
+        tmux_session: str | None = None,
     ) -> None:
         effective_context = context_token if use_context_token else None
         rendered = self._render_reply_text(text, kind=kind, origin=origin)
@@ -599,6 +604,7 @@ class BridgeDaemon:
                             kind=kind,
                             origin=origin,
                             thread_id=thread_id,
+                            tmux_session=tmux_session,
                             error=str(exc),
                         )
                     self._save_state()
@@ -735,6 +741,7 @@ class BridgeDaemon:
                     kind=kind,
                     origin="desktop-mirror",
                     thread_id=thread_id,
+                    tmux_session=self._tmux_for_thread(thread_id),
                 )
                 self._log_event(
                     "mirrored_plan" if kind == "plan" else "mirrored_progress",
@@ -749,6 +756,7 @@ class BridgeDaemon:
             kind="final",
             origin="desktop-mirror",
             thread_id=thread_id,
+            tmux_session=self._tmux_for_thread(thread_id),
         )
         self._log_event(
             "mirrored_final",
@@ -865,15 +873,36 @@ class BridgeDaemon:
         with self._lock:
             to_user_id = self.state.bound_user_id
             context_token = self.state.bound_context_token
-            has_pending = bool(self.state.pending_outbox)
+            active_tmux_session = self.state.active_tmux_session
+            has_pending = (
+                self.state.has_pending_for_scope(
+                    to_user_id=to_user_id,
+                    tmux_session=active_tmux_session,
+                )
+                if to_user_id
+                else False
+            )
             waiting_for_bind = self.state.outbox_waiting_for_bind
         if not to_user_id or not has_pending or waiting_for_bind:
             return
-        self._flush_pending_outbox(to_user_id, context_token)
+        self._flush_pending_outbox(
+            to_user_id,
+            context_token,
+            tmux_session=active_tmux_session,
+        )
 
-    def _flush_pending_outbox(self, to_user_id: str, context_token: str | None) -> None:
+    def _flush_pending_outbox(
+        self,
+        to_user_id: str,
+        context_token: str | None,
+        *,
+        tmux_session: str | None,
+    ) -> None:
         with self._lock:
-            pending = self.state.pop_pending_for(to_user_id)
+            pending = self.state.pop_pending_for_scope(
+                to_user_id=to_user_id,
+                tmux_session=tmux_session,
+            )
             self._save_state()
         if not pending:
             return
@@ -960,15 +989,29 @@ class BridgeDaemon:
         oldest_seconds: float = 0.0
         stuck_count = 0
         kind_counts: dict[str, int] = {}
-        thread_counts: dict[str, int] = {}
-        thread_order: list[str] = []
+        tmux_counts: dict[str, int] = {}
+        tmux_threads: dict[str, set[str]] = {}
+        tmux_order: list[str] = []
+        active_tmux = str(self.state.active_tmux_session or "").strip()
+        active_visible_count = 0
+        waiting_count = 0
         for item in items:
             kind = str(item.get("kind", "message"))
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
             thread_id = str(item.get("thread_id", "")).strip() or "unscoped"
-            if thread_id not in thread_counts:
-                thread_order.append(thread_id)
-            thread_counts[thread_id] = thread_counts.get(thread_id, 0) + 1
+            item_tmux = (
+                str(item.get("tmux_session", "")).strip()
+                or self._tmux_for_thread(thread_id)
+                or "unscoped"
+            )
+            if item_tmux not in tmux_counts:
+                tmux_order.append(item_tmux)
+            tmux_counts[item_tmux] = tmux_counts.get(item_tmux, 0) + 1
+            tmux_threads.setdefault(item_tmux, set()).add(thread_id)
+            if not item_tmux or item_tmux == "unscoped" or item_tmux == active_tmux:
+                active_visible_count += 1
+            else:
+                waiting_count += 1
             created_at = str(item.get("created_at", "")).strip()
             if created_at:
                 try:
@@ -994,34 +1037,67 @@ class BridgeDaemon:
             lines.append("wait=next-wechat-message")
         if self.state.active_tmux_session:
             lines.append(f"active_tmux={self.state.active_tmux_session}")
+        lines.append(f"visible_now={active_visible_count}")
+        lines.append(f"waiting_other_sessions={waiting_count}")
         for kind, count in sorted(kind_counts.items()):
             lines.append(f"{kind}={count}")
-        lines.append(f"threads={len(thread_counts)}")
-        for idx, thread_id in enumerate(thread_order[:5], start=1):
-            marker = "*" if self._is_active_thread(thread_id) else ""
-            lines.append(
-                f"thread[{idx}]={marker}{self._queue_thread_display(thread_id)}|count={thread_counts[thread_id]}"
+        lines.append(f"sessions={len(tmux_counts)}")
+        for idx, item_tmux in enumerate(tmux_order[:5], start=1):
+            marker = "*" if active_tmux and item_tmux == active_tmux else ""
+            thread_count = len(
+                {
+                    thread
+                    for thread in tmux_threads.get(item_tmux, set())
+                    if thread and thread != "unscoped"
+                }
             )
-        preview = items[0]
+            lines.append(
+                f"session[{idx}]={marker}{self._queue_tmux_display(item_tmux)}|count={tmux_counts[item_tmux]}|threads={thread_count}"
+            )
+        visible_items = [
+            item
+            for item in items
+            if (
+                (
+                    str(item.get("tmux_session", "")).strip()
+                    or self._tmux_for_thread(str(item.get("thread_id", "")).strip() or None)
+                    or ""
+                )
+                in {"", active_tmux}
+            )
+        ]
+        preview = visible_items[0] if visible_items else items[0]
         lines.append(
             "head="
             + str(preview.get("text", "")).strip().replace("\n", " ")[:120]
         )
-        if len(items) > 1:
-            tail = items[-1]
+        if len(visible_items) > 1:
+            tail = visible_items[-1]
             lines.append(
                 "tail="
                 + str(tail.get("text", "")).strip().replace("\n", " ")[:120]
             )
+        elif len(items) > 1:
+            tail = items[-1]
+            lines.append(
+                "tail_any="
+                + str(tail.get("text", "")).strip().replace("\n", " ")[:120]
+            )
         return "\n".join(lines)
 
-    def _queue_thread_display(self, thread_id: str) -> str:
-        if not thread_id or thread_id == "unscoped":
+    def _queue_tmux_display(self, tmux_session: str) -> str:
+        if not tmux_session or tmux_session == "unscoped":
             return "unscoped"
-        record = self.state.sessions.get(thread_id)
-        if record:
-            return f"{record.label}|{self._short_thread(thread_id)}"
-        return self._short_thread(thread_id)
+        return tmux_session
+
+    def _tmux_for_thread(self, thread_id: str | None) -> str | None:
+        normalized_thread = str(thread_id or "").strip()
+        if not normalized_thread or normalized_thread == "unscoped":
+            return None
+        record = self.state.sessions.get(normalized_thread)
+        if not record or not record.tmux_session:
+            return None
+        return record.tmux_session
 
     def _log_event(self, kind: str, payload: dict) -> None:
         with self._lock:

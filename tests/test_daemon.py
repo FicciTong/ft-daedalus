@@ -1068,8 +1068,8 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("queue=2", text)
             self.assertIn("plan=1", text)
             self.assertIn("final=1", text)
-            self.assertIn("threads=1", text)
-            self.assertIn("thread[1]=thread-a|count=2", text)
+            self.assertIn("sessions=1", text)
+            self.assertIn("session[1]=unscoped|count=2|threads=1", text)
             self.assertIn("head=FIRST PLAN", text)
             self.assertIn("tail=SECOND FINAL", text)
 
@@ -1125,9 +1125,11 @@ class DaemonTests(unittest.TestCase):
             )
             text = daemon._queue_text()
             self.assertIn("active_tmux=codex", text)
-            self.assertIn("threads=2", text)
-            self.assertIn("thread[1]=*codex|019cdfe5|count=1", text)
-            self.assertIn("thread[2]=kairos|11111111|count=1", text)
+            self.assertIn("visible_now=1", text)
+            self.assertIn("waiting_other_sessions=1", text)
+            self.assertIn("sessions=2", text)
+            self.assertIn("session[1]=*codex|count=1|threads=1", text)
+            self.assertIn("session[2]=kairos|count=1|threads=1", text)
 
     def test_duplicate_pending_message_is_not_appended_twice(self) -> None:
         state = BridgeState()
@@ -1137,6 +1139,7 @@ class DaemonTests(unittest.TestCase):
             kind="plan",
             origin="desktop-mirror",
             thread_id="thread-1",
+            tmux_session=None,
             error="ret=-2",
         )
         state.enqueue_pending_with_meta(
@@ -1145,6 +1148,7 @@ class DaemonTests(unittest.TestCase):
             kind="plan",
             origin="desktop-mirror",
             thread_id="thread-1",
+            tmux_session=None,
             error="ret=-2",
         )
         self.assertEqual(len(state.pending_outbox), 1)
@@ -1621,6 +1625,7 @@ class DaemonTests(unittest.TestCase):
             kind="progress",
             origin="desktop-mirror",
             thread_id="thread-1",
+            tmux_session="codex",
         )
         state.enqueue_pending_with_meta(
             to_user_id="user@im.wechat",
@@ -1628,6 +1633,7 @@ class DaemonTests(unittest.TestCase):
             kind="progress",
             origin="wechat-prompt-submitted",
             thread_id="thread-1",
+            tmux_session="codex",
         )
         state.enqueue_pending_with_meta(
             to_user_id="user@im.wechat",
@@ -1635,6 +1641,7 @@ class DaemonTests(unittest.TestCase):
             kind="progress",
             origin="desktop-mirror",
             thread_id="thread-1",
+            tmux_session="codex",
         )
         self.assertEqual(
             [(item["origin"], item["text"]) for item in state.pending_outbox],
@@ -1654,6 +1661,7 @@ class DaemonTests(unittest.TestCase):
                 kind="progress",
                 origin="desktop-mirror",
                 thread_id="thread-1",
+                tmux_session="codex",
             )
         self.assertEqual(len(state.pending_outbox), 1000)
         self.assertEqual(state.pending_outbox_overflow_dropped, 5)
@@ -1683,6 +1691,75 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(
                 [item["text"] for item in state.pending_outbox],
                 ["45678", "90ABC", "DE"],
+            )
+
+    def test_flush_bound_outbox_only_releases_active_tmux_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_codex = "019d332d-1bc8-7151-a874-ab0fbc493747"
+            thread_daedalus = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            state = BridgeState(
+                active_session_id=thread_daedalus,
+                active_tmux_session="daedalus",
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                sessions={
+                    thread_codex: SessionRecord(
+                        thread_id=thread_codex,
+                        label="codex",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="codex",
+                    ),
+                    thread_daedalus: SessionRecord(
+                        thread_id=thread_daedalus,
+                        label="daedalus",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="daedalus",
+                    ),
+                },
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "CODEX BACKLOG",
+                        "created_at": "2026-03-26T00:00:00+00:00",
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                        "thread_id": thread_codex,
+                        "tmux_session": "codex",
+                    },
+                    {
+                        "to": "user@im.wechat",
+                        "text": "DAEDALUS BACKLOG",
+                        "created_at": "2026-03-26T00:00:01+00:00",
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                        "thread_id": thread_daedalus,
+                        "tmux_session": "daedalus",
+                    },
+                ],
+            )
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+            daemon.state.active_session_id = thread_daedalus
+            daemon.state.active_tmux_session = "daedalus"
+            daemon._flush_bound_outbox_if_any()
+            self.assertEqual(
+                fake_wechat.sent,
+                [("user@im.wechat", "ctx-1", "DAEDALUS BACKLOG")],
+            )
+            self.assertEqual(
+                [item["text"] for item in state.pending_outbox],
+                ["CODEX BACKLOG"],
             )
 
 
