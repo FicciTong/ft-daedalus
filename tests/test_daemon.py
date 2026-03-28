@@ -1130,6 +1130,50 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("sessions=2", text)
             self.assertIn("session[1]=*codex|count=1|threads=1", text)
             self.assertIn("session[2]=kairos|count=1|threads=1", text)
+            self.assertIn("head=FIRST PLAN", text)
+            self.assertIn("tail_any=SECOND FINAL", text)
+
+    def test_queue_text_marks_waiting_head_when_active_tmux_has_no_visible_backlog(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_a = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    active_tmux_session="daedalus",
+                    sessions={
+                        thread_a: SessionRecord(
+                            thread_id=thread_a,
+                            label="codex",
+                            cwd="/tmp",
+                            source="tmux-live",
+                            created_at="2026-03-26T00:00:00+00:00",
+                            updated_at="2026-03-26T00:00:00+00:00",
+                            tmux_session="codex",
+                        ),
+                    },
+                    pending_outbox=[
+                        {
+                            "to": "user@im.wechat",
+                            "text": "CODEX ONLY",
+                            "created_at": "2026-03-26T00:00:00+00:00",
+                            "kind": "progress",
+                            "origin": "desktop-mirror",
+                            "thread_id": thread_a,
+                            "tmux_session": "codex",
+                        },
+                    ],
+                ),
+            )
+            daemon.state.active_tmux_session = "daedalus"
+            text = daemon._queue_text()
+            self.assertIn("active_tmux=daedalus", text)
+            self.assertIn("visible_now=0", text)
+            self.assertIn("waiting_other_sessions=1", text)
+            self.assertIn("head_waiting_session=codex", text)
+            self.assertIn("head_waiting=CODEX ONLY", text)
+            self.assertNotIn("head=CODEX ONLY", text)
 
     def test_duplicate_pending_message_is_not_appended_twice(self) -> None:
         state = BridgeState()
@@ -1341,9 +1385,10 @@ class DaemonTests(unittest.TestCase):
             )
             text = daemon._recent_text("2")
             self.assertIn("recent:", text)
+            self.assertIn("scope=all-fallback", text)
             self.assertIn("progress one", text)
             self.assertIn("FINAL_OK", text)
-            self.assertIn("[1][sent][progress][13:00:00]", text)
+            self.assertIn("[1][sent][progress][13:00:00] progress one", text)
             self.assertIn("next=/recent after 2", text)
 
     def test_recent_after_seq_uses_stable_delivery_ledger(self) -> None:
@@ -1370,9 +1415,70 @@ class DaemonTests(unittest.TestCase):
             )
             text = daemon._recent_text("after 1")
             self.assertNotIn("one", text)
+            self.assertIn("scope=all-fallback", text)
             self.assertIn("two", text)
             self.assertIn("three", text)
             self.assertIn("next=/recent after 3", text)
+
+    def test_recent_defaults_to_active_tmux_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            config = self._make_config(state_dir, frozenset())
+            config.state_dir.mkdir(parents=True, exist_ok=True)
+            config.delivery_ledger_file.write_text(
+                "\n".join(
+                    [
+                        '{"seq":1,"ts":"2026-03-26T05:00:00+00:00","to":"user@im.wechat","status":"sent","kind":"progress","origin":"desktop-mirror","tmux_session":"codex","text":"codex one"}',
+                        '{"seq":2,"ts":"2026-03-26T05:00:01+00:00","to":"user@im.wechat","status":"sent","kind":"final","origin":"desktop-mirror","tmux_session":"daedalus","text":"daedalus final"}',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            daemon = _TestDaemon(
+                config=config,
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    bound_user_id="user@im.wechat",
+                    active_tmux_session="daedalus",
+                ),
+            )
+            daemon.state.active_tmux_session = "daedalus"
+            text = daemon._recent_text("")
+            self.assertIn("scope=daedalus", text)
+            self.assertIn("daedalus final", text)
+            self.assertNotIn("codex one", text)
+
+    def test_recent_all_bypasses_active_tmux_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            config = self._make_config(state_dir, frozenset())
+            config.state_dir.mkdir(parents=True, exist_ok=True)
+            config.delivery_ledger_file.write_text(
+                "\n".join(
+                    [
+                        '{"seq":1,"ts":"2026-03-26T05:00:00+00:00","to":"user@im.wechat","status":"sent","kind":"progress","origin":"desktop-mirror","tmux_session":"codex","text":"codex one"}',
+                        '{"seq":2,"ts":"2026-03-26T05:00:01+00:00","to":"user@im.wechat","status":"sent","kind":"final","origin":"desktop-mirror","tmux_session":"daedalus","text":"daedalus final"}',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            daemon = _TestDaemon(
+                config=config,
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    bound_user_id="user@im.wechat",
+                    active_tmux_session="daedalus",
+                ),
+            )
+            daemon.state.active_tmux_session = "daedalus"
+            text = daemon._recent_text("all 10")
+            self.assertIn("scope=all", text)
+            self.assertIn("[codex] codex one", text)
+            self.assertIn("[daedalus] daedalus final", text)
 
     def test_mirror_desktop_final_back_to_wechat(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

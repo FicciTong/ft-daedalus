@@ -397,6 +397,8 @@ Commands:
 - `/queue`
 - `/recent [n]`
 - `/recent after <seq>`
+- `/recent all [n]`
+- `/recent all after <seq>`
 - `/sessions`
 - `/new [label]`
 - `/switch <index|thread_id-prefix|label|tmux>`
@@ -434,7 +436,8 @@ Phone-friendly semantics:
 - `/health` = is the bridge / tmux / thread healthy right now
 - `/notify` = choose `progress+final` or `final-only`
 - `/recent` = replay from the permanent delivery ledger
-- `/recent after <seq>` = continue from a known ledger position using stable sequence numbers
+- `/recent after <seq>` = continue from a known ledger position within the current active tmux scope
+- `/recent all` = read across all session scopes when you explicitly want the mixed global view
 - `/status` = which live session am I currently attached to
 - `/sessions` = short switchable list of currently live workspace tmux sessions
 - `send-bound` = explicit desktop/session-side push into the current bound

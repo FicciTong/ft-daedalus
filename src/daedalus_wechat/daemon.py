@@ -35,8 +35,9 @@ HELP_TEXT = """FT bridge 命令总览
 /notify status     查看当前通知模式
 
 追溯:
-/recent 10         看最近 10 条 delivery ledger
-/recent after 128  从 seq=128 之后继续看
+/recent 10         看当前 active tmux 最近 10 条 delivery ledger
+/recent after 128  从 seq=128 之后继续看当前 active tmux
+/recent all 10     看所有 session 最近 10 条
 /queue             看当前待发送队列概况（按 tmux session 分区）
 
 帮助:
@@ -338,7 +339,12 @@ class BridgeDaemon:
     def _recent_text(self, arg: str) -> str:
         limit = 6
         after_seq: int | None = None
+        scope_all = False
         normalized = arg.strip()
+        tokens = normalized.split()
+        if tokens and tokens[0].lower() == "all":
+            scope_all = True
+            normalized = " ".join(tokens[1:]).strip()
         if normalized.isdigit():
             limit = max(1, min(int(normalized), 20))
         elif normalized.lower().startswith("after "):
@@ -352,24 +358,57 @@ class BridgeDaemon:
         path = self.config.delivery_ledger_file
         if not path.exists():
             return "recent=empty\nhint=还没有出站记录"
+        active_tmux = None if scope_all else self.state.active_tmux_session
         items = read_recent_for_user(
             ledger_file=path,
             to_user_id=target_user,
             limit=limit,
             after_seq=after_seq,
+            tmux_session=active_tmux,
         )
+        fallback_to_all = False
+        if not items and active_tmux:
+            all_items = read_recent_for_user(
+                ledger_file=path,
+                to_user_id=target_user,
+                limit=limit,
+                after_seq=after_seq,
+                tmux_session=None,
+            )
+            if all_items and all(
+                not str(item.get("tmux_session", "")).strip() for item in all_items
+            ):
+                items = all_items
+                active_tmux = None
+                fallback_to_all = True
         if not items:
-            return "recent=empty\nhint=当前会话还没有可补看的已发送消息"
+            if active_tmux:
+                return (
+                    "recent=empty\n"
+                    f"scope={active_tmux}\n"
+                    "hint=当前 active tmux 还没有可补看的已发送消息；可用 /recent all 看全局"
+                )
+            return "recent=empty\nscope=all\nhint=当前会话还没有可补看的已发送消息"
         lines = []
+        scope_label = active_tmux or ("all-fallback" if fallback_to_all else "all")
         for item in items:
             ts = self._display_time(item.get("ts"))
             seq = int(item.get("seq", 0) or 0)
             status = str(item.get("status", "unknown"))
             kind = str(item.get("kind", "message"))
             text = str(item.get("text", "")).strip()
-            lines.append(f"[{seq}][{status}][{kind}][{ts}] {text}")
+            item_tmux = str(item.get("tmux_session", "")).strip()
+            scope_suffix = f"[{item_tmux or 'unknown'}]" if scope_all else ""
+            lines.append(f"[{seq}][{status}][{kind}][{ts}]{scope_suffix} {text}")
         last_seq = int(items[-1].get("seq", 0) or 0)
-        return "recent:\n" + "\n\n".join(lines) + f"\n\nnext=/recent after {last_seq}"
+        next_cmd = (
+            f"/recent all after {last_seq}" if scope_all else f"/recent after {last_seq}"
+        )
+        return (
+            f"recent:\nscope={scope_label}\n"
+            + "\n\n".join(lines)
+            + f"\n\nnext={next_cmd}"
+        )
 
     def _bootstrap_runtime(self) -> None:
         self.runner.sync_live_sessions(self.state)
@@ -591,6 +630,7 @@ class BridgeDaemon:
                         kind=kind,
                         origin=origin,
                         thread_id=thread_id,
+                        tmux_session=tmux_session,
                     )
             except Exception as exc:  # noqa: BLE001
                 remaining = chunks[idx:]
@@ -627,6 +667,7 @@ class BridgeDaemon:
                         kind=kind,
                         origin=origin,
                         thread_id=thread_id,
+                        tmux_session=tmux_session,
                         error=str(exc),
                     )
                 return
@@ -936,6 +977,7 @@ class BridgeDaemon:
                         kind=kind,
                         origin=origin,
                         thread_id=thread_id,
+                        tmux_session=self._tmux_for_thread(thread_id) or tmux_session,
                     )
             except Exception as exc:  # noqa: BLE001
                 item["last_attempt_at"] = now_iso()
@@ -960,6 +1002,7 @@ class BridgeDaemon:
                         kind=kind,
                         origin=origin,
                         thread_id=thread_id,
+                        tmux_session=self._tmux_for_thread(thread_id) or tmux_session,
                         error=str(exc),
                     )
                 break
@@ -1066,11 +1109,26 @@ class BridgeDaemon:
                 in {"", active_tmux}
             )
         ]
-        preview = visible_items[0] if visible_items else items[0]
-        lines.append(
-            "head="
-            + str(preview.get("text", "")).strip().replace("\n", " ")[:120]
-        )
+        if visible_items:
+            preview = visible_items[0]
+            lines.append(
+                "head="
+                + str(preview.get("text", "")).strip().replace("\n", " ")[:120]
+            )
+        elif items:
+            waiting_preview = items[0]
+            waiting_tmux = (
+                str(waiting_preview.get("tmux_session", "")).strip()
+                or self._tmux_for_thread(
+                    str(waiting_preview.get("thread_id", "")).strip() or None
+                )
+                or "unscoped"
+            )
+            lines.append(f"head_waiting_session={self._queue_tmux_display(waiting_tmux)}")
+            lines.append(
+                "head_waiting="
+                + str(waiting_preview.get("text", "")).strip().replace("\n", " ")[:120]
+            )
         if len(visible_items) > 1:
             tail = visible_items[-1]
             lines.append(

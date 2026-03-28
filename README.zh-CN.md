@@ -383,6 +383,8 @@ journalctl --user -u daedalus-wechat -n 100 --no-pager
 - `/queue`
 - `/recent [n]`
 - `/recent after <seq>`
+- `/recent all [n]`
+- `/recent all after <seq>`
 - `/sessions`
 - `/new [label]`
 - `/switch <index|thread_id-prefix|label|tmux>`
@@ -419,7 +421,8 @@ uv run daedalus-wechat send-bound "hello from desktop"
 - `/health` = bridge / tmux / 当前 thread 现在健不健康
 - `/notify` = 切 `progress+final` 或 `final-only`
 - `/recent` = 从永久 delivery ledger 里回看最近几条记录
-- `/recent after <seq>` = 从某个稳定序号之后继续看，不再依赖滑动窗口
+- `/recent after <seq>` = 在当前 active tmux scope 里，从某个稳定序号之后继续看
+- `/recent all` = 只有当你明确要看所有 session 混合视图时才用
 - `/status` = 当前接的是哪个 live session
 - `/sessions` = 手机可读的 live workspace tmux 列表，用来快速 `/switch 1`
 - `send-bound` = 桌面/脚本侧显式把一段消息推到当前绑定微信会话

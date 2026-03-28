@@ -18,6 +18,7 @@ def append_delivery(
     kind: str,
     origin: str,
     thread_id: str | None = None,
+    tmux_session: str | None = None,
     error: str | None = None,
 ) -> int:
     seq = state.next_delivery_seq()
@@ -31,6 +32,7 @@ def append_delivery(
         "kind": kind,
         "origin": origin,
         "thread": thread_id[:8] if thread_id else None,
+        "tmux_session": str(tmux_session or "").strip() or None,
         "text": text,
     }
     if error:
@@ -46,11 +48,13 @@ def read_recent_for_user(
     to_user_id: str,
     limit: int = 6,
     after_seq: int | None = None,
+    tmux_session: str | None = None,
 ) -> list[dict]:
     if not ledger_file.exists():
         return []
     results: list[dict] = []
     lines = ledger_file.read_text(encoding="utf-8").splitlines()
+    scope = str(tmux_session or "").strip()
     if after_seq is not None:
         for raw in lines:
             try:
@@ -58,6 +62,8 @@ def read_recent_for_user(
             except json.JSONDecodeError:
                 continue
             if item.get("to") != to_user_id:
+                continue
+            if scope and str(item.get("tmux_session", "")).strip() != scope:
                 continue
             seq = int(item.get("seq", 0) or 0)
             if seq <= after_seq:
@@ -72,6 +78,8 @@ def read_recent_for_user(
         except json.JSONDecodeError:
             continue
         if item.get("to") != to_user_id:
+            continue
+        if scope and str(item.get("tmux_session", "")).strip() != scope:
             continue
         results.append(item)
         if len(results) >= limit:
