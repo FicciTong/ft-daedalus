@@ -444,6 +444,66 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(len(state.pending_outbox), 1)
         self.assertEqual(state.pending_outbox[0]["attempt_count"], 2)
 
+    def test_context_failure_pauses_background_outbox_retry_until_rebind(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "PENDING_FINAL_OK",
+                        "created_at": "2026-03-26T00:00:00+00:00",
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                        "thread_id": "thread-1",
+                    }
+                ],
+            )
+            fake_wechat = _FakeWeChat()
+            fake_wechat.fail = True
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+
+            daemon._flush_bound_outbox_if_any()
+            self.assertTrue(state.outbox_waiting_for_bind)
+            self.assertEqual(len(state.pending_outbox), 1)
+
+            attempts_after_failure = len(fake_wechat.sent)
+            daemon._flush_bound_outbox_if_any()
+            self.assertEqual(len(fake_wechat.sent), attempts_after_failure)
+            self.assertEqual(len(state.pending_outbox), 1)
+
+            daemon._bind_peer("user@im.wechat", "ctx-2")
+            self.assertFalse(state.outbox_waiting_for_bind)
+
+    def test_queue_text_marks_waiting_for_next_wechat_message(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    outbox_waiting_for_bind=True,
+                    pending_outbox=[
+                        {
+                            "to": "user@im.wechat",
+                            "text": "SECOND FINAL",
+                            "created_at": "2026-03-26T00:01:00+00:00",
+                            "kind": "final",
+                            "origin": "desktop-mirror",
+                            "thread_id": "thread-a",
+                        },
+                    ],
+                ),
+            )
+            text = daemon._queue_text()
+            self.assertIn("wait=next-wechat-message", text)
+
     def test_voice_without_transcript_refreshes_binding_and_replies_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fake_wechat = _FakeWeChat()

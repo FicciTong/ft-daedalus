@@ -29,6 +29,7 @@ class BridgeState:
     bound_context_token: str | None = None
     progress_updates_enabled: bool | None = None
     delivery_seq: int = 0
+    outbox_waiting_for_bind: bool = False
     mirror_offsets: dict[str, int] = field(default_factory=dict)
     last_progress_summaries: dict[str, str] = field(default_factory=dict)
     pending_outbox: list[dict[str, str]] = field(default_factory=list)
@@ -61,6 +62,7 @@ class BridgeState:
             bound_context_token=raw.get("bound_context_token"),
             progress_updates_enabled=raw.get("progress_updates_enabled"),
             delivery_seq=int(raw.get("delivery_seq", 0) or 0),
+            outbox_waiting_for_bind=bool(raw.get("outbox_waiting_for_bind", False)),
             mirror_offsets={
                 str(key): int(value)
                 for key, value in (raw.get("mirror_offsets", {}) or {}).items()
@@ -99,6 +101,7 @@ class BridgeState:
                     "bound_context_token": self.bound_context_token,
                     "progress_updates_enabled": self.progress_updates_enabled,
                     "delivery_seq": self.delivery_seq,
+                    "outbox_waiting_for_bind": self.outbox_waiting_for_bind,
                     "mirror_offsets": self.mirror_offsets,
                     "last_progress_summaries": self.last_progress_summaries,
                     "pending_outbox": self.pending_outbox,

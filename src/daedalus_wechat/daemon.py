@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 from .config import BridgeConfig
 from .delivery_ledger import append_delivery, read_recent_for_user
 from .live_session import LiveCodexSessionManager, PLAN_MARKER
-from .state import BridgeState
+from .state import BridgeState, now_iso
 from .wechat_api import WeChatClient
 from .systemd_notify import notify as systemd_notify
 
@@ -511,6 +511,8 @@ class BridgeDaemon:
             except Exception as exc:  # noqa: BLE001
                 remaining = chunks[idx:]
                 with self._lock:
+                    if self._should_wait_for_bind(exc):
+                        self.state.outbox_waiting_for_bind = True
                     for pending_chunk in remaining:
                         self.state.enqueue_pending_with_meta(
                             to_user_id=to_user_id,
@@ -763,6 +765,7 @@ class BridgeDaemon:
             )
             self.state.bound_user_id = from_user_id
             self.state.bound_context_token = context_token
+            self.state.outbox_waiting_for_bind = False
             if changed and self.state.active_session_id:
                 self._sync_mirror_cursor(self.state.active_session_id)
             self._save_state()
@@ -772,7 +775,8 @@ class BridgeDaemon:
             to_user_id = self.state.bound_user_id
             context_token = self.state.bound_context_token
             has_pending = bool(self.state.pending_outbox)
-        if not to_user_id or not has_pending:
+            waiting_for_bind = self.state.outbox_waiting_for_bind
+        if not to_user_id or not has_pending or waiting_for_bind:
             return
         self._flush_pending_outbox(to_user_id, context_token)
 
@@ -814,9 +818,14 @@ class BridgeDaemon:
                         thread_id=thread_id,
                     )
             except Exception as exc:  # noqa: BLE001
+                item["last_attempt_at"] = now_iso()
+                item["attempt_count"] = int(item.get("attempt_count", 1) or 1) + 1
+                item["last_error"] = str(exc)
                 kept.append(item)
                 kept.extend(pending[idx + 1 :])
                 with self._lock:
+                    if self._should_wait_for_bind(exc):
+                        self.state.outbox_waiting_for_bind = True
                     self._log_event(
                         "queued_outgoing",
                         {"to": to_user_id, "text": text[:400], "error": str(exc)},
@@ -840,6 +849,9 @@ class BridgeDaemon:
 
     def _sync_mirror_cursor(self, thread_id: str) -> None:
         self.state.set_mirror_offset(thread_id, self.runner.rollout_size(thread_id))
+
+    def _should_wait_for_bind(self, exc: Exception) -> bool:
+        return "ret=-2" in str(exc)
 
     def _save_state(self) -> None:
         self.state.save(self.config.state_file)
@@ -872,6 +884,8 @@ class BridgeDaemon:
             f"oldest_age_s={int(oldest_seconds)}",
             f"stuck_ge_120s={stuck_count}",
         ]
+        if self.state.outbox_waiting_for_bind:
+            lines.append("wait=next-wechat-message")
         for kind, count in sorted(kind_counts.items()):
             lines.append(f"{kind}={count}")
         preview = items[0]

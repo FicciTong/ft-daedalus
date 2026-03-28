@@ -209,6 +209,7 @@ uv run daedalus-wechat auth-openclaw
 如果后面微信发不出去并出现 `ret=-2`，bridge 现在会自动再试一次：
 - 第二次发送会去掉 `context_token`
 - 这样旧聊天上下文过期时，消息也尽量不要直接丢
+- 如果这样还是失败，bridge 会先把消息停在本地队列里，等下一条微信消息刷新绑定后再继续发，不会再后台每秒死命重试
 
 如果你还是没看到，先发：
 
@@ -269,6 +270,7 @@ systemctl --user restart daedalus-wechat
    - 如果 rollout JSONL 没抓到 `final_answer`，bridge 会退回 live `tmux codex` pane 里的可见答复
    - 如果这样还是发不出去，消息会先落到本地 outbox
    - 相同消息不会因为重复重试而无限堆叠进 outbox
+   - 如果仍然是 `ret=-2`，后台重试会暂停，等下一条微信入站消息刷新 live binding 后再继续冲洗队列
    - 后续如果有新的入站消息刷新了 live binding，bridge 会优先继续冲洗 pending 队列
 5. **prompt 异步队列 + 语音兜底**
    - 微信发来的 prompt 会进入单独 worker 队列处理，所以一条长任务不再把后面的 `/status`、`/help` 一起堵死

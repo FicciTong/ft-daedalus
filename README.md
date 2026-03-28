@@ -192,7 +192,10 @@ If `doctor` later reports `errcode=-14` / session timeout, just run
 
 If outbound sends later fail with `ret=-2`, the bridge now automatically retries
 once **without** `context_token`. This keeps delivery alive even when the old
-chat context expires. If you still do not see a message, send:
+chat context expires. If that still fails, the bridge now parks the pending
+message instead of hammering the queue every second, and waits for the next
+inbound WeChat message to refresh binding. If you still do not see a message,
+send:
 
 ```bash
 /status
@@ -258,6 +261,8 @@ The bridge now has four built-in reliability layers:
    - if delivery still fails, the message is queued locally
    - queue entries are deduplicated by message identity instead of multiplying
      on repeated retry failures
+   - if WeChat still rejects the send with `ret=-2`, background retry pauses
+     and waits for the next inbound WeChat message instead of retry-thrashing
    - the bridge still flushes pending messages aggressively when later inbound
      traffic refreshes the live chat binding
 5. **asynchronous prompt lane + voice fallback**
