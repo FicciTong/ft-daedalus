@@ -273,6 +273,29 @@ class BridgeState:
         self.pending_outbox = kept
         return matched
 
+    def trim_pending_for_scope(
+        self, *, to_user_id: str, tmux_session: str | None, keep_last: int
+    ) -> tuple[int, int]:
+        if keep_last < 0:
+            keep_last = 0
+        active_scope = str(tmux_session or "").strip()
+        scoped: list[dict[str, str]] = []
+        kept: list[dict[str, str]] = []
+        for item in self.pending_outbox:
+            item_scope = str(item.get("tmux_session", "")).strip()
+            if item.get("to") == to_user_id and (
+                not item_scope or item_scope == active_scope
+            ):
+                scoped.append(item)
+            else:
+                kept.append(item)
+        if not scoped:
+            return (0, 0)
+        retained = scoped[-keep_last:] if keep_last else []
+        dropped = max(0, len(scoped) - len(retained))
+        self.pending_outbox = kept + retained
+        return (dropped, len(retained))
+
     def _resolve_pending_tmux_session(
         self, *, thread_id: str | None, tmux_session: str | None
     ) -> str | None:

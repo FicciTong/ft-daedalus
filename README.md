@@ -402,6 +402,7 @@ Commands:
 - `/sessions`
 - `/new [label]`
 - `/switch <index|thread_id-prefix|label|tmux>`
+- `/catchup [n]`
 - `/attach-last`
 - `/stop`
 
@@ -438,6 +439,7 @@ Phone-friendly semantics:
 - `/recent` = replay from the permanent delivery ledger
 - `/recent after <seq>` = continue from a known ledger position within the current active tmux scope
 - `/recent all` = read across all session scopes when you explicitly want the mixed global view
+- `/catchup` = drop older pending backlog for the current active tmux and keep only the newest `n` items before flushing
 - `/status` = which live session am I currently attached to
 - `/sessions` = short switchable list of currently live workspace tmux sessions
 - `send-bound` = explicit desktop/session-side push into the current bound

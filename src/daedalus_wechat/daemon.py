@@ -39,6 +39,7 @@ HELP_TEXT = """FT bridge 命令总览
 /recent after 128  从 seq=128 之后继续看当前 active tmux
 /recent all 10     看所有 session 最近 10 条
 /queue             看当前待发送队列概况（按 tmux session 分区）
+/catchup 5         丢弃当前 active tmux 的旧积压，只保留最后 5 条待发
 
 帮助:
 /help              显示这页
@@ -253,6 +254,8 @@ class BridgeDaemon:
             return self._recent_text(arg)
         if command == "/queue":
             return self._queue_text()
+        if command == "/catchup":
+            return self._catchup_text(arg)
         if command == "/sessions":
             live_records = self.runner.sync_live_sessions(self.state)
             self._save_state()
@@ -408,6 +411,37 @@ class BridgeDaemon:
             f"recent:\nscope={scope_label}\n"
             + "\n\n".join(lines)
             + f"\n\nnext={next_cmd}"
+        )
+
+    def _catchup_text(self, arg: str) -> str:
+        keep_last = 5
+        normalized = arg.strip()
+        if normalized:
+            if not normalized.isdigit():
+                return "用法: /catchup [n]\n说明: 丢弃当前 active tmux 的旧积压，只保留最后 n 条待发"
+            keep_last = max(0, min(int(normalized), 20))
+        target_user = self.state.bound_user_id
+        if not target_user:
+            return "catchup=blocked\nhint=先发 /status 绑定当前微信会话"
+        active_tmux = self.state.active_tmux_session
+        dropped, kept = self.state.trim_pending_for_scope(
+            to_user_id=target_user,
+            tmux_session=active_tmux,
+            keep_last=keep_last,
+        )
+        self._save_state()
+        if dropped == 0 and kept == 0:
+            return (
+                "catchup=empty\n"
+                f"scope={active_tmux or 'unscoped'}\n"
+                "hint=当前 active tmux 没有可裁剪的待发积压"
+            )
+        return (
+            "catchup=ok\n"
+            f"scope={active_tmux or 'unscoped'}\n"
+            f"dropped={dropped}\n"
+            f"kept={kept}\n"
+            "next=bridge 会继续发送这几条保留下来的最新消息"
         )
 
     def _bootstrap_runtime(self) -> None:

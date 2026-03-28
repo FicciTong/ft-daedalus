@@ -1033,6 +1033,7 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("/notify on", help_text)
             self.assertIn("/recent after 128", help_text)
             self.assertIn("/queue", help_text)
+            self.assertIn("/catchup 5", help_text)
             self.assertIn("当前可切换的 live tmux 列表", help_text)
             self.assertIn("当前 active live tmux session", help_text)
             self.assertIn("同一时刻只会有一个 active live session", help_text)
@@ -1174,6 +1175,93 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("head_waiting_session=codex", text)
             self.assertIn("head_waiting=CODEX ONLY", text)
             self.assertNotIn("head=CODEX ONLY", text)
+
+    def test_catchup_trims_visible_scope_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    bound_user_id="user@im.wechat",
+                    active_tmux_session="daedalus",
+                    pending_outbox=[
+                        {
+                            "to": "user@im.wechat",
+                            "text": "OLD ONE",
+                            "created_at": "2026-03-26T00:00:00+00:00",
+                            "kind": "progress",
+                            "origin": "desktop-mirror",
+                            "thread_id": "thread-daedalus",
+                            "tmux_session": "daedalus",
+                        },
+                        {
+                            "to": "user@im.wechat",
+                            "text": "OLD TWO",
+                            "created_at": "2026-03-26T00:00:01+00:00",
+                            "kind": "progress",
+                            "origin": "desktop-mirror",
+                            "thread_id": "thread-daedalus",
+                            "tmux_session": "daedalus",
+                        },
+                        {
+                            "to": "user@im.wechat",
+                            "text": "KEEP ME",
+                            "created_at": "2026-03-26T00:00:02+00:00",
+                            "kind": "progress",
+                            "origin": "desktop-mirror",
+                            "thread_id": "thread-daedalus",
+                            "tmux_session": "daedalus",
+                        },
+                        {
+                            "to": "user@im.wechat",
+                            "text": "OTHER SESSION",
+                            "created_at": "2026-03-26T00:00:03+00:00",
+                            "kind": "progress",
+                            "origin": "desktop-mirror",
+                            "thread_id": "thread-codex",
+                            "tmux_session": "codex",
+                        },
+                    ],
+                ),
+            )
+            daemon.state.active_tmux_session = "daedalus"
+            text = daemon._catchup_text("1")
+            self.assertIn("catchup=ok", text)
+            self.assertIn("scope=daedalus", text)
+            self.assertIn("dropped=2", text)
+            self.assertIn("kept=1", text)
+            self.assertEqual(
+                [item["text"] for item in daemon.state.pending_outbox],
+                ["OTHER SESSION", "KEEP ME"],
+            )
+
+    def test_catchup_reports_empty_when_no_visible_scope_backlog(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    bound_user_id="user@im.wechat",
+                    active_tmux_session="daedalus",
+                    pending_outbox=[
+                        {
+                            "to": "user@im.wechat",
+                            "text": "OTHER SESSION",
+                            "created_at": "2026-03-26T00:00:03+00:00",
+                            "kind": "progress",
+                            "origin": "desktop-mirror",
+                            "thread_id": "thread-codex",
+                            "tmux_session": "codex",
+                        },
+                    ],
+                ),
+            )
+            daemon.state.active_tmux_session = "daedalus"
+            text = daemon._catchup_text("")
+            self.assertIn("catchup=empty", text)
+            self.assertIn("scope=daedalus", text)
 
     def test_duplicate_pending_message_is_not_appended_twice(self) -> None:
         state = BridgeState()

@@ -388,6 +388,7 @@ journalctl --user -u daedalus-wechat -n 100 --no-pager
 - `/sessions`
 - `/new [label]`
 - `/switch <index|thread_id-prefix|label|tmux>`
+- `/catchup [n]`
 - `/attach-last`
 - `/stop`
 
@@ -423,6 +424,7 @@ uv run daedalus-wechat send-bound "hello from desktop"
 - `/recent` = 从永久 delivery ledger 里回看最近几条记录
 - `/recent after <seq>` = 在当前 active tmux scope 里，从某个稳定序号之后继续看
 - `/recent all` = 只有当你明确要看所有 session 混合视图时才用
+- `/catchup` = 丢掉当前 active tmux 的旧积压，只保留最近 `n` 条待发，再继续发送
 - `/status` = 当前接的是哪个 live session
 - `/sessions` = 手机可读的 live workspace tmux 列表，用来快速 `/switch 1`
 - `send-bound` = 桌面/脚本侧显式把一段消息推到当前绑定微信会话
