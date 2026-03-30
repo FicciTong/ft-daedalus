@@ -1984,7 +1984,8 @@ class DaemonTests(unittest.TestCase):
                 daemon.state.get_recent_delivery_cursor("user@im.wechat|codex"), 9239
             )
 
-    def test_stale_pending_backlog_is_not_auto_flushed(self) -> None:
+    def test_stale_pending_backlog_is_auto_flushed(self) -> None:
+        """Stale desktop-mirror items should be delivered, not held forever."""
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
                 bound_user_id="user@im.wechat",
@@ -2014,9 +2015,11 @@ class DaemonTests(unittest.TestCase):
 
             daemon._flush_bound_outbox_if_any()
 
-            self.assertEqual(fake_wechat.sent, [])
-            self.assertEqual(len(state.pending_outbox), 1)
-            self.assertIn("VERY_OLD_FINAL", state.pending_outbox[0]["text"])
+            self.assertEqual(
+                fake_wechat.sent,
+                [("user@im.wechat", None, "VERY_OLD_FINAL")],
+            )
+            self.assertEqual(len(state.pending_outbox), 0)
 
     def test_log_text_can_surface_recent_error_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

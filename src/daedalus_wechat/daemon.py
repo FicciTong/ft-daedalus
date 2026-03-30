@@ -17,6 +17,7 @@ from .wechat_api import WeChatClient
 
 DISPLAY_TZ = ZoneInfo("Asia/Shanghai")
 STALE_AUTO_FLUSH_SECONDS = 300.0
+WAIT_FOR_BIND_TIMEOUT_SECONDS = 60.0
 OWNER_VISIBLE_RECENT_CLUSTER_SECONDS = 1800.0
 
 
@@ -832,6 +833,7 @@ class BridgeDaemon:
                 with self._lock:
                     if self._should_wait_for_bind(exc):
                         self.state.outbox_waiting_for_bind = True
+                        self.state.outbox_waiting_for_bind_since = now_iso()
                     for pending_chunk in remaining:
                         self.state.enqueue_pending_with_meta(
                             to_user_id=to_user_id,
@@ -927,7 +929,7 @@ class BridgeDaemon:
 
     def _mirror_loop(self) -> None:
         while True:
-            time.sleep(1.0)
+            time.sleep(0.2)
             try:
                 self._mirror_desktop_final_if_any()
             except Exception as exc:  # noqa: BLE001
@@ -1101,6 +1103,7 @@ class BridgeDaemon:
             self.state.bound_user_id = from_user_id
             self.state.bound_context_token = context_token
             self.state.outbox_waiting_for_bind = False
+            self.state.outbox_waiting_for_bind_since = ""
             if changed and self.state.active_session_id:
                 self._sync_mirror_cursor(self.state.active_session_id)
             self._save_state()
@@ -1110,6 +1113,26 @@ class BridgeDaemon:
             to_user_id = self.state.bound_user_id
             context_token = self.state.bound_context_token
             active_tmux_session = self.state.active_tmux_session
+            # Auto-clear wait_for_bind after timeout so backlog doesn't
+            # accumulate indefinitely waiting for an inbound message.
+            if self.state.outbox_waiting_for_bind:
+                wfb_set_at = str(
+                    getattr(self.state, "outbox_waiting_for_bind_since", "") or ""
+                ).strip()
+                if wfb_set_at:
+                    try:
+                        dt = datetime.fromisoformat(wfb_set_at)
+                        if dt.tzinfo is None:
+                            dt = dt.replace(tzinfo=UTC)
+                        age = (datetime.now(UTC) - dt.astimezone(UTC)).total_seconds()
+                        if age >= WAIT_FOR_BIND_TIMEOUT_SECONDS:
+                            self.state.outbox_waiting_for_bind = False
+                            self._log_event(
+                                "wait_for_bind_auto_cleared",
+                                {"age_seconds": round(age, 1)},
+                            )
+                    except ValueError:
+                        pass
             delivery_stats = self._scope_pending_delivery_stats(
                 to_user_id=to_user_id,
                 tmux_session=active_tmux_session,
@@ -1147,10 +1170,13 @@ class BridgeDaemon:
             kind = str(item.get("kind", "message"))
             origin = str(item.get("origin", "bridge"))
             thread_id = str(item.get("thread_id", "")).strip() or None
-            if self._is_stale_pending_for_auto_flush(item):
-                kept.append(item)
-                continue
-            if self.state.outbox_waiting_for_bind and self._origin_uses_live_context(origin):
+            # Stale items (old + retried) bypass wait_for_bind so they
+            # don't accumulate forever. Fresh items still respect the bind.
+            if (
+                self.state.outbox_waiting_for_bind
+                and self._origin_uses_live_context(origin)
+                and not self._is_stale_pending_for_auto_flush(item)
+            ):
                 kept.append(item)
                 continue
             effective_context = self._effective_send_context(
@@ -1191,6 +1217,7 @@ class BridgeDaemon:
                 with self._lock:
                     if self._should_wait_for_bind(exc):
                         self.state.outbox_waiting_for_bind = True
+                        self.state.outbox_waiting_for_bind_since = now_iso()
                     self._log_event(
                         "queued_outgoing",
                         {"to": to_user_id, "text": text[:400], "error": str(exc)},
@@ -1279,26 +1306,28 @@ class BridgeDaemon:
             )
         ]
         blocked_for_rebind_count = 0
-        stale_auto_flush_blocked_count = 0
         if self.state.outbox_waiting_for_bind:
             blocked_for_rebind_count = sum(
                 1
                 for item in visible_items
                 if self._origin_uses_live_context(str(item.get("origin", "bridge")))
             )
-        stale_auto_flush_blocked_count = sum(
-            1 for item in visible_items if self._is_stale_pending_for_auto_flush(item)
+        # Stale items bypass wait_for_bind, so they are deliverable even
+        # when the bind flag is set.
+        stale_bypass_count = sum(
+            1 for item in visible_items
+            if self._is_stale_pending_for_auto_flush(item)
+            and self._origin_uses_live_context(str(item.get("origin", "bridge")))
         )
+        effective_blocked = max(blocked_for_rebind_count - stale_bypass_count, 0)
         return {
             "visible_count": len(visible_items),
             "deliverable_now_count": max(
-                len(visible_items)
-                - blocked_for_rebind_count
-                - stale_auto_flush_blocked_count,
+                len(visible_items) - effective_blocked,
                 0,
             ),
-            "blocked_for_rebind_count": blocked_for_rebind_count,
-            "stale_auto_flush_blocked_count": stale_auto_flush_blocked_count,
+            "blocked_for_rebind_count": effective_blocked,
+            "stale_bypass_count": stale_bypass_count,
         }
 
     def _should_reset_poll_cursor(self, *, ret: object, errcode: object) -> bool:

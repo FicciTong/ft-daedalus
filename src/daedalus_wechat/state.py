@@ -31,6 +31,7 @@ class BridgeState:
     progress_updates_enabled: bool | None = None
     delivery_seq: int = 0
     outbox_waiting_for_bind: bool = False
+    outbox_waiting_for_bind_since: str = ""
     mirror_offsets: dict[str, int] = field(default_factory=dict)
     recent_delivery_cursors: dict[str, int] = field(default_factory=dict)
     last_progress_summaries: dict[str, str] = field(default_factory=dict)
@@ -67,6 +68,7 @@ class BridgeState:
             progress_updates_enabled=raw.get("progress_updates_enabled"),
             delivery_seq=int(raw.get("delivery_seq", 0) or 0),
             outbox_waiting_for_bind=bool(raw.get("outbox_waiting_for_bind", False)),
+            outbox_waiting_for_bind_since=str(raw.get("outbox_waiting_for_bind_since", "")),
             mirror_offsets={
                 str(key): int(value)
                 for key, value in (raw.get("mirror_offsets", {}) or {}).items()
