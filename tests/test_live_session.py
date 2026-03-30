@@ -7,12 +7,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from daedalus_wechat.live_session import (
+    PLAN_MARKER,
     LiveCodexSessionManager,
     LiveRuntimeStatus,
-    PLAN_MARKER,
 )
-from daedalus_wechat.state import BridgeState
-from daedalus_wechat.state import SessionRecord
+from daedalus_wechat.state import BridgeState, SessionRecord
 
 
 class LiveSessionTests(unittest.TestCase):

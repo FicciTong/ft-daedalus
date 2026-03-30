@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
-import json
 from pathlib import Path
 
 
@@ -38,7 +38,7 @@ class BridgeState:
     sessions: dict[str, SessionRecord] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, path: Path) -> "BridgeState":
+    def load(cls, path: Path) -> BridgeState:
         if not path.exists():
             return cls()
         raw = json.loads(path.read_text())

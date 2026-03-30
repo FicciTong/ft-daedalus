@@ -1,19 +1,19 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, datetime
 import json
-from pathlib import Path
 import threading
 import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .config import BridgeConfig
 from .delivery_ledger import append_delivery, read_recent_for_user
-from .live_session import LiveCodexSessionManager, PLAN_MARKER
+from .live_session import PLAN_MARKER, LiveCodexSessionManager
 from .state import BridgeState, now_iso
-from .wechat_api import WeChatClient
 from .systemd_notify import notify as systemd_notify
+from .wechat_api import WeChatClient
 
 DISPLAY_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -105,7 +105,7 @@ class BridgeDaemon:
                         "errmsg": response.get("errmsg"),
                     },
                 )
-                if ret == -14 or errcode == -14:
+                if self._should_reset_poll_cursor(ret=ret, errcode=errcode):
                     with self._lock:
                         self.state.get_updates_buf = ""
                         self._save_state()
@@ -117,6 +117,7 @@ class BridgeDaemon:
                     "get_updates_buf", self.state.get_updates_buf
                 )
                 self._save_state()
+            systemd_notify("STATUS=bridge polling")
             for raw in response.get("msgs", []) or []:
                 incoming = self._parse_incoming(raw)
                 if incoming is None:
@@ -642,7 +643,11 @@ class BridgeDaemon:
         thread_id: str | None = None,
         tmux_session: str | None = None,
     ) -> None:
-        effective_context = context_token if use_context_token else None
+        effective_context = self._effective_send_context(
+            context_token=context_token,
+            use_context_token=use_context_token,
+            origin=origin,
+        )
         rendered = self._render_reply_text(text, kind=kind, origin=origin)
         chunks = self._chunk_text(rendered)
         for idx, chunk in enumerate(chunks):
@@ -928,7 +933,7 @@ class BridgeDaemon:
 
     def _is_authorized_sender(self, from_user_id: str) -> bool:
         if not self.config.allowed_users:
-            return True
+            return False
         return from_user_id in self.config.allowed_users
 
     def _bind_peer(self, from_user_id: str, context_token: str | None) -> None:
@@ -949,16 +954,13 @@ class BridgeDaemon:
             to_user_id = self.state.bound_user_id
             context_token = self.state.bound_context_token
             active_tmux_session = self.state.active_tmux_session
-            has_pending = (
-                self.state.has_pending_for_scope(
-                    to_user_id=to_user_id,
-                    tmux_session=active_tmux_session,
-                )
-                if to_user_id
-                else False
+            delivery_stats = self._scope_pending_delivery_stats(
+                to_user_id=to_user_id,
+                tmux_session=active_tmux_session,
             )
-            waiting_for_bind = self.state.outbox_waiting_for_bind
-        if not to_user_id or not has_pending or waiting_for_bind:
+        has_pending = delivery_stats["visible_count"] > 0
+        deliverable_now = delivery_stats["deliverable_now_count"] > 0
+        if not to_user_id or not has_pending or not deliverable_now:
             return
         self._flush_pending_outbox(
             to_user_id,
@@ -989,10 +991,18 @@ class BridgeDaemon:
             kind = str(item.get("kind", "message"))
             origin = str(item.get("origin", "bridge"))
             thread_id = str(item.get("thread_id", "")).strip() or None
+            if self.state.outbox_waiting_for_bind and self._origin_uses_live_context(origin):
+                kept.append(item)
+                continue
+            effective_context = self._effective_send_context(
+                context_token=context_token,
+                use_context_token=True,
+                origin=origin,
+            )
             try:
                 self.wechat.send_text(
                     to_user_id=to_user_id,
-                    context_token=context_token,
+                    context_token=effective_context,
                     text=text,
                 )
                 with self._lock:
@@ -1050,6 +1060,63 @@ class BridgeDaemon:
     def _should_wait_for_bind(self, exc: Exception) -> bool:
         return "ret=-2" in str(exc)
 
+    def _origin_uses_live_context(self, origin: str) -> bool:
+        normalized = str(origin or "").strip()
+        return normalized not in {"desktop-mirror", "desktop-direct"}
+
+    def _effective_send_context(
+        self,
+        *,
+        context_token: str | None,
+        use_context_token: bool,
+        origin: str,
+    ) -> str | None:
+        if not use_context_token:
+            return None
+        # Desktop-originated pushes are owner-facing outbound sends, not direct
+        # replies to the latest inbound WeChat message. Keep them context-free so
+        # a stale chat context cannot poison later no-context delivery.
+        if not self._origin_uses_live_context(origin):
+            return None
+        return context_token
+
+    def _scope_pending_delivery_stats(
+        self, *, to_user_id: str | None, tmux_session: str | None
+    ) -> dict[str, int]:
+        if not to_user_id:
+            return {
+                "visible_count": 0,
+                "deliverable_now_count": 0,
+                "blocked_for_rebind_count": 0,
+            }
+        active_scope = str(tmux_session or "").strip()
+        visible_items = [
+            item
+            for item in self.state.pending_outbox
+            if item.get("to") == to_user_id
+            and (
+                not str(item.get("tmux_session", "")).strip()
+                or str(item.get("tmux_session", "")).strip() == active_scope
+            )
+        ]
+        blocked_for_rebind_count = 0
+        if self.state.outbox_waiting_for_bind:
+            blocked_for_rebind_count = sum(
+                1
+                for item in visible_items
+                if self._origin_uses_live_context(str(item.get("origin", "bridge")))
+            )
+        return {
+            "visible_count": len(visible_items),
+            "deliverable_now_count": len(visible_items) - blocked_for_rebind_count,
+            "blocked_for_rebind_count": blocked_for_rebind_count,
+        }
+
+    def _should_reset_poll_cursor(self, *, ret: object, errcode: object) -> bool:
+        # Invalid or stale poll cursors should be cleared so the bridge can
+        # resume from the server's current stream instead of retrying forever.
+        return ret in {-1, -14} or errcode in {-1, -14}
+
     def _save_state(self) -> None:
         self.state.save(self.config.state_file)
 
@@ -1072,6 +1139,7 @@ class BridgeDaemon:
         active_tmux = str(self.state.active_tmux_session or "").strip()
         active_visible_count = 0
         waiting_count = 0
+        blocked_for_rebind_count = 0
         for item in items:
             kind = str(item.get("kind", "message"))
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
@@ -1087,6 +1155,10 @@ class BridgeDaemon:
             tmux_threads.setdefault(item_tmux, set()).add(thread_id)
             if not item_tmux or item_tmux == "unscoped" or item_tmux == active_tmux:
                 active_visible_count += 1
+                if self.state.outbox_waiting_for_bind and self._origin_uses_live_context(
+                    str(item.get("origin", "bridge"))
+                ):
+                    blocked_for_rebind_count += 1
             else:
                 waiting_count += 1
             created_at = str(item.get("created_at", "")).strip()
@@ -1112,6 +1184,10 @@ class BridgeDaemon:
             )
         if self.state.outbox_waiting_for_bind:
             lines.append("wait=next-wechat-message")
+        deliverable_now_count = active_visible_count - blocked_for_rebind_count
+        lines.append(f"deliverable_now={max(deliverable_now_count, 0)}")
+        if blocked_for_rebind_count:
+            lines.append(f"blocked_for_rebind={blocked_for_rebind_count}")
         if self.state.active_tmux_session:
             lines.append(f"active_tmux={self.state.active_tmux_session}")
         lines.append(f"visible_now={active_visible_count}")

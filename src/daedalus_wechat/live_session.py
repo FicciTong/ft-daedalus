@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import re
 import shlex
 import sqlite3
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
+from .config import default_codex_state_db
 from .state import BridgeState, SessionRecord
-
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 THREAD_ID_RE = re.compile(
@@ -68,14 +68,16 @@ class LiveCodexSessionManager:
         codex_bin: str,
         default_cwd: Path,
         canonical_tmux_session: str,
+        codex_state_db: Path | None = None,
     ) -> None:
         self.codex_bin = codex_bin
         self.default_cwd = default_cwd
         self.canonical_tmux_session = canonical_tmux_session
+        self.codex_state_db = codex_state_db or default_codex_state_db()
         self.session_root = Path.home() / ".codex" / "sessions"
 
     def find_latest_thread(self) -> str | None:
-        state_db = Path.home() / ".codex" / "state_5.sqlite"
+        state_db = self.codex_state_db
         if not state_db.exists():
             return None
         conn = sqlite3.connect(state_db)

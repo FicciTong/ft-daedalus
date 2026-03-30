@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import base64
 import json
 import secrets
-from pathlib import Path
 import threading
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
@@ -42,7 +42,7 @@ class WeChatAccount:
     user_id: str | None
 
     @classmethod
-    def load(cls, path: Path) -> "WeChatAccount":
+    def load(cls, path: Path) -> WeChatAccount:
         obj = json.loads(path.read_text())
         token = obj.get("token", "").strip()
         base_url = obj.get("baseUrl", "").strip()
@@ -126,6 +126,7 @@ class WeChatClient:
                 retry_payload = {
                     "msg": {
                         **payload["msg"],
+                        "client_id": _generate_client_id(),
                         "context_token": None,
                     },
                     "base_info": payload["base_info"],

@@ -219,7 +219,7 @@ export DAEDALUS_WECHAT_OPENCLAW_PROFILE=my-profile
 
 ## 🛡️ Security Boundary
 
-By default, if you do nothing, the bridge allows any sender who can reach the
+By default, if you do nothing, the bridge allows **no sender** to control the
 bot conversation.
 
 If this machine matters, configure an allowlist in:
@@ -245,6 +245,18 @@ After changing the env file:
 ```bash
 systemctl --user restart daedalus-wechat
 ```
+
+Without `DAEDALUS_WECHAT_ALLOWED_USERS`, inbound control is fail-closed and the
+bridge only rejects commands.
+
+You can verify the current local control posture with:
+
+```bash
+uv run daedalus-wechat security-drill
+```
+
+That drill emits a machine-readable report under `var/reports/bridge/` and
+verifies that an unauthorized sender is rejected before bind/prompt injection.
 
 ## 🛟 Reliability Guardrails
 
@@ -371,6 +383,7 @@ That is the canonical place for both foreground CLI and background service:
 - `DAEDALUS_WECHAT_DEFAULT_CWD`
 - `DAEDALUS_WECHAT_TMUX_SESSION`
 - `DAEDALUS_WECHAT_CODEX_BIN`
+- `DAEDALUS_WECHAT_CODEX_STATE_DB`
 - `DAEDALUS_WECHAT_ALLOWED_USERS`
 - `DAEDALUS_WECHAT_PROGRESS_UPDATES`
 - optional OpenClaw profile overrides
@@ -480,9 +493,18 @@ configured workspace are listed as switchable targets.
 - `DAEDALUS_WECHAT_STATE_DIR`
 - `DAEDALUS_WECHAT_ACCOUNT_FILE`
 - `DAEDALUS_WECHAT_CODEX_BIN`
+- `DAEDALUS_WECHAT_CODEX_STATE_DB`
 - `DAEDALUS_WECHAT_PROGRESS_UPDATES`
 - `DAEDALUS_WECHAT_OPENCLAW_PROFILE`
 - `DAEDALUS_WECHAT_TMUX_SESSION`
+
+If `DAEDALUS_WECHAT_CODEX_STATE_DB` is not set, the bridge now resolves the
+Codex state DB by:
+
+1. preferring `~/.codex/state.sqlite` when present
+2. otherwise picking the newest matching `~/.codex/state*.sqlite`
+
+This avoids baking `state_5.sqlite` in as the only default truth.
 
 ## 🧯 Failure Recovery
 

@@ -9,6 +9,12 @@ description = "Current ft-daedalus tool: a WeChat operator surface for one canon
 requires-python = ">=3.13"
 dependencies = []
 
+[dependency-groups]
+dev = [
+  "pytest>=8.2",
+  "ruff>=0.5",
+]
+
 [project.scripts]
 daedalus-wechat = "daedalus_wechat.cli:main"
 
@@ -17,3 +23,21 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = ["var", ".git", ".venv", ".pytest_cache"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501", "UP022"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["daedalus_wechat"]
+
+[tool.uv]
+default-groups = ["dev"]

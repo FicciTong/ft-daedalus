@@ -1,20 +1,20 @@
 from __future__ import annotations
 
 import argparse
-from datetime import UTC, datetime
 import json
-import subprocess
 import shutil
+import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .config import load_config
 from .daemon import BridgeDaemon
 from .delivery_ledger import append_delivery
 from .live_session import LiveCodexSessionManager
+from .security_drill import run_security_drill
 from .state import BridgeState
 from .wechat_api import WeChatAccount, WeChatClient
-
 
 OPENCLAW_WEIXIN_PLUGIN_SPEC = "@tencent-weixin/openclaw-weixin"
 
@@ -109,6 +109,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("run", help="Run the WeChat bridge daemon")
     sub.add_parser("status", help="Print current bridge state")
     sub.add_parser("doctor", help="Check bridge prerequisites and current auth health")
+    security_drill = sub.add_parser(
+        "security-drill",
+        help="Run a local fail-closed security drill and emit a machine-readable report",
+    )
+    security_drill.add_argument(
+        "--report-path",
+        type=Path,
+        default=None,
+        help="Optional output path for the drill report",
+    )
     send_bound = sub.add_parser(
         "send-bound",
         help="Send text to the currently bound WeChat chat context",
@@ -294,10 +304,30 @@ def main() -> int:
             codex_bin=config.codex_bin,
             default_cwd=config.default_cwd,
             canonical_tmux_session=config.canonical_tmux_session,
+            codex_state_db=config.codex_state_db,
         )
         print(f"latest_codex_thread={runner.find_latest_thread()}")
         print(f"canonical_tmux_session={config.canonical_tmux_session}")
         return 0
+
+    if args.command == "security-drill":
+        result = run_security_drill(config=config, report_path=args.report_path)
+        print(
+            json.dumps(
+                {
+                    "status": result.status,
+                    "report_path": str(result.report_path),
+                    "allowlist_configured": result.payload.get("allowlist_configured"),
+                    "allowed_user_count": result.payload.get("allowed_user_count"),
+                    "codex_state_db": result.payload.get("codex_state_db"),
+                    "codex_state_db_resolution": result.payload.get(
+                        "codex_state_db_resolution"
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 0 if result.status in {"SUCCESS", "WARN"} else 2
 
     if args.command == "send-bound":
         text = sys.stdin.read() if args.stdin else (args.text or "")
@@ -314,6 +344,7 @@ def main() -> int:
             codex_bin=config.codex_bin,
             default_cwd=config.default_cwd,
             canonical_tmux_session=config.canonical_tmux_session,
+            codex_state_db=config.codex_state_db,
         ),
         state=state,
     )

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import sqlite3
 import subprocess
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
+
+from .config import default_codex_state_db
 
 
 @dataclass(frozen=True)
@@ -15,9 +17,16 @@ class CodexResult:
 
 
 class CodexRunner:
-    def __init__(self, codex_bin: str, default_cwd: Path) -> None:
+    def __init__(
+        self,
+        codex_bin: str,
+        default_cwd: Path,
+        *,
+        codex_state_db: Path | None = None,
+    ) -> None:
         self.codex_bin = codex_bin
         self.default_cwd = default_cwd
+        self.codex_state_db = codex_state_db or default_codex_state_db()
 
     def run_prompt(self, prompt: str, *, thread_id: str | None = None) -> CodexResult:
         with tempfile.NamedTemporaryFile(delete=False) as output_file:
@@ -77,7 +86,7 @@ class CodexRunner:
             output_path.unlink(missing_ok=True)
 
     def find_latest_thread(self) -> str | None:
-        state_db = Path.home() / ".codex" / "state_5.sqlite"
+        state_db = self.codex_state_db
         if not state_db.exists():
             return None
         conn = sqlite3.connect(state_db)
