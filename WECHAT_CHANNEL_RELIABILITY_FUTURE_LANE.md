@@ -197,3 +197,23 @@ Current canonical decision:
   work is more settled
 - when opened, it should be implemented as a bounded `ft-daedalus` upgrade only
 
+## Adjacent but separate future lane
+
+The owner has also requested a later **multi-CLI / multi-tmux** operator lane,
+for example:
+
+- `tmux codex`
+- `tmux claude`
+- `tmux kimi`
+
+That is a real future lane, but it is **not** the same problem as this
+reliability lane.
+
+Keep the separation explicit:
+
+- this document = current WeChat channel reliability / drain semantics
+- later multi-CLI lane = target identity, per-CLI binding, routing, and queue
+  isolation across multiple live operator runtimes
+
+Do **not** use this reliability lane as an excuse to silently expand into a
+generic multi-agent bridge framework.
