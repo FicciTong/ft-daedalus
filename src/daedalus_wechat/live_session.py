@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .cli_backend import detect_backend
 from .config import default_codex_state_db
 from .state import BridgeState, SessionRecord
 
@@ -17,6 +18,9 @@ THREAD_ID_RE = re.compile(
     r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"
 )
 STATUS_LINE_RE = re.compile(r"\bgpt-[^\n]*·[^\n]*\b[0-9a-f]{8}-[0-9a-f-]{28}\b")
+CLAUDE_STATUS_LINE_RE = re.compile(
+    r"(?:\u256d\u2500|Claude Code|\u25b8\u25b8|claude-opus|claude-sonnet|claude-haiku)"
+)
 EPHEMERAL_LINE_RE = re.compile(
     r"^[•✻◦]\s+(Working|Baked|Thinking|Waiting|Context compacted|Updated Plan)\b"
 )
@@ -49,6 +53,7 @@ class LiveRuntimeStatus:
     pane_command: str | None
     thread_id: str | None
     pane_cwd: str | None = None
+    backend: str = "codex"  # codex | claude | unknown
 
 
 @dataclass(frozen=True)
@@ -59,6 +64,7 @@ class TmuxRuntimeInventoryItem:
     pane_cwd: str | None
     switchable: bool
     reason: str
+    backend: str = "codex"  # codex | claude | unknown
 
 
 class LiveCodexSessionManager:
@@ -198,9 +204,17 @@ class LiveCodexSessionManager:
                     )
                 )
                 continue
-            if status.pane_command not in {"node", "codex"}:
-                reason = "non-codex-pane"
+            if status.backend == "unknown":
+                reason = "unrecognized-cli"
                 switchable = False
+            elif status.backend == "claude":
+                # Claude Code sessions don't require a Codex-style thread ID
+                if not self._is_workspace_tmux(status.pane_cwd):
+                    reason = "outside-workspace"
+                    switchable = False
+                else:
+                    reason = "live"
+                    switchable = True
             elif not status.thread_id:
                 reason = "no-thread"
                 switchable = False
@@ -218,6 +232,7 @@ class LiveCodexSessionManager:
                     pane_cwd=status.pane_cwd,
                     switchable=switchable,
                     reason=reason,
+                    backend=status.backend,
                 )
             )
         return sorted(
@@ -236,6 +251,7 @@ class LiveCodexSessionManager:
                 pane_command=item.pane_command,
                 thread_id=item.thread_id,
                 pane_cwd=item.pane_cwd,
+                backend=item.backend,
             )
             for item in self.list_tmux_runtime_inventory()
             if item.switchable
@@ -287,11 +303,20 @@ class LiveCodexSessionManager:
                 f"tmux new -s {self.canonical_tmux_session} "
                 f"'{self.codex_bin} resume --last -C {self.default_cwd} --no-alt-screen'"
             )
-        if status.pane_command not in {"node", "codex"}:
+        if status.backend == "unknown":
             raise RuntimeError(
-                f"`tmux {status.tmux_session}` 已存在，但里面当前不是 Codex "
+                f"`tmux {status.tmux_session}` 已存在，但里面当前不是 Codex 或 Claude Code "
                 f"(pane_current_command={status.pane_command or 'unknown'})。"
-                "\n请先 attach 进去并启动/恢复一条 Codex session。"
+                "\n请先 attach 进去并启动 Codex 或 Claude Code session。"
+            )
+        if status.backend == "claude":
+            # Claude Code doesn't require a thread ID to function
+            return state.touch_session(
+                status.tmux_session,  # use tmux session name as session key
+                label=f"claude@{status.tmux_session}",
+                cwd=status.pane_cwd or str(self.default_cwd),
+                source="tmux-live-claude",
+                tmux_session=status.tmux_session,
             )
         if not status.thread_id:
             raise RuntimeError(
@@ -605,6 +630,8 @@ class LiveCodexSessionManager:
         for line in lines:
             if STATUS_LINE_RE.match(line):
                 continue
+            if CLAUDE_STATUS_LINE_RE.match(line):
+                continue
             filtered.append(line)
         return "\n".join(filtered).strip("\n")
 
@@ -803,16 +830,23 @@ class LiveCodexSessionManager:
                 pane_command=None,
                 thread_id=None,
                 pane_cwd=None,
+                backend="unknown",
             )
         pane_command = self._pane_current_command(tmux_session)
         pane_cwd = self._pane_current_path(tmux_session)
-        thread_id = self._extract_thread_id(self._capture_clean_text(tmux_session))
+        screen_text = self._capture_clean_text(tmux_session)
+        backend = detect_backend(
+            pane_command=pane_command,
+            screen_text=screen_text,
+        )
+        thread_id = self._extract_thread_id(screen_text)
         return LiveRuntimeStatus(
             tmux_session=tmux_session,
             exists=True,
             pane_command=pane_command,
             thread_id=thread_id,
             pane_cwd=pane_cwd,
+            backend=backend.value,
         )
 
     def _list_tmux_sessions(self) -> list[str]:
