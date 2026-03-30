@@ -1157,6 +1157,7 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("/recent after 128", help_text)
             self.assertIn("/queue", help_text)
             self.assertIn("/catchup 5", help_text)
+            self.assertIn("/log 10", help_text)
             self.assertIn("当前可切换的 live tmux 列表", help_text)
             self.assertIn("当前 active live tmux session", help_text)
             self.assertIn("同一时刻只会有一个 active live session", help_text)
@@ -1196,6 +1197,30 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("session[1]=unscoped|count=2|threads=1", text)
             self.assertIn("head=FIRST PLAN", text)
             self.assertIn("tail=SECOND FINAL", text)
+
+    def test_queue_empty_still_shows_latest_effective_delivery_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            config = self._make_config(state_dir, frozenset())
+            config.state_dir.mkdir(parents=True, exist_ok=True)
+            config.delivery_ledger_file.write_text(
+                '{"seq":5,"ts":"2026-03-26T05:00:01+00:00","to":"user@im.wechat","status":"flushed","kind":"final","origin":"desktop-mirror","tmux_session":"codex","text":"FINAL_OK"}\n',
+                encoding="utf-8",
+            )
+            daemon = _TestDaemon(
+                config=config,
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    bound_user_id="user@im.wechat",
+                    active_tmux_session="codex",
+                ),
+            )
+            text = daemon._queue_text()
+            self.assertIn("queue=0", text)
+            self.assertIn("status=empty", text)
+            self.assertIn("recent_effective_seq=5", text)
+            self.assertIn("recent_effective=FINAL_OK", text)
 
     def test_queue_text_breaks_out_multiple_threads(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1733,8 +1758,8 @@ class DaemonTests(unittest.TestCase):
             text = daemon._recent_text("after 1")
             self.assertNotIn("one", text)
             self.assertIn("scope=all-fallback", text)
-            self.assertIn("two", text)
             self.assertIn("three", text)
+            self.assertNotIn("two", text)
             self.assertIn("next=/recent after 3", text)
 
     def test_recent_defaults_to_active_tmux_scope(self) -> None:
@@ -1796,6 +1821,135 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("scope=all", text)
             self.assertIn("[codex] codex one", text)
             self.assertIn("[daedalus] daedalus final", text)
+
+    def test_catchup_replays_latest_effective_messages_when_no_pending_backlog(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            config = self._make_config(state_dir, frozenset())
+            config.state_dir.mkdir(parents=True, exist_ok=True)
+            config.delivery_ledger_file.write_text(
+                "\n".join(
+                    [
+                        '{"seq":10,"ts":"2026-03-26T05:00:00+00:00","to":"user@im.wechat","status":"queued","kind":"progress","origin":"desktop-mirror","tmux_session":"codex","text":"retry noise"}',
+                        '{"seq":11,"ts":"2026-03-26T05:00:01+00:00","to":"user@im.wechat","status":"flushed","kind":"progress","origin":"desktop-mirror","tmux_session":"codex","text":"real progress"}',
+                        '{"seq":12,"ts":"2026-03-26T05:00:02+00:00","to":"user@im.wechat","status":"sent","kind":"final","origin":"desktop-mirror","tmux_session":"codex","text":"real final"}',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            daemon = _TestDaemon(
+                config=config,
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    bound_user_id="user@im.wechat",
+                    active_tmux_session="codex",
+                ),
+            )
+            text = daemon._catchup_text("")
+            self.assertIn("catchup=ok", text)
+            self.assertIn("scope=codex", text)
+            self.assertIn("real progress", text)
+            self.assertIn("real final", text)
+            self.assertNotIn("retry noise", text)
+            self.assertIn("next=/catchup", text)
+
+    def test_catchup_advances_cursor_and_reports_up_to_date(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            config = self._make_config(state_dir, frozenset())
+            config.state_dir.mkdir(parents=True, exist_ok=True)
+            config.delivery_ledger_file.write_text(
+                "\n".join(
+                    [
+                        '{"seq":21,"ts":"2026-03-26T05:00:01+00:00","to":"user@im.wechat","status":"flushed","kind":"progress","origin":"desktop-mirror","tmux_session":"codex","text":"one"}',
+                        '{"seq":22,"ts":"2026-03-26T05:00:02+00:00","to":"user@im.wechat","status":"sent","kind":"final","origin":"desktop-mirror","tmux_session":"codex","text":"two"}',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            daemon = _TestDaemon(
+                config=config,
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    bound_user_id="user@im.wechat",
+                    active_tmux_session="codex",
+                ),
+            )
+            first = daemon._catchup_text("")
+            self.assertIn("catchup=ok", first)
+            second = daemon._catchup_text("")
+            self.assertIn("catchup=up_to_date", second)
+            self.assertIn("last_seq=22", second)
+
+    def test_stale_pending_backlog_is_not_auto_flushed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                active_tmux_session="codex",
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "VERY_OLD_FINAL",
+                        "created_at": "2026-03-26T00:00:00+00:00",
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                        "thread_id": "thread-1",
+                        "tmux_session": "codex",
+                        "attempt_count": 2,
+                        "last_error": "ret=-2",
+                    }
+                ],
+            )
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+
+            daemon._flush_bound_outbox_if_any()
+
+            self.assertEqual(fake_wechat.sent, [])
+            self.assertEqual(len(state.pending_outbox), 1)
+            self.assertIn("VERY_OLD_FINAL", state.pending_outbox[0]["text"])
+
+    def test_log_text_can_surface_recent_error_events(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            config = self._make_config(state_dir, frozenset())
+            config.state_dir.mkdir(parents=True, exist_ok=True)
+            runner = _FakeRunner()
+            config.event_log_file.write_text(
+                "\n".join(
+                    [
+                        '{"ts":"2026-03-26T05:00:00+00:00","kind":"incoming","payload":{"from":"user@im.wechat","body":"/status"}}',
+                        f'{{"ts":"2026-03-26T05:00:01+00:00","kind":"queued_outgoing","payload":{{"to":"user@im.wechat","thread":"{runner.runtime_thread_id[:8]}","error":"ret=-2","text":"OLD"}}}}',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            daemon = _TestDaemon(
+                config=config,
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=BridgeState(
+                    bound_user_id="user@im.wechat",
+                    active_session_id=runner.runtime_thread_id,
+                    active_tmux_session="codex",
+                ),
+            )
+            text = daemon._log_text("errors 5")
+            self.assertIn("log:", text)
+            self.assertIn("errors_only=true", text)
+            self.assertIn("queued_outgoing", text)
+            self.assertIn("ret=-2", text)
 
     def test_mirror_desktop_final_back_to_wechat(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

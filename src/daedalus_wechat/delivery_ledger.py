@@ -6,6 +6,8 @@ from pathlib import Path
 
 from .state import BridgeState
 
+EFFECTIVE_DELIVERY_STATUSES = frozenset({"sent", "flushed"})
+
 
 def append_delivery(
     *,
@@ -49,6 +51,7 @@ def read_recent_for_user(
     limit: int = 6,
     after_seq: int | None = None,
     tmux_session: str | None = None,
+    effective_only: bool = False,
 ) -> list[dict]:
     if not ledger_file.exists():
         return []
@@ -65,6 +68,8 @@ def read_recent_for_user(
                 continue
             if scope and str(item.get("tmux_session", "")).strip() != scope:
                 continue
+            if effective_only and str(item.get("status", "")).strip() not in EFFECTIVE_DELIVERY_STATUSES:
+                continue
             seq = int(item.get("seq", 0) or 0)
             if seq <= after_seq:
                 continue
@@ -80,6 +85,8 @@ def read_recent_for_user(
         if item.get("to") != to_user_id:
             continue
         if scope and str(item.get("tmux_session", "")).strip() != scope:
+            continue
+        if effective_only and str(item.get("status", "")).strip() not in EFFECTIVE_DELIVERY_STATUSES:
             continue
         results.append(item)
         if len(results) >= limit:

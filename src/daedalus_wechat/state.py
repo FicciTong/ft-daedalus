@@ -32,6 +32,7 @@ class BridgeState:
     delivery_seq: int = 0
     outbox_waiting_for_bind: bool = False
     mirror_offsets: dict[str, int] = field(default_factory=dict)
+    recent_delivery_cursors: dict[str, int] = field(default_factory=dict)
     last_progress_summaries: dict[str, str] = field(default_factory=dict)
     pending_outbox: list[dict[str, str]] = field(default_factory=list)
     pending_outbox_overflow_dropped: int = 0
@@ -69,6 +70,10 @@ class BridgeState:
             mirror_offsets={
                 str(key): int(value)
                 for key, value in (raw.get("mirror_offsets", {}) or {}).items()
+            },
+            recent_delivery_cursors={
+                str(key): int(value)
+                for key, value in (raw.get("recent_delivery_cursors", {}) or {}).items()
             },
             last_progress_summaries={
                 str(key): str(value)
@@ -124,6 +129,7 @@ class BridgeState:
                     "delivery_seq": self.delivery_seq,
                     "outbox_waiting_for_bind": self.outbox_waiting_for_bind,
                     "mirror_offsets": self.mirror_offsets,
+                    "recent_delivery_cursors": self.recent_delivery_cursors,
                     "last_progress_summaries": self.last_progress_summaries,
                     "pending_outbox": self.pending_outbox,
                     "pending_outbox_overflow_dropped": self.pending_outbox_overflow_dropped,
@@ -164,6 +170,14 @@ class BridgeState:
 
     def set_mirror_offset(self, thread_id: str, offset: int) -> None:
         self.mirror_offsets[thread_id] = int(offset)
+
+    def get_recent_delivery_cursor(self, scope_key: str) -> int | None:
+        if scope_key not in self.recent_delivery_cursors:
+            return None
+        return int(self.recent_delivery_cursors[scope_key])
+
+    def set_recent_delivery_cursor(self, scope_key: str, seq: int) -> None:
+        self.recent_delivery_cursors[str(scope_key)] = int(seq)
 
     def get_last_progress_summary(self, thread_id: str) -> str:
         return str(self.last_progress_summaries.get(thread_id, ""))

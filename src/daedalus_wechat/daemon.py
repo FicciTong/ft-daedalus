@@ -16,6 +16,7 @@ from .systemd_notify import notify as systemd_notify
 from .wechat_api import WeChatClient
 
 DISPLAY_TZ = ZoneInfo("Asia/Shanghai")
+STALE_AUTO_FLUSH_SECONDS = 300.0
 
 
 HELP_TEXT = """FT bridge 命令总览
@@ -35,11 +36,12 @@ HELP_TEXT = """FT bridge 命令总览
 /notify status     查看当前通知模式
 
 追溯:
-/recent 10         看当前 active tmux 最近 10 条 delivery ledger
+/recent 10         看当前 active tmux 最近 10 条有效 delivery ledger
 /recent after 128  从 seq=128 之后继续看当前 active tmux
 /recent all 10     看所有 session 最近 10 条
-/queue             看当前待发送队列概况（按 tmux session 分区）
-/catchup 5         丢弃当前 active tmux 的旧积压，只保留最后 5 条待发
+/queue             看当前待发送队列概况 + 最近有效投递摘要
+/catchup 5         裁旧 backlog 并继续补看当前 active tmux 最近/新增的有效消息
+/log 10            看当前 bridge 最近事件/错误日志
 
 帮助:
 /help              显示这页
@@ -257,6 +259,8 @@ class BridgeDaemon:
             return self._queue_text()
         if command == "/catchup":
             return self._catchup_text(arg)
+        if command == "/log":
+            return self._log_text(arg)
         if command == "/sessions":
             live_records = self.runner.sync_live_sessions(self.state)
             self._save_state()
@@ -359,51 +363,21 @@ class BridgeDaemon:
         target_user = self.state.bound_user_id
         if not target_user:
             return "recent=empty\nhint=先发 /status 绑定当前微信会话"
-        path = self.config.delivery_ledger_file
-        if not path.exists():
-            return "recent=empty\nhint=还没有出站记录"
-        active_tmux = None if scope_all else self.state.active_tmux_session
-        items = read_recent_for_user(
-            ledger_file=path,
+        items, scope_label, scope_tmux = self._read_effective_recent_items(
             to_user_id=target_user,
             limit=limit,
             after_seq=after_seq,
-            tmux_session=active_tmux,
+            scope_all=scope_all,
         )
-        fallback_to_all = False
-        if not items and active_tmux:
-            all_items = read_recent_for_user(
-                ledger_file=path,
-                to_user_id=target_user,
-                limit=limit,
-                after_seq=after_seq,
-                tmux_session=None,
-            )
-            if all_items and all(
-                not str(item.get("tmux_session", "")).strip() for item in all_items
-            ):
-                items = all_items
-                active_tmux = None
-                fallback_to_all = True
         if not items:
-            if active_tmux:
+            if scope_tmux:
                 return (
                     "recent=empty\n"
-                    f"scope={active_tmux}\n"
-                    "hint=当前 active tmux 还没有可补看的已发送消息；可用 /recent all 看全局"
+                    f"scope={scope_tmux}\n"
+                    "hint=当前 active tmux 还没有可补看的有效已发送消息；可用 /recent all 看全局"
                 )
-            return "recent=empty\nscope=all\nhint=当前会话还没有可补看的已发送消息"
-        lines = []
-        scope_label = active_tmux or ("all-fallback" if fallback_to_all else "all")
-        for item in items:
-            ts = self._display_time(item.get("ts"))
-            seq = int(item.get("seq", 0) or 0)
-            status = str(item.get("status", "unknown"))
-            kind = str(item.get("kind", "message"))
-            text = str(item.get("text", "")).strip()
-            item_tmux = str(item.get("tmux_session", "")).strip()
-            scope_suffix = f"[{item_tmux or 'unknown'}]" if scope_all else ""
-            lines.append(f"[{seq}][{status}][{kind}][{ts}]{scope_suffix} {text}")
+            return "recent=empty\nscope=all\nhint=当前会话还没有可补看的有效已发送消息"
+        lines = self._render_recent_lines(items, scope_all=scope_all)
         last_seq = int(items[-1].get("seq", 0) or 0)
         next_cmd = (
             f"/recent all after {last_seq}" if scope_all else f"/recent after {last_seq}"
@@ -419,8 +393,11 @@ class BridgeDaemon:
         normalized = arg.strip()
         if normalized:
             if not normalized.isdigit():
-                return "用法: /catchup [n]\n说明: 丢弃当前 active tmux 的旧积压，只保留最后 n 条待发"
-            keep_last = max(0, min(int(normalized), 20))
+                return (
+                    "用法: /catchup [n]\n"
+                    "说明: 先裁当前 active tmux 的旧 backlog，再补看最近/新增的有效消息"
+                )
+            keep_last = max(1, min(int(normalized), 20))
         target_user = self.state.bound_user_id
         if not target_user:
             return "catchup=blocked\nhint=先发 /status 绑定当前微信会话"
@@ -430,20 +407,180 @@ class BridgeDaemon:
             tmux_session=active_tmux,
             keep_last=keep_last,
         )
+        scope_key = self._recent_cursor_scope_key(
+            to_user_id=target_user,
+            tmux_session=active_tmux,
+        )
+        cursor = self.state.get_recent_delivery_cursor(scope_key)
+        items, scope_label, _ = self._read_effective_recent_items(
+            to_user_id=target_user,
+            limit=keep_last if cursor is None else 20,
+            after_seq=cursor,
+            scope_all=False,
+        )
+        if items:
+            last_seq = int(items[-1].get("seq", 0) or 0)
+            self.state.set_recent_delivery_cursor(scope_key, last_seq)
         self._save_state()
-        if dropped == 0 and kept == 0:
+        if not items and dropped == 0 and kept == 0:
+            if cursor is not None:
+                return (
+                    "catchup=up_to_date\n"
+                    f"scope={scope_label}\n"
+                    f"last_seq={cursor}\n"
+                    "hint=当前 active tmux 没有新的有效消息，也没有待裁 backlog"
+                )
             return (
                 "catchup=empty\n"
-                f"scope={active_tmux or 'unscoped'}\n"
-                "hint=当前 active tmux 没有可裁剪的待发积压"
+                f"scope={scope_label}\n"
+                "hint=当前 active tmux 没有 backlog，也没有可补看的有效消息"
             )
-        return (
-            "catchup=ok\n"
-            f"scope={active_tmux or 'unscoped'}\n"
-            f"dropped={dropped}\n"
-            f"kept={kept}\n"
-            "next=bridge 会继续发送这几条保留下来的最新消息"
+        lines = ["catchup=ok", f"scope={scope_label}"]
+        if dropped or kept:
+            lines.append(f"backlog_dropped={dropped}")
+            lines.append(f"backlog_kept={kept}")
+        if items:
+            lines.append("recent:")
+            lines.extend(self._render_recent_lines(items, scope_all=False))
+            lines.append("next=/catchup")
+        else:
+            lines.append("recent=none")
+        return "\n".join(lines)
+
+    def _recent_cursor_scope_key(
+        self, *, to_user_id: str, tmux_session: str | None
+    ) -> str:
+        scope = str(tmux_session or "").strip() or "all"
+        return f"{to_user_id}|{scope}"
+
+    def _read_effective_recent_items(
+        self,
+        *,
+        to_user_id: str,
+        limit: int,
+        after_seq: int | None,
+        scope_all: bool,
+    ) -> tuple[list[dict], str, str | None]:
+        path = self.config.delivery_ledger_file
+        active_tmux = None if scope_all else self.state.active_tmux_session
+        if not path.exists():
+            return ([], active_tmux or "all", active_tmux)
+        items = read_recent_for_user(
+            ledger_file=path,
+            to_user_id=to_user_id,
+            limit=limit,
+            after_seq=after_seq,
+            tmux_session=active_tmux,
+            effective_only=True,
         )
+        fallback_to_all = False
+        if not items and active_tmux:
+            all_items = read_recent_for_user(
+                ledger_file=path,
+                to_user_id=to_user_id,
+                limit=limit,
+                after_seq=after_seq,
+                tmux_session=None,
+                effective_only=True,
+            )
+            if all_items and all(
+                not str(item.get("tmux_session", "")).strip() for item in all_items
+            ):
+                items = all_items
+                active_tmux = None
+                fallback_to_all = True
+        scope_label = active_tmux or ("all-fallback" if fallback_to_all else "all")
+        return (items, scope_label, active_tmux)
+
+    def _render_recent_lines(self, items: list[dict], *, scope_all: bool) -> list[str]:
+        lines: list[str] = []
+        for item in items:
+            ts = self._display_time(item.get("ts"))
+            seq = int(item.get("seq", 0) or 0)
+            status = str(item.get("status", "unknown"))
+            kind = str(item.get("kind", "message"))
+            text = str(item.get("text", "")).strip()
+            item_tmux = str(item.get("tmux_session", "")).strip()
+            scope_suffix = f"[{item_tmux or 'unknown'}]" if scope_all else ""
+            lines.append(f"[{seq}][{status}][{kind}][{ts}]{scope_suffix} {text}")
+        return lines
+
+    def _log_text(self, arg: str) -> str:
+        limit = 10
+        errors_only = False
+        scope_all = False
+        normalized = arg.strip()
+        if normalized:
+            tokens = normalized.split()
+            filtered_tokens: list[str] = []
+            for token in tokens:
+                lowered = token.lower()
+                if lowered == "errors":
+                    errors_only = True
+                    continue
+                if lowered == "all":
+                    scope_all = True
+                    continue
+                filtered_tokens.append(token)
+            if filtered_tokens:
+                tail = filtered_tokens[-1]
+                if tail.isdigit():
+                    limit = max(1, min(int(tail), 20))
+        path = self.config.event_log_file
+        if not path.exists():
+            return "log=empty\nhint=还没有 bridge 事件日志"
+        active_thread = self._short_thread(self.state.active_session_id or "")
+        target_user = self.state.bound_user_id
+        events: list[dict] = []
+        for raw in reversed(path.read_text(encoding="utf-8").splitlines()):
+            try:
+                item = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            kind = str(item.get("kind", "")).strip()
+            payload = item.get("payload", {}) if isinstance(item.get("payload", {}), dict) else {}
+            if errors_only and "error" not in kind and not payload.get("error"):
+                continue
+            if not scope_all:
+                payload_thread = str(payload.get("thread", "")).strip()
+                payload_to = str(payload.get("to", "")).strip()
+                if payload_thread and active_thread and payload_thread != active_thread:
+                    continue
+                if payload_to and target_user and payload_to != target_user:
+                    continue
+            events.append(item)
+            if len(events) >= limit:
+                break
+        if not events:
+            scope_label = "all" if scope_all else (self.state.active_tmux_session or "current")
+            return f"log=empty\nscope={scope_label}\nhint=当前过滤条件下还没有匹配的 bridge 事件"
+        events.reverse()
+        scope_label = "all" if scope_all else (self.state.active_tmux_session or "current")
+        lines = ["log:", f"scope={scope_label}", f"errors_only={str(errors_only).lower()}"]
+        for item in events:
+            ts = self._display_time(item.get("ts"))
+            kind = str(item.get("kind", "event")).strip()
+            payload = item.get("payload", {}) if isinstance(item.get("payload", {}), dict) else {}
+            summary = self._summarize_log_payload(payload)
+            lines.append(f"[{ts}][{kind}] {summary}")
+        return "\n".join(lines)
+
+    def _summarize_log_payload(self, payload: dict) -> str:
+        parts: list[str] = []
+        if payload.get("thread"):
+            parts.append(f"thread={payload['thread']}")
+        if payload.get("to"):
+            parts.append(f"to={payload['to']}")
+        if payload.get("from"):
+            parts.append(f"from={payload['from']}")
+        if payload.get("error"):
+            parts.append(f"error={payload['error']}")
+        text = str(payload.get("text", "")).strip()
+        if text:
+            parts.append(text.replace("\n", " ")[:120])
+        if not parts:
+            parts.append(json.dumps(payload, ensure_ascii=False)[:160])
+        return " | ".join(parts)
 
     def _bootstrap_runtime(self) -> None:
         self.runner.sync_live_sessions(self.state)
@@ -991,6 +1128,9 @@ class BridgeDaemon:
             kind = str(item.get("kind", "message"))
             origin = str(item.get("origin", "bridge"))
             thread_id = str(item.get("thread_id", "")).strip() or None
+            if self._is_stale_pending_for_auto_flush(item):
+                kept.append(item)
+                continue
             if self.state.outbox_waiting_for_bind and self._origin_uses_live_context(origin):
                 kept.append(item)
                 continue
@@ -1054,6 +1194,25 @@ class BridgeDaemon:
             self.state.pending_outbox = kept + self.state.pending_outbox
             self._save_state()
 
+    def _pending_item_age_seconds(self, item: dict[str, str]) -> float:
+        created_at = str(item.get("created_at", "")).strip()
+        if not created_at:
+            return 0.0
+        try:
+            dt = datetime.fromisoformat(created_at)
+        except ValueError:
+            return 0.0
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return max(0.0, (datetime.now(UTC) - dt.astimezone(UTC)).total_seconds())
+
+    def _is_stale_pending_for_auto_flush(self, item: dict[str, str]) -> bool:
+        attempt_count = int(item.get("attempt_count", 1) or 1)
+        last_error = str(item.get("last_error", "")).strip()
+        if attempt_count <= 1 and not last_error:
+            return False
+        return self._pending_item_age_seconds(item) >= STALE_AUTO_FLUSH_SECONDS
+
     def _sync_mirror_cursor(self, thread_id: str) -> None:
         self.state.set_mirror_offset(thread_id, self.runner.rollout_size(thread_id))
 
@@ -1088,6 +1247,7 @@ class BridgeDaemon:
                 "visible_count": 0,
                 "deliverable_now_count": 0,
                 "blocked_for_rebind_count": 0,
+                "stale_auto_flush_blocked_count": 0,
             }
         active_scope = str(tmux_session or "").strip()
         visible_items = [
@@ -1100,16 +1260,26 @@ class BridgeDaemon:
             )
         ]
         blocked_for_rebind_count = 0
+        stale_auto_flush_blocked_count = 0
         if self.state.outbox_waiting_for_bind:
             blocked_for_rebind_count = sum(
                 1
                 for item in visible_items
                 if self._origin_uses_live_context(str(item.get("origin", "bridge")))
             )
+        stale_auto_flush_blocked_count = sum(
+            1 for item in visible_items if self._is_stale_pending_for_auto_flush(item)
+        )
         return {
             "visible_count": len(visible_items),
-            "deliverable_now_count": len(visible_items) - blocked_for_rebind_count,
+            "deliverable_now_count": max(
+                len(visible_items)
+                - blocked_for_rebind_count
+                - stale_auto_flush_blocked_count,
+                0,
+            ),
             "blocked_for_rebind_count": blocked_for_rebind_count,
+            "stale_auto_flush_blocked_count": stale_auto_flush_blocked_count,
         }
 
     def _should_reset_poll_cursor(self, *, ret: object, errcode: object) -> bool:
@@ -1122,8 +1292,32 @@ class BridgeDaemon:
 
     def _queue_text(self) -> str:
         items = list(self.state.pending_outbox)
+        active_tmux = str(self.state.active_tmux_session or "").strip()
+        target_user = self.state.bound_user_id
+        recent_items: list[dict] = []
+        recent_scope = active_tmux or "all"
+        if target_user:
+            recent_items, recent_scope, _ = self._read_effective_recent_items(
+                to_user_id=target_user,
+                limit=1,
+                after_seq=None,
+                scope_all=False,
+            )
         if not items:
             lines = ["queue=0", "status=empty"]
+            if active_tmux:
+                lines.append(f"active_tmux={active_tmux}")
+            if recent_items:
+                latest = recent_items[-1]
+                lines.append(f"recent_scope={recent_scope}")
+                lines.append(f"recent_effective_seq={int(latest.get('seq', 0) or 0)}")
+                lines.append(f"recent_effective_kind={str(latest.get('kind', 'message'))}")
+                lines.append(f"recent_effective_time={self._display_time(latest.get('ts'))}")
+                lines.append(
+                    "recent_effective="
+                    + str(latest.get("text", "")).strip().replace("\n", " ")[:120]
+                )
+                lines.append("hint=/recent 或 /catchup 看最新有效消息")
             if self.state.pending_outbox_overflow_dropped:
                 lines.append(
                     f"overflow_dropped={self.state.pending_outbox_overflow_dropped}"
@@ -1136,10 +1330,10 @@ class BridgeDaemon:
         tmux_counts: dict[str, int] = {}
         tmux_threads: dict[str, set[str]] = {}
         tmux_order: list[str] = []
-        active_tmux = str(self.state.active_tmux_session or "").strip()
         active_visible_count = 0
         waiting_count = 0
         blocked_for_rebind_count = 0
+        stale_auto_flush_blocked_count = 0
         for item in items:
             kind = str(item.get("kind", "message"))
             kind_counts[kind] = kind_counts.get(kind, 0) + 1
@@ -1159,6 +1353,8 @@ class BridgeDaemon:
                     str(item.get("origin", "bridge"))
                 ):
                     blocked_for_rebind_count += 1
+                if self._is_stale_pending_for_auto_flush(item):
+                    stale_auto_flush_blocked_count += 1
             else:
                 waiting_count += 1
             created_at = str(item.get("created_at", "")).strip()
@@ -1188,6 +1384,8 @@ class BridgeDaemon:
         lines.append(f"deliverable_now={max(deliverable_now_count, 0)}")
         if blocked_for_rebind_count:
             lines.append(f"blocked_for_rebind={blocked_for_rebind_count}")
+        if stale_auto_flush_blocked_count:
+            lines.append(f"stale_auto_flush_blocked={stale_auto_flush_blocked_count}")
         if self.state.active_tmux_session:
             lines.append(f"active_tmux={self.state.active_tmux_session}")
         lines.append(f"visible_now={active_visible_count}")
@@ -1251,6 +1449,10 @@ class BridgeDaemon:
                 "tail_any="
                 + str(tail.get("text", "")).strip().replace("\n", " ")[:120]
             )
+        if recent_items:
+            latest = recent_items[-1]
+            lines.append(f"recent_effective_seq={int(latest.get('seq', 0) or 0)}")
+            lines.append(f"recent_effective_time={self._display_time(latest.get('ts'))}")
         return "\n".join(lines)
 
     def _queue_tmux_display(self, tmux_session: str) -> str:
