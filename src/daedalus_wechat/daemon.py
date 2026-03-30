@@ -684,14 +684,14 @@ class BridgeDaemon:
                 f"tmux={runtime.tmux_session}\n"
                 "hint=先启动 canonical tmux"
             )
-        if runtime.pane_command not in {"node", "codex"}:
+        if runtime.pane_command not in {"node", "codex", "claude"}:
             return (
-                "status=tmux_not_codex\n"
+                "status=tmux_no_cli\n"
                 f"tmux={runtime.tmux_session}\n"
                 f"pane={runtime.pane_command or 'unknown'}\n"
-                "hint=attach 后启动或恢复 codex"
+                "hint=attach 后启动 Codex 或 Claude Code"
             )
-        if not runtime.thread_id:
+        if not runtime.thread_id and runtime.backend != "claude":
             return (
                 "status=no_thread\n"
                 f"tmux={runtime.tmux_session}\n"
@@ -765,9 +765,9 @@ class BridgeDaemon:
         )
         if not runtime.exists:
             status = "degraded"
-        elif runtime.pane_command not in {"node", "codex"}:
+        elif runtime.pane_command not in {"node", "codex", "claude"}:
             status = "degraded"
-        elif not runtime.thread_id:
+        elif not runtime.thread_id and runtime.backend != "claude":
             status = "degraded"
         else:
             status = "ok"

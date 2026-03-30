@@ -479,7 +479,7 @@ class LiveCodexSessionManager:
         tmux_session = record.tmux_session or self._tmux_name_for(record.thread_id)
         if not self._tmux_exists(tmux_session):
             raise RuntimeError(
-                f"当前 `tmux {tmux_session}` 不存在。请先启动并在里面打开 Codex。"
+                f"当前 `tmux {tmux_session}` 不存在。请先启动并在里面打开 Codex 或 Claude Code。"
             )
         return tmux_session
 
