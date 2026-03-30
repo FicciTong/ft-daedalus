@@ -9,6 +9,19 @@ from .state import BridgeState
 EFFECTIVE_DELIVERY_STATUSES = frozenset({"sent", "flushed"})
 
 
+def _parse_ts(value: object) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
 def append_delivery(
     *,
     state: BridgeState,
@@ -52,6 +65,8 @@ def read_recent_for_user(
     after_seq: int | None = None,
     tmux_session: str | None = None,
     effective_only: bool = False,
+    include_command_kinds: bool = True,
+    recent_cluster_seconds: float | None = None,
 ) -> list[dict]:
     if not ledger_file.exists():
         return []
@@ -70,6 +85,8 @@ def read_recent_for_user(
                 continue
             if effective_only and str(item.get("status", "")).strip() not in EFFECTIVE_DELIVERY_STATUSES:
                 continue
+            if not include_command_kinds and str(item.get("kind", "")).strip() == "command":
+                continue
             seq = int(item.get("seq", 0) or 0)
             if seq <= after_seq:
                 continue
@@ -77,6 +94,7 @@ def read_recent_for_user(
             if len(results) >= limit:
                 break
         return results
+    newest_ts: datetime | None = None
     for raw in reversed(lines):
         try:
             item = json.loads(raw)
@@ -88,6 +106,15 @@ def read_recent_for_user(
             continue
         if effective_only and str(item.get("status", "")).strip() not in EFFECTIVE_DELIVERY_STATUSES:
             continue
+        if not include_command_kinds and str(item.get("kind", "")).strip() == "command":
+            continue
+        if recent_cluster_seconds is not None:
+            item_ts = _parse_ts(item.get("ts"))
+            if newest_ts is None and item_ts is not None:
+                newest_ts = item_ts
+            elif newest_ts is not None and item_ts is not None:
+                if (newest_ts - item_ts).total_seconds() > recent_cluster_seconds:
+                    break
         results.append(item)
         if len(results) >= limit:
             break

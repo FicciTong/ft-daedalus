@@ -17,6 +17,7 @@ from .wechat_api import WeChatClient
 
 DISPLAY_TZ = ZoneInfo("Asia/Shanghai")
 STALE_AUTO_FLUSH_SECONDS = 300.0
+OWNER_VISIBLE_RECENT_CLUSTER_SECONDS = 1800.0
 
 
 HELP_TEXT = """FT bridge 命令总览
@@ -37,7 +38,7 @@ HELP_TEXT = """FT bridge 命令总览
 
 追溯:
 /recent 10         看当前 active tmux 最近 10 条有效 delivery ledger
-/recent after 128  从 seq=128 之后继续看当前 active tmux
+/recent after 128  从 seq=128 之后继续看当前 active tmux（高级调试）
 /recent all 10     看所有 session 最近 10 条
 /queue             看当前待发送队列概况 + 最近有效投递摘要
 /catchup 5         裁旧 backlog 并继续补看当前 active tmux 最近/新增的有效消息
@@ -412,6 +413,16 @@ class BridgeDaemon:
             tmux_session=active_tmux,
         )
         cursor = self.state.get_recent_delivery_cursor(scope_key)
+        latest_items, _, _ = self._read_effective_recent_items(
+            to_user_id=target_user,
+            limit=1,
+            after_seq=None,
+            scope_all=False,
+        )
+        latest_seq = int(latest_items[-1].get("seq", 0) or 0) if latest_items else 0
+        if cursor is not None and latest_seq and cursor > latest_seq:
+            self.state.clear_recent_delivery_cursor(scope_key)
+            cursor = None
         items, scope_label, _ = self._read_effective_recent_items(
             to_user_id=target_user,
             limit=keep_last if cursor is None else 20,
@@ -428,12 +439,12 @@ class BridgeDaemon:
                     "catchup=up_to_date\n"
                     f"scope={scope_label}\n"
                     f"last_seq={cursor}\n"
-                    "hint=当前 active tmux 没有新的有效消息，也没有待裁 backlog"
+                    "hint=当前 active tmux 没有新的有效聊天消息，也没有待裁 backlog"
                 )
             return (
                 "catchup=empty\n"
                 f"scope={scope_label}\n"
-                "hint=当前 active tmux 没有 backlog，也没有可补看的有效消息"
+                "hint=当前 active tmux 没有 backlog，也没有可补看的有效聊天消息"
             )
         lines = ["catchup=ok", f"scope={scope_label}"]
         if dropped or kept:
@@ -472,6 +483,10 @@ class BridgeDaemon:
             after_seq=after_seq,
             tmux_session=active_tmux,
             effective_only=True,
+            include_command_kinds=False,
+            recent_cluster_seconds=(
+                OWNER_VISIBLE_RECENT_CLUSTER_SECONDS if after_seq is None else None
+            ),
         )
         fallback_to_all = False
         if not items and active_tmux:
@@ -482,6 +497,10 @@ class BridgeDaemon:
                 after_seq=after_seq,
                 tmux_session=None,
                 effective_only=True,
+                include_command_kinds=False,
+                recent_cluster_seconds=(
+                    OWNER_VISIBLE_RECENT_CLUSTER_SECONDS if after_seq is None else None
+                ),
             )
             if all_items and all(
                 not str(item.get("tmux_session", "")).strip() for item in all_items

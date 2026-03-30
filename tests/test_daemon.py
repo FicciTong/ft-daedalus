@@ -1733,6 +1733,68 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("[1][sent][progress][13:00:00] progress one", text)
             self.assertIn("next=/recent after 2", text)
 
+    def test_recent_excludes_command_echo_history_by_default(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            config = self._make_config(state_dir, frozenset())
+            config.state_dir.mkdir(parents=True, exist_ok=True)
+            config.delivery_ledger_file.write_text(
+                "\n".join(
+                    [
+                        '{"seq":1,"ts":"2026-03-26T05:00:00+00:00","to":"user@im.wechat","status":"sent","kind":"progress","origin":"desktop-mirror","tmux_session":"codex","text":"live progress"}',
+                        '{"seq":2,"ts":"2026-03-26T05:00:01+00:00","to":"user@im.wechat","status":"sent","kind":"command","origin":"wechat-command","tmux_session":"codex","text":"nested old transcript"}',
+                        '{"seq":3,"ts":"2026-03-26T05:00:02+00:00","to":"user@im.wechat","status":"flushed","kind":"final","origin":"desktop-mirror","tmux_session":"codex","text":"live final"}',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            daemon = _TestDaemon(
+                config=config,
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    bound_user_id="user@im.wechat",
+                    active_tmux_session="codex",
+                ),
+            )
+            text = daemon._recent_text("10")
+            self.assertIn("live progress", text)
+            self.assertIn("live final", text)
+            self.assertNotIn("nested old transcript", text)
+
+    def test_recent_stays_with_latest_cluster_instead_of_crossing_old_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            config = self._make_config(state_dir, frozenset())
+            config.state_dir.mkdir(parents=True, exist_ok=True)
+            config.delivery_ledger_file.write_text(
+                "\n".join(
+                    [
+                        '{"seq":10,"ts":"2026-03-26T05:00:00+00:00","to":"user@im.wechat","status":"sent","kind":"progress","origin":"desktop-mirror","tmux_session":"codex","text":"very old progress"}',
+                        '{"seq":11,"ts":"2026-03-26T05:00:02+00:00","to":"user@im.wechat","status":"sent","kind":"final","origin":"desktop-mirror","tmux_session":"codex","text":"very old final"}',
+                        '{"seq":12,"ts":"2026-03-26T05:40:00+00:00","to":"user@im.wechat","status":"sent","kind":"progress","origin":"desktop-mirror","tmux_session":"codex","text":"current progress"}',
+                        '{"seq":13,"ts":"2026-03-26T05:40:02+00:00","to":"user@im.wechat","status":"sent","kind":"final","origin":"desktop-mirror","tmux_session":"codex","text":"current final"}',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            daemon = _TestDaemon(
+                config=config,
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    bound_user_id="user@im.wechat",
+                    active_tmux_session="codex",
+                ),
+            )
+            text = daemon._recent_text("10")
+            self.assertIn("current progress", text)
+            self.assertIn("current final", text)
+            self.assertNotIn("very old progress", text)
+            self.assertNotIn("very old final", text)
+
     def test_recent_after_seq_uses_stable_delivery_ledger(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state_dir = Path(tmpdir)
@@ -1884,6 +1946,43 @@ class DaemonTests(unittest.TestCase):
             second = daemon._catchup_text("")
             self.assertIn("catchup=up_to_date", second)
             self.assertIn("last_seq=22", second)
+
+    def test_catchup_resets_stale_cursor_and_anchors_to_latest_cluster(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            config = self._make_config(state_dir, frozenset())
+            config.state_dir.mkdir(parents=True, exist_ok=True)
+            config.delivery_ledger_file.write_text(
+                "\n".join(
+                    [
+                        '{"seq":27383,"ts":"2026-03-28T08:31:05+00:00","to":"user@im.wechat","status":"flushed","kind":"progress","origin":"desktop-mirror","tmux_session":"codex","text":"old cluster progress"}',
+                        '{"seq":27384,"ts":"2026-03-28T08:31:07+00:00","to":"user@im.wechat","status":"sent","kind":"final","origin":"desktop-mirror","tmux_session":"codex","text":"old cluster final"}',
+                        '{"seq":9238,"ts":"2026-03-30T09:20:40+00:00","to":"user@im.wechat","status":"flushed","kind":"progress","origin":"desktop-mirror","tmux_session":"codex","text":"current progress"}',
+                        '{"seq":9239,"ts":"2026-03-30T09:20:41+00:00","to":"user@im.wechat","status":"sent","kind":"final","origin":"desktop-mirror","tmux_session":"codex","text":"current final"}',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            daemon = _TestDaemon(
+                config=config,
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    bound_user_id="user@im.wechat",
+                    active_tmux_session="codex",
+                    recent_delivery_cursors={"user@im.wechat|codex": 27384},
+                ),
+            )
+            text = daemon._catchup_text("")
+            self.assertIn("catchup=ok", text)
+            self.assertIn("current progress", text)
+            self.assertIn("current final", text)
+            self.assertNotIn("old cluster progress", text)
+            self.assertNotIn("old cluster final", text)
+            self.assertEqual(
+                daemon.state.get_recent_delivery_cursor("user@im.wechat|codex"), 9239
+            )
 
     def test_stale_pending_backlog_is_not_auto_flushed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -179,6 +179,9 @@ class BridgeState:
     def set_recent_delivery_cursor(self, scope_key: str, seq: int) -> None:
         self.recent_delivery_cursors[str(scope_key)] = int(seq)
 
+    def clear_recent_delivery_cursor(self, scope_key: str) -> None:
+        self.recent_delivery_cursors.pop(str(scope_key), None)
+
     def get_last_progress_summary(self, thread_id: str) -> str:
         return str(self.last_progress_summaries.get(thread_id, ""))
 
