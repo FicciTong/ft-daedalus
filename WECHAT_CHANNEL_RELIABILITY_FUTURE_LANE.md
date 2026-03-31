@@ -197,23 +197,25 @@ Current canonical decision:
   work is more settled
 - when opened, it should be implemented as a bounded `ft-daedalus` upgrade only
 
-## Adjacent but separate future lane
+## Adjacent lane decision update
 
-The owner has also requested a later **multi-CLI / multi-tmux** operator lane,
-for example:
+The previously recorded **multi-CLI / multi-tmux WeChat bridge** idea is now
+retired.
 
-- `tmux codex`
-- `tmux claude`
-- `tmux kimi`
+Current canonical posture:
 
-That is a real future lane, but it is **not** the same problem as this
-reliability lane.
+- `daedalus-wechat` is a **Codex-only** owner/operator bridge
+- `tmux claude` may still exist as an internal worker session under the
+  orchestrator model
+- that worker-session posture does **not** imply WeChat bridge support
+- no Claude-specific WeChat MCP or bridge adaptation should remain active
 
 Keep the separation explicit:
 
-- this document = current WeChat channel reliability / drain semantics
-- later multi-CLI lane = target identity, per-CLI binding, routing, and queue
-  isolation across multiple live operator runtimes
+- this document = current WeChat channel reliability / drain semantics for the
+  Codex bridge only
+- internal multi-agent orchestration = separate control-plane policy outside
+  the WeChat bridge
 
-Do **not** use this reliability lane as an excuse to silently expand into a
-generic multi-agent bridge framework.
+Do **not** use this reliability lane as an excuse to silently regrow a
+multi-agent WeChat framework.
