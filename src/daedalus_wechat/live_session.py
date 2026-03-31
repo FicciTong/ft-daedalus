@@ -136,9 +136,7 @@ class LiveCodexSessionManager:
             else self._tmux_name_for(thread_id)
         )
         if self._tmux_exists(tmux_session):
-            current_thread_id = self._extract_thread_id(
-                self._capture_clean_text(tmux_session)
-            )
+            current_thread_id = self._runtime_status_for_tmux(tmux_session).thread_id
             effective_thread_id = current_thread_id or thread_id
         else:
             self._start_tmux_session(
@@ -153,10 +151,7 @@ class LiveCodexSessionManager:
                 ],
             )
             time.sleep(2.0)
-            effective_thread_id = (
-                self._extract_thread_id(self._capture_clean_text(tmux_session))
-                or thread_id
-            )
+            effective_thread_id = self._runtime_status_for_tmux(tmux_session).thread_id or thread_id
         return state.touch_session(
             effective_thread_id,
             label=label,
@@ -318,9 +313,7 @@ class LiveCodexSessionManager:
     def create_new_session(self, *, state: BridgeState, label: str) -> SessionRecord:
         tmux_session = self.canonical_tmux_session
         if self._tmux_exists(tmux_session):
-            current_thread_id = self._extract_thread_id(
-                self._capture_clean_text(tmux_session)
-            )
+            current_thread_id = self._runtime_status_for_tmux(tmux_session).thread_id
             if current_thread_id:
                 return state.touch_session(
                     current_thread_id,
@@ -350,10 +343,7 @@ class LiveCodexSessionManager:
     def submit_prompt(self, *, record: SessionRecord, prompt: str) -> SessionRecord:
         tmux_session = self._ensure_running_tmux(record)
         self._inject_prompt(tmux_session, prompt)
-        thread_id = (
-            self._extract_thread_id(self._capture_clean_text(tmux_session))
-            or record.thread_id
-        )
+        thread_id = self._runtime_status_for_tmux(tmux_session).thread_id or record.thread_id
         return SessionRecord(
             thread_id=thread_id,
             label=record.label,
@@ -390,7 +380,7 @@ class LiveCodexSessionManager:
                 "桌面 `tmux codex` 仍然保留完整 live 输出；"
                 "如果这次回答还在继续生成，请回到电脑侧查看。"
             )
-        thread_id = self._extract_thread_id(self._capture_clean_text(tmux_session)) or record.thread_id
+        thread_id = self._runtime_status_for_tmux(tmux_session).thread_id or record.thread_id
         return LiveReply(thread_id=thread_id, response_text=response_text or "(无文本回复)")
 
     def attach_hint(self, record: SessionRecord) -> str:
@@ -770,9 +760,19 @@ class LiveCodexSessionManager:
             time.sleep(0.5)
         raise RuntimeError("unable to resolve thread id from live Codex session")
 
+    def _extract_thread_candidates(self, text: str) -> list[str]:
+        candidates: list[str] = []
+        seen: set[str] = set()
+        for match in THREAD_ID_RE.findall(text):
+            if match in seen:
+                continue
+            seen.add(match)
+            candidates.append(match)
+        return candidates
+
     def _extract_thread_id(self, text: str) -> str | None:
-        matches = THREAD_ID_RE.findall(text)
-        return matches[-1] if matches else None
+        candidates = self._extract_thread_candidates(text)
+        return candidates[-1] if candidates else None
 
     def _resolve_rollout_file(self, thread_id: str) -> Path | None:
         if not self.session_root.exists():
@@ -783,6 +783,51 @@ class LiveCodexSessionManager:
             reverse=True,
         )
         return matches[0] if matches else None
+
+    def _thread_rollout_mtime(self, thread_id: str) -> float:
+        rollout = self._resolve_rollout_file(thread_id)
+        if rollout is None or not rollout.exists():
+            return float("-inf")
+        return float(rollout.stat().st_mtime)
+
+    def _resolve_runtime_thread_id(
+        self,
+        *,
+        tmux_session: str,
+        pane_cwd: str | None,
+        screen_text: str,
+        backend: str,
+    ) -> str | None:
+        candidates = self._extract_thread_candidates(screen_text)
+        pane_candidate = candidates[-1] if candidates else None
+        if backend != "codex" or not self._is_workspace_tmux(pane_cwd):
+            return pane_candidate
+
+        latest_thread = self.find_latest_thread()
+        if latest_thread and latest_thread not in candidates:
+            candidates.append(latest_thread)
+        if not candidates:
+            if tmux_session == self.canonical_tmux_session:
+                return latest_thread
+            return None
+
+        rollout_backed = [
+            candidate
+            for candidate in candidates
+            if self._thread_rollout_mtime(candidate) != float("-inf")
+        ]
+        if rollout_backed:
+            return max(
+                rollout_backed,
+                key=lambda candidate: (
+                    self._thread_rollout_mtime(candidate),
+                    1 if latest_thread and candidate == latest_thread else 0,
+                    1 if pane_candidate and candidate == pane_candidate else 0,
+                ),
+            )
+        if tmux_session == self.canonical_tmux_session and latest_thread:
+            return latest_thread
+        return pane_candidate or latest_thread
 
     def _tmux_name_for(self, thread_id: str) -> str:
         return self.canonical_tmux_session
@@ -817,7 +862,12 @@ class LiveCodexSessionManager:
             pane_command=pane_command,
             screen_text=screen_text,
         )
-        thread_id = self._extract_thread_id(screen_text)
+        thread_id = self._resolve_runtime_thread_id(
+            tmux_session=tmux_session,
+            pane_cwd=pane_cwd,
+            screen_text=screen_text,
+            backend=backend.value,
+        )
         return LiveRuntimeStatus(
             tmux_session=tmux_session,
             exists=True,

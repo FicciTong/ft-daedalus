@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -131,10 +132,21 @@ class LiveSessionTests(unittest.TestCase):
                                 "_collect_response",
                                 return_value="VISIBLE_REPLY_OK",
                             ):
-                                reply = self.runner.send_prompt(
-                                    record=record,
-                                    prompt="hello",
-                                )
+                                with patch.object(
+                                    self.runner,
+                                    "_runtime_status_for_tmux",
+                                    return_value=LiveRuntimeStatus(
+                                        tmux_session="codex",
+                                        exists=True,
+                                        pane_command="codex",
+                                        thread_id=record.thread_id,
+                                        pane_cwd="/tmp",
+                                    ),
+                                ):
+                                    reply = self.runner.send_prompt(
+                                        record=record,
+                                        prompt="hello",
+                                    )
         inject_mock.assert_called_once()
         self.assertEqual(reply.response_text, "VISIBLE_REPLY_OK")
 
@@ -149,15 +161,49 @@ class LiveSessionTests(unittest.TestCase):
             tmux_session="codex",
         )
         with patch.object(self.runner, "_ensure_running_tmux", return_value="codex"):
-            with patch.object(
-                self.runner,
-                "_capture_clean_text",
-                return_value="... 019cdfe5-fa14-74a3-aa31-5451128ea58d ...",
-            ):
-                with patch.object(self.runner, "_inject_prompt") as inject_mock:
+            with patch.object(self.runner, "_inject_prompt") as inject_mock:
+                with patch.object(
+                    self.runner,
+                    "_runtime_status_for_tmux",
+                    return_value=LiveRuntimeStatus(
+                        tmux_session="codex",
+                        exists=True,
+                        pane_command="codex",
+                        thread_id=record.thread_id,
+                        pane_cwd="/tmp",
+                    ),
+                ):
                     submitted = self.runner.submit_prompt(record=record, prompt="hello")
         inject_mock.assert_called_once_with("codex", "hello")
         self.assertEqual(submitted.thread_id, record.thread_id)
+
+    def test_submit_prompt_prefers_runtime_thread_over_stale_pane_history(self) -> None:
+        record = SessionRecord(
+            thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+            label="attached-last",
+            cwd="/tmp",
+            source="tmux-live",
+            created_at="2026-03-26T00:00:00+00:00",
+            updated_at="2026-03-26T00:00:00+00:00",
+            tmux_session="codex",
+        )
+        fresh_thread = "019d332d-1bc8-7151-a874-ab0fbc493747"
+        with patch.object(self.runner, "_ensure_running_tmux", return_value="codex"):
+            with patch.object(self.runner, "_inject_prompt") as inject_mock:
+                with patch.object(
+                    self.runner,
+                    "_runtime_status_for_tmux",
+                    return_value=LiveRuntimeStatus(
+                        tmux_session="codex",
+                        exists=True,
+                        pane_command="codex",
+                        thread_id=fresh_thread,
+                        pane_cwd="/tmp",
+                    ),
+                ):
+                    submitted = self.runner.submit_prompt(record=record, prompt="hello")
+        inject_mock.assert_called_once_with("codex", "hello")
+        self.assertEqual(submitted.thread_id, fresh_thread)
         self.assertEqual(submitted.tmux_session, "codex")
 
     def test_list_live_runtime_statuses_filters_to_workspace_codex_sessions(self) -> None:
@@ -240,6 +286,59 @@ class LiveSessionTests(unittest.TestCase):
             records = self.runner.sync_live_sessions(state)
         self.assertEqual([item.label for item in records], ["main-live", "123"])
         self.assertEqual(state.sessions["11111111-2222-3333-4444-555555555555"].cwd, "/tmp/ft-kairos")
+
+    def test_runtime_status_prefers_latest_thread_with_fresher_rollout(self) -> None:
+        stale_thread = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+        fresh_thread = "019d332d-1bc8-7151-a874-ab0fbc493747"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session_root = Path(tmpdir) / "sessions"
+            session_root.mkdir(parents=True, exist_ok=True)
+            stale_rollout = session_root / f"stale-{stale_thread}.jsonl"
+            fresh_rollout = session_root / f"fresh-{fresh_thread}.jsonl"
+            stale_rollout.write_text("stale\n", encoding="utf-8")
+            fresh_rollout.write_text("fresh\n", encoding="utf-8")
+            os.utime(stale_rollout, (1000, 1000))
+            os.utime(fresh_rollout, (2000, 2000))
+            self.runner.session_root = session_root
+            with patch.object(self.runner, "_tmux_exists", return_value=True):
+                with patch.object(self.runner, "_pane_current_command", return_value="codex"):
+                    with patch.object(self.runner, "_pane_current_path", return_value="/tmp"):
+                        with patch.object(
+                            self.runner,
+                            "_capture_clean_text",
+                            return_value=f"old log {stale_thread}",
+                        ):
+                            with patch.object(
+                                self.runner,
+                                "find_latest_thread",
+                                return_value=fresh_thread,
+                            ):
+                                status = self.runner._runtime_status_for_tmux("codex")
+        self.assertEqual(status.thread_id, fresh_thread)
+
+    def test_runtime_status_keeps_pane_thread_outside_workspace(self) -> None:
+        stale_thread = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+        fresh_thread = "019d332d-1bc8-7151-a874-ab0fbc493747"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session_root = Path(tmpdir) / "sessions"
+            session_root.mkdir(parents=True, exist_ok=True)
+            (session_root / f"fresh-{fresh_thread}.jsonl").write_text("fresh\n", encoding="utf-8")
+            self.runner.session_root = session_root
+            with patch.object(self.runner, "_tmux_exists", return_value=True):
+                with patch.object(self.runner, "_pane_current_command", return_value="codex"):
+                    with patch.object(self.runner, "_pane_current_path", return_value="/var/tmp"):
+                        with patch.object(
+                            self.runner,
+                            "_capture_clean_text",
+                            return_value=f"old log {stale_thread}",
+                        ):
+                            with patch.object(
+                                self.runner,
+                                "find_latest_thread",
+                                return_value=fresh_thread,
+                            ):
+                                status = self.runner._runtime_status_for_tmux("codex")
+        self.assertEqual(status.thread_id, stale_thread)
 
 
 if __name__ == "__main__":
