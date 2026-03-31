@@ -43,12 +43,12 @@ surface 落在这里。
 | 表面 | 你会看到什么 | 它的用途 |
 |---|---|---|
 | 桌面 `tmux codex` | 完整 live terminal stream | 全量输出、工具过程、真正的实时工作界面 |
-| 微信 | commentary progress + final reply | 外出时下任务、看进度、收结果 |
+| 微信 | 默认只收 system / plan / final；progress 可选开启 | 外出时下任务、收结果 |
 
-如果你想让微信安静一点：
+如果你想让微信也收 progress：
 
 ```text
-/notify off
+/notify on
 ```
 
 微信消息图标：
@@ -94,8 +94,8 @@ tmux attach -t codex
 
 - 消息进同一个本地 Codex session
 - 微信收到的是：
-  - commentary progress
-  - 最终 final reply
+  - 默认 `system / plan / final`
+  - `progress` 需要 `/notify on` 才开启
 - 不会把工具原始日志、状态栏、底部噪声直接刷给你
 
 所以：
@@ -277,9 +277,9 @@ systemctl --user restart daedalus-wechat
    - 现在 backlog 会按 owner-facing 的 `tmux session` 分区，不再只是挂一个 `thread_id` 标签
    - 非当前 active tmux 的 backlog 会先停在自己的队列里，等你 `/switch` 过去后再冲洗，不会混着刷进当前会话流
    - 桌面镜像 backlog 现在按真实顺序保留，不再把同一 thread 里的旧 progress 静默折叠成只剩最新一条
-   - `/queue` 现在会更诚实地显示当前持久化 backlog，包括当前 active 可见量、其他 session 等待量、头尾预览和 overflow drop 计数
    - 如果仍然是 `ret=-2`，后台重试会暂停，等下一条微信入站消息刷新 live binding 后再继续冲洗队列
    - 后续如果有新的入站消息刷新了 live binding，bridge 会优先继续冲洗 pending 队列
+   - owner 侧 backlog 补发现在走后台自动冲洗，不再需要手写 `/queue` / `/catchup`
 5. **prompt 异步队列 + 语音兜底**
    - 微信发来的 prompt 会进入单独 worker 队列处理，所以一条长任务不再把后面的 `/status`、`/help` 一起堵死
    - 如果微信这次只给了语音消息但没有可用转写文本，bridge 仍然会刷新绑定、补发队列，并明确告诉你“这次语音没有可用转写”，而不是静默吞掉
@@ -296,8 +296,8 @@ DAEDALUS_WECHAT_MIN_SEND_INTERVAL_SECONDS=0.5
 
 ```bash
 /status
-/queue
 /recent 6
+/log 10
 ```
 
 ## 🖥️ canonical 桌面会话
@@ -380,7 +380,6 @@ journalctl --user -u daedalus-wechat -n 100 --no-pager
 - `/status`
 - `/health`
 - `/notify on|off|status`
-- `/queue`
 - `/recent [n]`
 - `/recent after <seq>`
 - `/recent all [n]`
@@ -388,7 +387,6 @@ journalctl --user -u daedalus-wechat -n 100 --no-pager
 - `/sessions`
 - `/new [label]`
 - `/switch <index|thread_id-prefix|label|tmux>`
-- `/catchup [n]`
 - `/attach-last`
 - `/stop`
 
@@ -420,11 +418,10 @@ uv run daedalus-wechat send-bound "hello from desktop"
 手机侧语义：
 
 - `/health` = bridge / tmux / 当前 thread 现在健不健康
-- `/notify` = 切 `progress+final` 或 `final-only`
+- `/notify` = 切 `system+plan+progress+final` 或 `system+plan+final`
 - `/recent` = 从永久 delivery ledger 里回看最近几条记录
 - `/recent after <seq>` = 在当前 active tmux scope 里，从某个稳定序号之后继续看
 - `/recent all` = 只有当你明确要看所有 session 混合视图时才用
-- `/catchup` = 丢掉当前 active tmux 的旧积压，只保留最近 `n` 条待发，再继续发送
 - `/status` = 当前接的是哪个 live session
 - `/sessions` = 手机可读的 live workspace tmux 列表，用来快速 `/switch 1`
 - `send-bound` = 桌面/脚本侧显式把一段消息推到当前绑定微信会话

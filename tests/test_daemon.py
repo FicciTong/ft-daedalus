@@ -282,7 +282,7 @@ class DaemonTests(unittest.TestCase):
             openclaw_profile="daedalus-wechat",
             canonical_tmux_session="codex",
             allowed_users=allowed_users,
-            progress_updates_default=True,
+            progress_updates_default=False,
         )
 
     def test_authorized_sender_denied_when_allowlist_empty(self) -> None:
@@ -1132,10 +1132,13 @@ class DaemonTests(unittest.TestCase):
                 runner=_FakeRunner(),
                 state=BridgeState(),
             )
-            self.assertEqual(daemon._notify_text("status"), "notify=progress+final")
-            self.assertEqual(daemon._notify_text("on"), "notify=progress+final")
+            self.assertEqual(daemon._notify_text("status"), "notify=system+plan+final")
+            self.assertEqual(
+                daemon._notify_text("on"),
+                "notify=system+plan+progress+final",
+            )
             self.assertTrue(daemon.state.progress_updates_enabled)
-            self.assertEqual(daemon._notify_text("off"), "notify=final-only")
+            self.assertEqual(daemon._notify_text("off"), "notify=system+plan+final")
             self.assertFalse(daemon.state.progress_updates_enabled)
 
     def test_help_and_menu_show_mobile_command_page(self) -> None:
@@ -1155,12 +1158,11 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("/sessions", help_text)
             self.assertIn("/notify on", help_text)
             self.assertIn("/recent after 128", help_text)
-            self.assertIn("/queue", help_text)
-            self.assertIn("/catchup 5", help_text)
             self.assertIn("/log 10", help_text)
             self.assertIn("当前可切换的 live tmux 列表", help_text)
             self.assertIn("当前 active live tmux session", help_text)
             self.assertIn("同一时刻只会有一个 active live session", help_text)
+            self.assertIn("无需 /queue /catchup", help_text)
 
     def test_queue_text_summarizes_pending_outbox(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1499,7 +1501,7 @@ class DaemonTests(unittest.TestCase):
             )
 
             daemon._flush_bound_outbox_if_any()
-            self.assertEqual(fake_wechat.sent, [("user@im.wechat", None, "PENDING_MIRROR_OK")])
+            self.assertEqual(fake_wechat.sent, [("user@im.wechat", "ctx-1", "PENDING_MIRROR_OK")])
             self.assertEqual(state.pending_outbox, [])
 
     def test_wait_for_bind_only_blocks_context_bound_items_not_desktop_pushes(self) -> None:
@@ -1540,11 +1542,11 @@ class DaemonTests(unittest.TestCase):
 
             daemon._flush_bound_outbox_if_any()
 
-            self.assertEqual(fake_wechat.sent, [("user@im.wechat", None, "PENDING_MIRROR_OK")])
+            self.assertEqual(fake_wechat.sent, [("user@im.wechat", "ctx-1", "PENDING_MIRROR_OK")])
             self.assertEqual(len(state.pending_outbox), 1)
             self.assertEqual(state.pending_outbox[0]["origin"], "wechat-prompt-submitted")
 
-    def test_desktop_direct_pending_retry_stays_context_free(self) -> None:
+    def test_desktop_direct_pending_retry_uses_bound_context_first(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
                 bound_user_id="user@im.wechat",
@@ -1572,7 +1574,7 @@ class DaemonTests(unittest.TestCase):
 
             daemon._flush_bound_outbox_if_any()
 
-            self.assertEqual(fake_wechat.sent, [("user@im.wechat", None, "DIRECT_OK")])
+            self.assertEqual(fake_wechat.sent, [("user@im.wechat", "ctx-1", "DIRECT_OK")])
             self.assertEqual(state.pending_outbox, [])
 
     def test_queue_text_marks_waiting_for_next_wechat_message(self) -> None:
@@ -2017,9 +2019,41 @@ class DaemonTests(unittest.TestCase):
 
             self.assertEqual(
                 fake_wechat.sent,
-                [("user@im.wechat", None, "VERY_OLD_FINAL")],
+                [("user@im.wechat", "ctx-1", "VERY_OLD_FINAL")],
             )
             self.assertEqual(len(state.pending_outbox), 0)
+
+    def test_pending_desktop_progress_is_suppressed_when_progress_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                active_tmux_session="codex",
+                progress_updates_enabled=False,
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "OLD_PROGRESS",
+                        "created_at": "2026-03-26T00:00:00+00:00",
+                        "kind": "progress",
+                        "origin": "desktop-mirror",
+                        "thread_id": "thread-1",
+                        "tmux_session": "codex",
+                    }
+                ],
+            )
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+
+            daemon._flush_bound_outbox_if_any()
+
+            self.assertEqual(fake_wechat.sent, [])
+            self.assertEqual(state.pending_outbox, [])
 
     def test_log_text_can_surface_recent_error_events(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2075,7 +2109,7 @@ class DaemonTests(unittest.TestCase):
             daemon._mirror_desktop_final_if_any()
             self.assertEqual(
                 fake_wechat.sent[-1],
-                ("user@im.wechat", None, "✅ DESKTOP_FINAL_OK"),
+                ("user@im.wechat", "ctx-1", "✅ DESKTOP_FINAL_OK"),
             )
             self.assertEqual(state.get_mirror_offset(thread_id), 150)
 
@@ -2102,13 +2136,60 @@ class DaemonTests(unittest.TestCase):
             daemon._mirror_desktop_final_if_any()
             self.assertEqual(
                 fake_wechat.sent[0],
-                ("user@im.wechat", None, "⏳ 我先检查 bridge 当前状态。"),
+                ("user@im.wechat", "ctx-1", "⏳ 我先检查 bridge 当前状态。"),
             )
             self.assertEqual(
                 fake_wechat.sent[1],
-                ("user@im.wechat", None, "✅ FINAL_OK"),
+                ("user@im.wechat", "ctx-1", "✅ FINAL_OK"),
             )
             self.assertEqual(state.get_last_progress_summary(thread_id), "我先检查 bridge 当前状态。")
+
+    def test_mirror_plan_survives_when_progress_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            state = BridgeState(
+                active_session_id=thread_id,
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                progress_updates_enabled=False,
+                mirror_offsets={thread_id: 100},
+                sessions={},
+            )
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            runner.progresses[(thread_id, 100)] = (
+                [
+                    PLAN_MARKER + "Plan\n1. 进行中: 保留 plan",
+                    "这条 progress 不该发",
+                ],
+                "FINAL_OK",
+                150,
+            )
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            daemon._mirror_desktop_final_if_any()
+            self.assertEqual(
+                fake_wechat.sent,
+                [
+                    ("user@im.wechat", "ctx-1", "📋 Plan\n1. 进行中: 保留 plan"),
+                    ("user@im.wechat", "ctx-1", "✅ FINAL_OK"),
+                ],
+            )
+
+    def test_queue_and_catchup_commands_are_retired(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            self.assertIn("queue=retired", daemon._handle_command("/queue"))
+            self.assertIn("catchup=retired", daemon._handle_command("/catchup 5"))
 
     def test_mirror_follows_current_tmux_thread(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2146,7 +2227,7 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(state.sessions[new_thread].tmux_session, "codex")
             self.assertEqual(
                 fake_wechat.sent[-1],
-                ("user@im.wechat", None, "✅ NEW_THREAD_FINAL_OK"),
+                ("user@im.wechat", "ctx-1", "✅ NEW_THREAD_FINAL_OK"),
             )
             self.assertEqual(state.get_mirror_offset(new_thread), 30)
 
@@ -2209,7 +2290,7 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(state.active_session_id, thread_b)
             self.assertEqual(
                 fake_wechat.sent[-1],
-                ("user@im.wechat", None, "✅ ACTIVE_SWITCH_FINAL_OK"),
+                ("user@im.wechat", "ctx-1", "✅ ACTIVE_SWITCH_FINAL_OK"),
             )
             self.assertEqual(state.get_mirror_offset(thread_b), 30)
 
@@ -2293,7 +2374,7 @@ class DaemonTests(unittest.TestCase):
             daemon._mirror_desktop_final_if_any()
             self.assertEqual(
                 fake_wechat.sent[-1],
-                ("user@im.wechat", None, "📋 Plan\n1. 进行中: 实现 plan icon"),
+                ("user@im.wechat", "ctx-1", "📋 Plan\n1. 进行中: 实现 plan icon"),
             )
 
     def test_desktop_progress_pending_queue_preserves_backlog_for_thread(self) -> None:
@@ -2366,7 +2447,7 @@ class DaemonTests(unittest.TestCase):
                 origin="desktop-mirror",
                 thread_id="thread-1",
             )
-            self.assertEqual(fake_wechat.sent, [("user@im.wechat", None, "✅ 123")])
+            self.assertEqual(fake_wechat.sent, [("user@im.wechat", "ctx-1", "✅ 123")])
             self.assertEqual(
                 [item["text"] for item in state.pending_outbox],
                 ["45678", "90ABC", "DE"],
@@ -2434,7 +2515,7 @@ class DaemonTests(unittest.TestCase):
             daemon._flush_bound_outbox_if_any()
             self.assertEqual(
                 fake_wechat.sent,
-                [("user@im.wechat", None, "DAEDALUS BACKLOG")],
+                [("user@im.wechat", "ctx-1", "DAEDALUS BACKLOG")],
             )
             self.assertEqual(
                 [item["text"] for item in state.pending_outbox],

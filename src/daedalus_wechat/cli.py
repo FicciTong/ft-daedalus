@@ -54,7 +54,7 @@ def _send_bound_text(
         try:
             wechat.send_text(
                 to_user_id=state.bound_user_id,
-                context_token=None,
+                context_token=state.bound_context_token,
                 text=chunk,
             )
             event_kind = "relay_outgoing"

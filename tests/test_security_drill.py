@@ -17,7 +17,7 @@ def _make_config(tmpdir: Path, allowed_users: frozenset[str]) -> BridgeConfig:
         openclaw_profile="daedalus-wechat",
         canonical_tmux_session="codex",
         allowed_users=allowed_users,
-        progress_updates_default=True,
+        progress_updates_default=False,
         codex_state_db=tmpdir / ".codex" / "state.sqlite",
     )
 
@@ -66,7 +66,7 @@ def test_security_drill_warns_when_state_db_is_default_fallback() -> None:
             openclaw_profile="daedalus-wechat",
             canonical_tmux_session="codex",
             allowed_users=frozenset({"allowed-user@im.wechat"}),
-            progress_updates_default=True,
+            progress_updates_default=False,
             codex_state_db=root / ".codex" / "state_7.sqlite",
             codex_state_db_source="default_resolved",
         )

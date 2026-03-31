@@ -41,9 +41,9 @@ DAEDALUS_WECHAT_TMUX_SESSION=codex
 # Comma-separated values, for example:
 # DAEDALUS_WECHAT_ALLOWED_USERS=o9cq80y6O1DAYqilESlM_NbeqtTc@im.wechat
 
-# WeChat mobile defaults to progress+final. Use /notify off later if you only
-# want final replies.
-DAEDALUS_WECHAT_PROGRESS_UPDATES=on
+# Default mobile posture: keep system / plan / final, suppress progress noise.
+# Use /notify on later if you explicitly want progress too.
+DAEDALUS_WECHAT_PROGRESS_UPDATES=off
 EOF
 fi
 

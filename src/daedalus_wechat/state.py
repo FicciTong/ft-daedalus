@@ -130,6 +130,7 @@ class BridgeState:
                     "progress_updates_enabled": self.progress_updates_enabled,
                     "delivery_seq": self.delivery_seq,
                     "outbox_waiting_for_bind": self.outbox_waiting_for_bind,
+                    "outbox_waiting_for_bind_since": self.outbox_waiting_for_bind_since,
                     "mirror_offsets": self.mirror_offsets,
                     "recent_delivery_cursors": self.recent_delivery_cursors,
                     "last_progress_summaries": self.last_progress_summaries,

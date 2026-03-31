@@ -33,16 +33,14 @@ HELP_TEXT = """FT bridge 命令总览
 /stop              清空当前 active session
 
 通知:
-/notify on         微信收 progress + final
-/notify off        微信只收 final
+/notify on         微信收 system + plan + progress + final
+/notify off        微信收 system + plan + final
 /notify status     查看当前通知模式
 
 追溯:
 /recent 10         看当前 active tmux 最近 10 条有效 delivery ledger
 /recent after 128  从 seq=128 之后继续看当前 active tmux（高级调试）
 /recent all 10     看所有 session 最近 10 条
-/queue             看当前待发送队列概况 + 最近有效投递摘要
-/catchup 5         裁旧 backlog 并继续补看当前 active tmux 最近/新增的有效消息
 /log 10            看当前 bridge 最近事件/错误日志
 
 帮助:
@@ -53,6 +51,7 @@ HELP_TEXT = """FT bridge 命令总览
 如果当前 active tmux 还没打开 Codex，bridge 会明确提示你先启动/恢复。
 /sessions 只显示当前 workspace 下、看起来像 live Codex runtime 的 tmux。
 同一时刻只会有一个 active live session。
+bridge 会后台定期检查并冲洗 pending backlog，无需 /queue /catchup。
 """
 
 
@@ -80,6 +79,7 @@ class BridgeDaemon:
         self.runner = runner
         self.state = state
         self._lock = threading.RLock()
+        self._last_outbox_watchdog_signature = ""
         self.config.state_dir.mkdir(parents=True, exist_ok=True)
         if self.state.progress_updates_enabled is None:
             self.state.progress_updates_enabled = self.config.progress_updates_default
@@ -258,9 +258,15 @@ class BridgeDaemon:
         if command == "/recent":
             return self._recent_text(arg)
         if command == "/queue":
-            return self._queue_text()
+            return (
+                "queue=retired\n"
+                "hint=bridge 会后台自动冲洗 backlog；用 /recent 看最近有效消息，用 /log 看错误。"
+            )
         if command == "/catchup":
-            return self._catchup_text(arg)
+            return (
+                "catchup=retired\n"
+                "hint=bridge 会后台自动冲洗 backlog；用 /recent 看最近有效消息，用 /log 看错误。"
+            )
         if command == "/log":
             return self._log_text(arg)
         if command == "/sessions":
@@ -331,19 +337,15 @@ class BridgeDaemon:
     def _notify_text(self, arg: str) -> str:
         normalized = arg.strip().lower()
         if not normalized or normalized == "status":
-            return (
-                "notify=progress+final"
-                if self._progress_updates_enabled()
-                else "notify=final-only"
-            )
+            return f"notify={self._notify_mode_text()}"
         if normalized in {"on", "progress", "enable"}:
             self.state.progress_updates_enabled = True
             self._save_state()
-            return "notify=progress+final"
+            return f"notify={self._notify_mode_text()}"
         if normalized in {"off", "final", "disable"}:
             self.state.progress_updates_enabled = False
             self._save_state()
-            return "notify=final-only"
+            return f"notify={self._notify_mode_text()}"
         return "用法: /notify on|off|status"
 
     def _recent_text(self, arg: str) -> str:
@@ -713,7 +715,7 @@ class BridgeDaemon:
             f"label={record.label}\n"
             f"tmux={record.tmux_session}\n"
             f"cwd={self._short_cwd(record.cwd)}\n"
-            f"notify={'progress+final' if self._progress_updates_enabled() else 'final-only'}\n"
+            f"notify={self._notify_mode_text()}\n"
             f"attach={self.runner.attach_hint(record)}"
         )
 
@@ -784,7 +786,7 @@ class BridgeDaemon:
             f"thread={self._short_thread(runtime.thread_id) if runtime.thread_id else 'none'}",
             f"wechat={wechat_account}",
             f"access={access}",
-            f"notify={'progress+final' if self._progress_updates_enabled() else 'final-only'}",
+            f"notify={self._notify_mode_text()}",
         ]
         return "\n".join(lines)
 
@@ -939,6 +941,7 @@ class BridgeDaemon:
         while True:
             time.sleep(self.config.outbox_retry_interval_seconds)
             try:
+                self._outbox_watchdog_tick()
                 self._flush_bound_outbox_if_any()
             except Exception as exc:  # noqa: BLE001
                 self._log_event("outbox_retry_error", {"error": str(exc)})
@@ -960,31 +963,32 @@ class BridgeDaemon:
         with self._lock:
             self.state.set_mirror_offset(thread_id, scan.end_offset)
             self._save_state()
-        if self._progress_updates_enabled():
-            for progress in scan.progress_texts:
-                if not progress:
+        for progress in scan.progress_texts:
+            if not progress:
+                continue
+            kind = self._classify_mirror_text_kind(progress)
+            body = self._strip_plan_marker(progress)
+            if kind == "progress":
+                if not self._progress_updates_enabled():
                     continue
-                kind = self._classify_mirror_text_kind(progress)
-                body = self._strip_plan_marker(progress)
-                if kind == "progress":
-                    with self._lock:
-                        if body == self.state.get_last_progress_summary(thread_id):
-                            continue
-                        self.state.set_last_progress_summary(thread_id, body)
-                        self._save_state()
-                self._reply(
-                    to_user_id,
-                    bound_context_token,
-                    body,
-                    kind=kind,
-                    origin="desktop-mirror",
-                    thread_id=thread_id,
-                    tmux_session=self._tmux_for_thread(thread_id),
-                )
-                self._log_event(
-                    "mirrored_plan" if kind == "plan" else "mirrored_progress",
-                    {"thread": self._short_thread(thread_id), "to": to_user_id},
-                )
+                with self._lock:
+                    if body == self.state.get_last_progress_summary(thread_id):
+                        continue
+                    self.state.set_last_progress_summary(thread_id, body)
+                    self._save_state()
+            self._reply(
+                to_user_id,
+                bound_context_token,
+                body,
+                kind=kind,
+                origin="desktop-mirror",
+                thread_id=thread_id,
+                tmux_session=self._tmux_for_thread(thread_id),
+            )
+            self._log_event(
+                "mirrored_plan" if kind == "plan" else "mirrored_progress",
+                {"thread": self._short_thread(thread_id), "to": to_user_id},
+            )
         if not scan.final_text:
             return
         self._reply(
@@ -1034,6 +1038,11 @@ class BridgeDaemon:
 
     def _progress_updates_enabled(self) -> bool:
         return bool(self.state.progress_updates_enabled)
+
+    def _notify_mode_text(self) -> str:
+        if self._progress_updates_enabled():
+            return "system+plan+progress+final"
+        return "system+plan+final"
 
     def _classify_mirror_text_kind(self, text: str) -> str:
         if text.startswith(PLAN_MARKER):
@@ -1147,6 +1156,54 @@ class BridgeDaemon:
             tmux_session=active_tmux_session,
         )
 
+    def _outbox_watchdog_tick(self) -> None:
+        with self._lock:
+            to_user_id = self.state.bound_user_id
+            active_tmux_session = self.state.active_tmux_session
+            stats = self._scope_pending_delivery_stats(
+                to_user_id=to_user_id,
+                tmux_session=active_tmux_session,
+            )
+            oldest_age_s = self._visible_pending_oldest_age_seconds(
+                to_user_id=to_user_id,
+                tmux_session=active_tmux_session,
+            )
+        if stats["visible_count"] <= 0:
+            self._last_outbox_watchdog_signature = ""
+            return
+        if stats["blocked_for_rebind_count"] > 0 and stats["deliverable_now_count"] <= 0:
+            systemd_notify(
+                "STATUS="
+                f"bridge backlog waiting-bind pending={stats['visible_count']}"
+            )
+        else:
+            systemd_notify(
+                "STATUS="
+                f"bridge backlog pending={stats['visible_count']} "
+                f"deliverable={stats['deliverable_now_count']}"
+            )
+        if oldest_age_s < STALE_AUTO_FLUSH_SECONDS:
+            self._last_outbox_watchdog_signature = ""
+            return
+        signature = (
+            f"{stats['visible_count']}|{stats['deliverable_now_count']}|"
+            f"{stats['blocked_for_rebind_count']}|{int(oldest_age_s)}|"
+            f"{active_tmux_session or ''}"
+        )
+        if signature == self._last_outbox_watchdog_signature:
+            return
+        self._last_outbox_watchdog_signature = signature
+        self._log_event(
+            "outbox_watchdog_pending",
+            {
+                "visible_count": stats["visible_count"],
+                "deliverable_now_count": stats["deliverable_now_count"],
+                "blocked_for_rebind_count": stats["blocked_for_rebind_count"],
+                "oldest_age_s": int(oldest_age_s),
+                "tmux_session": active_tmux_session or "",
+            },
+        )
+
     def _flush_pending_outbox(
         self,
         to_user_id: str,
@@ -1170,6 +1227,25 @@ class BridgeDaemon:
             kind = str(item.get("kind", "message"))
             origin = str(item.get("origin", "bridge"))
             thread_id = str(item.get("thread_id", "")).strip() or None
+            if self._should_suppress_pending_item(kind=kind, origin=origin):
+                with self._lock:
+                    self._log_event(
+                        "suppressed_outgoing",
+                        {"to": to_user_id, "text": text[:400], "kind": kind},
+                    )
+                    append_delivery(
+                        state=self.state,
+                        state_file=self.config.state_file,
+                        ledger_file=self.config.delivery_ledger_file,
+                        to_user_id=to_user_id,
+                        text=text,
+                        status="suppressed",
+                        kind=kind,
+                        origin=origin,
+                        thread_id=thread_id,
+                        tmux_session=self._tmux_for_thread(thread_id) or tmux_session,
+                    )
+                continue
             # Stale items (old + retried) bypass wait_for_bind so they
             # don't accumulate forever. Fresh items still respect the bind.
             if (
@@ -1252,6 +1328,22 @@ class BridgeDaemon:
             dt = dt.replace(tzinfo=UTC)
         return max(0.0, (datetime.now(UTC) - dt.astimezone(UTC)).total_seconds())
 
+    def _visible_pending_oldest_age_seconds(
+        self, *, to_user_id: str | None, tmux_session: str | None
+    ) -> float:
+        if not to_user_id:
+            return 0.0
+        active_scope = str(tmux_session or "").strip()
+        oldest = 0.0
+        for item in self.state.pending_outbox:
+            if item.get("to") != to_user_id:
+                continue
+            item_scope = str(item.get("tmux_session", "")).strip()
+            if item_scope and item_scope != active_scope:
+                continue
+            oldest = max(oldest, self._pending_item_age_seconds(item))
+        return oldest
+
     def _is_stale_pending_for_auto_flush(self, item: dict[str, str]) -> bool:
         attempt_count = int(item.get("attempt_count", 1) or 1)
         last_error = str(item.get("last_error", "")).strip()
@@ -1269,6 +1361,13 @@ class BridgeDaemon:
         normalized = str(origin or "").strip()
         return normalized not in {"desktop-mirror", "desktop-direct"}
 
+    def _should_suppress_pending_item(self, *, kind: str, origin: str) -> bool:
+        return (
+            kind == "progress"
+            and origin == "desktop-mirror"
+            and not self._progress_updates_enabled()
+        )
+
     def _effective_send_context(
         self,
         *,
@@ -1278,11 +1377,9 @@ class BridgeDaemon:
     ) -> str | None:
         if not use_context_token:
             return None
-        # Desktop-originated pushes are owner-facing outbound sends, not direct
-        # replies to the latest inbound WeChat message. Keep them context-free so
-        # a stale chat context cannot poison later no-context delivery.
-        if not self._origin_uses_live_context(origin):
-            return None
+        # Prefer the latest bound context even for desktop-originated pushes.
+        # The WeChat client already retries once without it on ret=-2, so this
+        # maximizes deliverability while still escaping stale chat contexts.
         return context_token
 
     def _scope_pending_delivery_stats(
@@ -1365,7 +1462,7 @@ class BridgeDaemon:
                     "recent_effective="
                     + str(latest.get("text", "")).strip().replace("\n", " ")[:120]
                 )
-                lines.append("hint=/recent 或 /catchup 看最新有效消息")
+                lines.append("hint=/recent 看最近有效消息；bridge 会后台自动冲洗 backlog")
             if self.state.pending_outbox_overflow_dropped:
                 lines.append(
                     f"overflow_dropped={self.state.pending_outbox_overflow_dropped}"

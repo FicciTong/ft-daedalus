@@ -169,7 +169,7 @@ def load_config() -> BridgeConfig:
             "DAEDALUS_WECHAT_PROGRESS_UPDATES",
             file_env.get("DAEDALUS_WECHAT_PROGRESS_UPDATES"),
         ),
-        default=True,
+        default=False,
     )
     min_send_interval_seconds = _parse_float(
         os.environ.get(

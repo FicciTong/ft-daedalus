@@ -63,7 +63,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(config.codex_state_db, Path("/tmp/custom-state.sqlite"))
             self.assertEqual(config.codex_state_db_source, "env_file_explicit")
 
-    def test_load_config_defaults_progress_updates_on(self) -> None:
+    def test_load_config_defaults_progress_updates_off(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             env_file = Path(tmpdir) / "bridge.env"
             env_file.write_text("")
@@ -73,7 +73,7 @@ class ConfigTests(unittest.TestCase):
                 clear=False,
             ):
                 config = load_config()
-            self.assertTrue(config.progress_updates_default)
+            self.assertFalse(config.progress_updates_default)
             self.assertEqual(config.outbox_retry_interval_seconds, 1.0)
 
     def test_default_codex_state_db_prefers_canonical_state_sqlite(self) -> None:

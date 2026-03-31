@@ -42,12 +42,12 @@ operator/tooling surfaces with the same governance posture.
 | Surface | What You See | What It Is For |
 |---|---|---|
 | Desktop `tmux codex` | Full live terminal stream | Real-time work, full context, tool chatter |
-| WeChat | Commentary progress + final reply | Remote operation from your phone |
+| WeChat | System / plan / final by default; progress optional | Remote operation from your phone |
 
-If you want quiet mode on mobile:
+If you want mobile progress too:
 
 ```text
-/notify off
+/notify on
 ```
 
 WeChat message icons:
@@ -86,7 +86,8 @@ There are two surfaces, but only **one active live owner at a time**:
 
 2. **WeChat operator surface**
    - sends messages into that same local Codex session
-   - receives **commentary progress + final reply**
+   - receives **system / plan / final by default**
+   - progress is opt-in via `/notify on`
    - does **not** receive raw tool logs, bottom status bar noise, or terminal
      junk
 
@@ -288,13 +289,12 @@ The bridge now has four built-in reliability layers:
      instead of being flushed into the currently active session chat flow
    - mirrored desktop backlog is preserved in queue order; it is no longer
      collapsed down to only the newest progress item for a thread
-   - `/queue` now shows the current persisted backlog more truthfully,
-     including active-session visible count, waiting-other-session count,
-     head/tail preview, and any overflow drop count
    - if WeChat still rejects the send with `ret=-2`, background retry pauses
      and waits for the next inbound WeChat message instead of retry-thrashing
    - the bridge still flushes pending messages aggressively when later inbound
      traffic refreshes the live chat binding
+   - owner-side backlog recovery is now automatic; no manual `/queue` /
+     `/catchup` trigger is required
 5. **asynchronous prompt lane + voice fallback**
    - WeChat prompts are queued and processed by a dedicated worker, so a long
      running prompt no longer blocks later `/status` or `/help`
@@ -314,8 +314,8 @@ Last-resort operator recovery is still:
 
 ```bash
 /status
-/queue
 /recent 6
+/log 10
 ```
 
 ## 🖥️ Canonical Desktop Session
@@ -407,7 +407,6 @@ Commands:
 - `/status`
 - `/health`
 - `/notify on|off|status`
-- `/queue`
 - `/recent [n]`
 - `/recent after <seq>`
 - `/recent all [n]`
@@ -415,7 +414,6 @@ Commands:
 - `/sessions`
 - `/new [label]`
 - `/switch <index|thread_id-prefix|label|tmux>`
-- `/catchup [n]`
 - `/attach-last`
 - `/stop`
 
@@ -448,11 +446,10 @@ Examples:
 Phone-friendly semantics:
 
 - `/health` = is the bridge / tmux / thread healthy right now
-- `/notify` = choose `progress+final` or `final-only`
+- `/notify` = choose `system+plan+progress+final` or `system+plan+final`
 - `/recent` = replay from the permanent delivery ledger
 - `/recent after <seq>` = continue from a known ledger position within the current active tmux scope
 - `/recent all` = read across all session scopes when you explicitly want the mixed global view
-- `/catchup` = drop older pending backlog for the current active tmux and keep only the newest `n` items before flushing
 - `/status` = which live session am I currently attached to
 - `/sessions` = short switchable list of currently live workspace tmux sessions
 - `send-bound` = explicit desktop/session-side push into the current bound

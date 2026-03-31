@@ -34,7 +34,7 @@ class CliTests(unittest.TestCase):
             openclaw_profile="daedalus-wechat",
             canonical_tmux_session="codex",
             allowed_users=frozenset(),
-            progress_updates_default=True,
+            progress_updates_default=False,
         )
 
     def test_send_bound_text_uses_current_binding(self) -> None:
@@ -53,7 +53,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(rc, 0)
             self.assertEqual(
                 fake_wechat.sent,
-                [("user@im.wechat", None, "hello bound chat")],
+                [("user@im.wechat", "ctx-1", "hello bound chat")],
             )
             lines = (Path(tmpdir) / "events.jsonl").read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(lines), 1)
