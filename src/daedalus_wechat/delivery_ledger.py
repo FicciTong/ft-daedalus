@@ -25,7 +25,7 @@ def _parse_ts(value: object) -> datetime | None:
 def append_delivery(
     *,
     state: BridgeState,
-    state_file: Path,
+    state_file: Path | None = None,
     ledger_file: Path,
     to_user_id: str,
     text: str,
@@ -37,7 +37,8 @@ def append_delivery(
     error: str | None = None,
 ) -> int:
     seq = state.next_delivery_seq()
-    state.save(state_file)
+    if state_file is not None:
+        state.save(state_file)
     ledger_file.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "seq": seq,

@@ -78,7 +78,10 @@ class CliTests(unittest.TestCase):
                     client=_FakeWeChat(),
                 )
 
-    def test_send_bound_text_queues_when_send_fails(self) -> None:
+    def test_send_bound_text_reports_failure_without_writing_state(self) -> None:
+        """When send fails, CLI should NOT enqueue to shared state file
+        (that races the daemon). It should report failure in the event log
+        and ledger only."""
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
                 bound_user_id="user@im.wechat",
@@ -87,22 +90,24 @@ class CliTests(unittest.TestCase):
             rc = _send_bound_text(
                 self._make_config(Path(tmpdir)),
                 state,
-                "hello queued chat",
+                "hello failed chat",
                 client=_FailingWeChat(),
             )
             self.assertEqual(rc, 0)
-            self.assertEqual(len(state.pending_outbox), 1)
-            self.assertEqual(state.pending_outbox[0]["to"], "user@im.wechat")
-            self.assertEqual(state.pending_outbox[0]["text"], "hello queued chat")
+            # No pending outbox enqueue — avoids daemon state race
+            self.assertEqual(len(state.pending_outbox), 0)
             lines = (Path(tmpdir) / "events.jsonl").read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(lines), 1)
             event = json.loads(lines[0])
-            self.assertEqual(event["kind"], "relay_queued")
+            self.assertEqual(event["kind"], "relay_failed")
             ledger_lines = (Path(tmpdir) / "deliveries.jsonl").read_text(encoding="utf-8").splitlines()
             self.assertEqual(len(ledger_lines), 1)
             delivery = json.loads(ledger_lines[0])
-            self.assertEqual(delivery["status"], "queued")
+            self.assertEqual(delivery["status"], "failed")
             self.assertEqual(delivery["kind"], "relay")
+            # Verify state file was NOT written by the CLI
+            state_file = Path(tmpdir) / "state.json"
+            self.assertFalse(state_file.exists())
 
 
 if __name__ == "__main__":
