@@ -109,6 +109,45 @@ class CliTests(unittest.TestCase):
             state_file = Path(tmpdir) / "state.json"
             self.assertFalse(state_file.exists())
 
+    def test_send_bound_text_advances_seq_from_existing_ledger_when_state_is_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            (tmp_path / "deliveries.jsonl").write_text(
+                json.dumps(
+                    {
+                        "seq": 5,
+                        "ts": "2026-04-01T00:00:00+00:00",
+                        "to": "user@im.wechat",
+                        "status": "sent",
+                        "kind": "relay",
+                        "origin": "desktop-direct",
+                        "thread": None,
+                        "tmux_session": None,
+                        "text": "older",
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            state = BridgeState(
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                delivery_seq=1,
+            )
+            fake_wechat = _FakeWeChat()
+            rc = _send_bound_text(
+                self._make_config(tmp_path),
+                state,
+                "hello after stale seq",
+                client=fake_wechat,
+            )
+            self.assertEqual(rc, 0)
+            ledger_lines = (tmp_path / "deliveries.jsonl").read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(ledger_lines), 2)
+            latest = json.loads(ledger_lines[-1])
+            self.assertEqual(latest["seq"], 6)
+            self.assertEqual(latest["status"], "sent")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -22,6 +22,19 @@ def _parse_ts(value: object) -> datetime | None:
     return dt.astimezone(UTC)
 
 
+def _last_seq(ledger_file: Path) -> int:
+    if not ledger_file.exists():
+        return 0
+    lines = ledger_file.read_text(encoding="utf-8").splitlines()
+    for raw in reversed(lines):
+        try:
+            item = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        return int(item.get("seq", 0) or 0)
+    return 0
+
+
 def append_delivery(
     *,
     state: BridgeState,
@@ -36,6 +49,7 @@ def append_delivery(
     tmux_session: str | None = None,
     error: str | None = None,
 ) -> int:
+    state.delivery_seq = max(state.delivery_seq, _last_seq(ledger_file))
     seq = state.next_delivery_seq()
     if state_file is not None:
         state.save(state_file)
