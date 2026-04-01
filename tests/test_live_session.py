@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -315,6 +316,252 @@ class LiveSessionTests(unittest.TestCase):
                             ):
                                 status = self.runner._runtime_status_for_tmux("codex")
         self.assertEqual(status.thread_id, fresh_thread)
+
+    def test_find_latest_thread_ignores_spawn_child_when_root_exists(self) -> None:
+        root_thread = "019d332d-1bc8-7151-a874-ab0fbc493747"
+        child_thread = "019d46e2-1b23-7e01-941b-269961074b52"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.executescript(
+                    """
+                    create table threads (
+                        id text primary key,
+                        rollout_path text not null,
+                        created_at integer not null,
+                        updated_at integer not null,
+                        source text not null,
+                        model_provider text not null,
+                        cwd text not null,
+                        title text not null,
+                        sandbox_policy text not null,
+                        approval_mode text not null,
+                        tokens_used integer not null default 0,
+                        has_user_event integer not null default 0,
+                        archived integer not null default 0
+                    );
+                    create table thread_spawn_edges (
+                        parent_thread_id text not null,
+                        child_thread_id text not null,
+                        status text
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    insert into threads (
+                        id, rollout_path, created_at, updated_at, source,
+                        model_provider, cwd, title, sandbox_policy, approval_mode, archived
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    """,
+                    (
+                        root_thread,
+                        "/tmp/root.jsonl",
+                        100,
+                        200,
+                        "cli",
+                        "openai",
+                        "/tmp",
+                        "root",
+                        "workspace-write",
+                        "never",
+                    ),
+                )
+                conn.execute(
+                    """
+                    insert into threads (
+                        id, rollout_path, created_at, updated_at, source,
+                        model_provider, cwd, title, sandbox_policy, approval_mode, archived
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    """,
+                    (
+                        child_thread,
+                        "/tmp/child.jsonl",
+                        100,
+                        300,
+                        "{\"subagent\":true}",
+                        "openai",
+                        "/tmp",
+                        "child",
+                        "workspace-write",
+                        "never",
+                    ),
+                )
+                conn.execute(
+                    """
+                    insert into thread_spawn_edges (
+                        parent_thread_id, child_thread_id, status
+                    ) values (?, ?, ?)
+                    """,
+                    (root_thread, child_thread, "open"),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            self.runner.codex_state_db = db_path
+            self.assertEqual(self.runner.find_latest_thread(), root_thread)
+
+    def test_find_latest_thread_falls_back_to_child_when_only_child_exists(self) -> None:
+        child_thread = "019d46e2-1b23-7e01-941b-269961074b52"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "state.sqlite"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.executescript(
+                    """
+                    create table threads (
+                        id text primary key,
+                        rollout_path text not null,
+                        created_at integer not null,
+                        updated_at integer not null,
+                        source text not null,
+                        model_provider text not null,
+                        cwd text not null,
+                        title text not null,
+                        sandbox_policy text not null,
+                        approval_mode text not null,
+                        tokens_used integer not null default 0,
+                        has_user_event integer not null default 0,
+                        archived integer not null default 0
+                    );
+                    create table thread_spawn_edges (
+                        parent_thread_id text not null,
+                        child_thread_id text not null,
+                        status text
+                    );
+                    """
+                )
+                conn.execute(
+                    """
+                    insert into threads (
+                        id, rollout_path, created_at, updated_at, source,
+                        model_provider, cwd, title, sandbox_policy, approval_mode, archived
+                    ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                    """,
+                    (
+                        child_thread,
+                        "/tmp/child.jsonl",
+                        100,
+                        300,
+                        "{\"subagent\":true}",
+                        "openai",
+                        "/tmp",
+                        "child",
+                        "workspace-write",
+                        "never",
+                    ),
+                )
+                conn.execute(
+                    """
+                    insert into thread_spawn_edges (
+                        parent_thread_id, child_thread_id, status
+                    ) values (?, ?, ?)
+                    """,
+                    ("parent", child_thread, "open"),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            self.runner.codex_state_db = db_path
+            self.assertEqual(self.runner.find_latest_thread(), child_thread)
+
+    def test_runtime_status_ignores_newer_spawn_child_rollout_for_mirror_resolution(self) -> None:
+        stale_thread = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+        root_thread = "019d332d-1bc8-7151-a874-ab0fbc493747"
+        child_thread = "019d46e2-1b23-7e01-941b-269961074b52"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session_root = Path(tmpdir) / "sessions"
+            session_root.mkdir(parents=True, exist_ok=True)
+            stale_rollout = session_root / f"stale-{stale_thread}.jsonl"
+            root_rollout = session_root / f"root-{root_thread}.jsonl"
+            child_rollout = session_root / f"child-{child_thread}.jsonl"
+            stale_rollout.write_text("stale\n", encoding="utf-8")
+            root_rollout.write_text("root\n", encoding="utf-8")
+            child_rollout.write_text("child\n", encoding="utf-8")
+            os.utime(stale_rollout, (1000, 1000))
+            os.utime(root_rollout, (2000, 2000))
+            os.utime(child_rollout, (3000, 3000))
+            db_path = Path(tmpdir) / "state.sqlite"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.executescript(
+                    """
+                    create table threads (
+                        id text primary key,
+                        rollout_path text not null,
+                        created_at integer not null,
+                        updated_at integer not null,
+                        source text not null,
+                        model_provider text not null,
+                        cwd text not null,
+                        title text not null,
+                        sandbox_policy text not null,
+                        approval_mode text not null,
+                        tokens_used integer not null default 0,
+                        has_user_event integer not null default 0,
+                        archived integer not null default 0
+                    );
+                    create table thread_spawn_edges (
+                        parent_thread_id text not null,
+                        child_thread_id text not null,
+                        status text
+                    );
+                    """
+                )
+                for thread_id, updated_at, source in (
+                    (root_thread, 2000, "cli"),
+                    (
+                        child_thread,
+                        3000,
+                        (
+                            f'{{"subagent":{{"thread_spawn":{{"parent_thread_id":"{root_thread}"}}}}}}'
+                        ),
+                    ),
+                ):
+                    conn.execute(
+                        """
+                        insert into threads (
+                            id, rollout_path, created_at, updated_at, source,
+                            model_provider, cwd, title, sandbox_policy, approval_mode, archived
+                        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                        """,
+                        (
+                            thread_id,
+                            f"/tmp/{thread_id}.jsonl",
+                            100,
+                            updated_at,
+                            source,
+                            "openai",
+                            "/tmp",
+                            thread_id,
+                            "workspace-write",
+                            "never",
+                        ),
+                    )
+                conn.execute(
+                    """
+                    insert into thread_spawn_edges (
+                        parent_thread_id, child_thread_id, status
+                    ) values (?, ?, ?)
+                    """,
+                    (root_thread, child_thread, "open"),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            self.runner.session_root = session_root
+            self.runner.codex_state_db = db_path
+            with patch.object(self.runner, "_tmux_exists", return_value=True):
+                with patch.object(self.runner, "_pane_current_command", return_value="codex"):
+                    with patch.object(self.runner, "_pane_current_path", return_value="/tmp"):
+                        with patch.object(
+                            self.runner,
+                            "_capture_clean_text",
+                            return_value=f"stale pane text {stale_thread}",
+                        ):
+                            status = self.runner._runtime_status_for_tmux("codex")
+        self.assertEqual(status.thread_id, root_thread)
 
     def test_runtime_status_keeps_pane_thread_outside_workspace(self) -> None:
         stale_thread = "019cdfe5-fa14-74a3-aa31-5451128ea58d"

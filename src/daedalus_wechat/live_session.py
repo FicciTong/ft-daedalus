@@ -90,6 +90,24 @@ class LiveCodexSessionManager:
                 select id
                 from threads
                 where cwd = ?
+                  and archived = 0
+                  and id not in (
+                    select child_thread_id
+                    from thread_spawn_edges
+                  )
+                order by updated_at desc
+                limit 1
+                """,
+                (str(self.default_cwd),),
+            ).fetchone()
+            if row:
+                return str(row[0])
+            row = conn.execute(
+                """
+                select id
+                from threads
+                where cwd = ?
+                  and archived = 0
                 order by updated_at desc
                 limit 1
                 """,
