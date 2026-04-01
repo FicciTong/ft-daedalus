@@ -19,6 +19,7 @@ DISPLAY_TZ = ZoneInfo("Asia/Shanghai")
 STALE_AUTO_FLUSH_SECONDS = 300.0
 WAIT_FOR_BIND_TIMEOUT_SECONDS = 60.0
 OWNER_VISIBLE_RECENT_CLUSTER_SECONDS = 1800.0
+STALE_DESKTOP_MIRROR_DROP_SECONDS = 600.0
 
 
 HELP_TEXT = """FT bridge 命令总览
@@ -80,6 +81,7 @@ class BridgeDaemon:
         self.state = state
         self._lock = threading.RLock()
         self._last_outbox_watchdog_signature = ""
+        self._last_external_state_mtime_ns = 0
         self.config.state_dir.mkdir(parents=True, exist_ok=True)
         if self.state.progress_updates_enabled is None:
             self.state.progress_updates_enabled = self.config.progress_updates_default
@@ -941,6 +943,8 @@ class BridgeDaemon:
         while True:
             time.sleep(self.config.outbox_retry_interval_seconds)
             try:
+                self._merge_external_state()
+                self._prune_stale_desktop_mirror_backlog()
                 self._outbox_watchdog_tick()
                 self._flush_bound_outbox_if_any()
             except Exception as exc:  # noqa: BLE001
@@ -1156,6 +1160,61 @@ class BridgeDaemon:
             tmux_session=active_tmux_session,
         )
 
+    def _prune_stale_desktop_mirror_backlog(self) -> None:
+        with self._lock:
+            if not self.state.pending_outbox:
+                return
+            active_thread_id = str(self.state.active_session_id or "").strip()
+            kept: list[dict[str, str]] = []
+            dropped: list[dict[str, str]] = []
+            for item in self.state.pending_outbox:
+                if self._should_drop_stale_desktop_mirror_item(
+                    item,
+                    active_thread_id=active_thread_id,
+                ):
+                    dropped.append(item)
+                else:
+                    kept.append(item)
+            if not dropped:
+                return
+            self.state.pending_outbox = kept
+            if not self.state.pending_outbox:
+                self.state.outbox_waiting_for_bind = False
+                self.state.outbox_waiting_for_bind_since = ""
+            self._save_state()
+            bound_user_id = self.state.bound_user_id
+        for item in dropped:
+            text = str(item.get("text", "")).strip()
+            if not text:
+                continue
+            thread_id = str(item.get("thread_id", "")).strip() or None
+            tmux_session = self._tmux_for_thread(thread_id) or str(
+                item.get("tmux_session", "")
+            ).strip() or None
+            reason = "stale_desktop_mirror_backlog"
+            self._log_event(
+                "suppressed_outgoing",
+                {
+                    "to": bound_user_id,
+                    "text": text[:400],
+                    "kind": str(item.get("kind", "message")),
+                    "reason": reason,
+                },
+            )
+            append_delivery(
+                state=self.state,
+                state_file=self.config.state_file,
+                ledger_file=self.config.delivery_ledger_file,
+                to_user_id=str(item.get("to", "") or bound_user_id or ""),
+                text=text,
+                status="suppressed",
+                kind=str(item.get("kind", "message")),
+                origin=str(item.get("origin", "bridge")),
+                thread_id=thread_id,
+                tmux_session=tmux_session,
+                error=reason,
+            )
+
     def _outbox_watchdog_tick(self) -> None:
         with self._lock:
             to_user_id = self.state.bound_user_id
@@ -1250,7 +1309,7 @@ class BridgeDaemon:
             # don't accumulate forever. Fresh items still respect the bind.
             if (
                 self.state.outbox_waiting_for_bind
-                and self._origin_uses_live_context(origin)
+                and self._pending_item_requires_rebind_pause(item, origin=origin)
                 and not self._is_stale_pending_for_auto_flush(item)
             ):
                 kept.append(item)
@@ -1351,6 +1410,23 @@ class BridgeDaemon:
             return False
         return self._pending_item_age_seconds(item) >= STALE_AUTO_FLUSH_SECONDS
 
+    def _should_drop_stale_desktop_mirror_item(
+        self,
+        item: dict[str, str],
+        *,
+        active_thread_id: str,
+    ) -> bool:
+        if str(item.get("origin", "")).strip() != "desktop-mirror":
+            return False
+        if self._pending_item_age_seconds(item) < STALE_DESKTOP_MIRROR_DROP_SECONDS:
+            return False
+        thread_id = str(item.get("thread_id", "")).strip()
+        if thread_id and active_thread_id and thread_id != active_thread_id:
+            return True
+        last_error = str(item.get("last_error", "")).strip()
+        attempt_count = int(item.get("attempt_count", 1) or 1)
+        return "ret=-2" in last_error and attempt_count >= 2
+
     def _sync_mirror_cursor(self, thread_id: str) -> None:
         self.state.set_mirror_offset(thread_id, self.runner.rollout_size(thread_id))
 
@@ -1360,6 +1436,18 @@ class BridgeDaemon:
     def _origin_uses_live_context(self, origin: str) -> bool:
         normalized = str(origin or "").strip()
         return normalized not in {"desktop-mirror", "desktop-direct"}
+
+    def _pending_item_requires_rebind_pause(
+        self,
+        item: dict[str, str],
+        *,
+        origin: str,
+    ) -> bool:
+        if self._origin_uses_live_context(origin):
+            return True
+        if str(origin or "").strip() not in {"desktop-mirror", "desktop-direct"}:
+            return False
+        return "ret=-2" in str(item.get("last_error", "")).strip()
 
     def _should_suppress_pending_item(self, *, kind: str, origin: str) -> bool:
         return (
@@ -1407,7 +1495,10 @@ class BridgeDaemon:
             blocked_for_rebind_count = sum(
                 1
                 for item in visible_items
-                if self._origin_uses_live_context(str(item.get("origin", "bridge")))
+                if self._pending_item_requires_rebind_pause(
+                    item,
+                    origin=str(item.get("origin", "bridge")),
+                )
             )
         # Stale items bypass wait_for_bind, so they are deliverable even
         # when the bind flag is set.
@@ -1432,8 +1523,86 @@ class BridgeDaemon:
         # resume from the server's current stream instead of retrying forever.
         return ret in {-1, -14} or errcode in {-1, -14}
 
+    def _pending_item_key(self, item: dict[str, str]) -> tuple[str, str, str, str, str, str]:
+        return (
+            str(item.get("to", "")),
+            str(item.get("text", "")).strip(),
+            str(item.get("kind", "message")),
+            str(item.get("origin", "bridge")),
+            str(item.get("thread_id", "")),
+            str(item.get("tmux_session", "")),
+        )
+
+    def _merge_external_state(self) -> None:
+        state_file = self.config.state_file
+        if not state_file.exists():
+            return
+        try:
+            mtime_ns = state_file.stat().st_mtime_ns
+        except OSError:
+            return
+        if mtime_ns <= self._last_external_state_mtime_ns:
+            return
+        try:
+            external = BridgeState.load(state_file)
+        except Exception:  # noqa: BLE001
+            return
+        with self._lock:
+            if external.delivery_seq > self.state.delivery_seq:
+                self.state.delivery_seq = external.delivery_seq
+            if not self.state.bound_user_id and external.bound_user_id:
+                self.state.bound_user_id = external.bound_user_id
+            if not self.state.bound_context_token and external.bound_context_token:
+                self.state.bound_context_token = external.bound_context_token
+            if not self.state.active_session_id and external.active_session_id:
+                self.state.active_session_id = external.active_session_id
+            if not self.state.active_tmux_session and external.active_tmux_session:
+                self.state.active_tmux_session = external.active_tmux_session
+            if external.outbox_waiting_for_bind and not self.state.outbox_waiting_for_bind:
+                self.state.outbox_waiting_for_bind = True
+                self.state.outbox_waiting_for_bind_since = (
+                    external.outbox_waiting_for_bind_since
+                    or self.state.outbox_waiting_for_bind_since
+                )
+            if external.pending_outbox_overflow_dropped > self.state.pending_outbox_overflow_dropped:
+                self.state.pending_outbox_overflow_dropped = external.pending_outbox_overflow_dropped
+            for thread_id, record in external.sessions.items():
+                if thread_id not in self.state.sessions:
+                    self.state.sessions[thread_id] = record
+
+            existing = {
+                self._pending_item_key(item): item for item in self.state.pending_outbox
+            }
+            for ext_item in external.pending_outbox:
+                key = self._pending_item_key(ext_item)
+                current = existing.get(key)
+                if current is None:
+                    cloned = dict(ext_item)
+                    self.state.pending_outbox.append(cloned)
+                    existing[key] = cloned
+                    continue
+                current["attempt_count"] = max(
+                    int(current.get("attempt_count", 1) or 1),
+                    int(ext_item.get("attempt_count", 1) or 1),
+                )
+                ext_last_attempt = str(ext_item.get("last_attempt_at", "")).strip()
+                cur_last_attempt = str(current.get("last_attempt_at", "")).strip()
+                if ext_last_attempt and ext_last_attempt > cur_last_attempt:
+                    current["last_attempt_at"] = ext_last_attempt
+                if ext_item.get("last_error") and not current.get("last_error"):
+                    current["last_error"] = str(ext_item.get("last_error", ""))
+                ext_created = str(ext_item.get("created_at", "")).strip()
+                cur_created = str(current.get("created_at", "")).strip()
+                if ext_created and (not cur_created or ext_created < cur_created):
+                    current["created_at"] = ext_created
+            self._last_external_state_mtime_ns = mtime_ns
+
     def _save_state(self) -> None:
         self.state.save(self.config.state_file)
+        try:
+            self._last_external_state_mtime_ns = self.config.state_file.stat().st_mtime_ns
+        except OSError:
+            pass
 
     def _queue_text(self) -> str:
         items = list(self.state.pending_outbox)
