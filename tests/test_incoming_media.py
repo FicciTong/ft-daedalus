@@ -57,3 +57,32 @@ class IncomingMediaTests(unittest.TestCase):
                     target_dir=Path(tmpdir),
                     message_id="msg-123",
                 )
+
+    def test_download_incoming_image_decrypts_media_query(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image = IncomingImageRef(
+                index=0,
+                media_encrypt_query_param="encrypted-query",
+                aes_key="00112233445566778899aabbccddeeff",
+                has_media_info=True,
+            )
+            encrypted_body = b"encrypted-body"
+            with patch(
+                "daedalus_wechat.incoming_media._download_bytes",
+                return_value=(encrypted_body, "application/octet-stream"),
+            ), patch(
+                "daedalus_wechat.incoming_media._decrypt_aes_128_ecb",
+                return_value=b"\x89PNG\r\n\x1a\nplaintext",
+            ):
+                saved = download_incoming_image(
+                    image,
+                    target_dir=Path(tmpdir),
+                    message_id="msg-enc",
+                    cdn_base_url="https://ilinkai.weixin.qq.com",
+                )
+            self.assertEqual(saved.path.suffix, ".png")
+            self.assertTrue(
+                saved.source_url.startswith(
+                    "https://ilinkai.weixin.qq.com/download?encrypted_query_param="
+                )
+            )

@@ -1896,6 +1896,60 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(runner.submitted, [])
             self.assertIn("无法取回可用本地文件", fake_wechat.sent[-1][2])
 
+    def test_encrypted_image_without_direct_url_is_downloaded_and_submitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=BridgeState(
+                    active_session_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                ),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-image",
+                    "message_id": "msg-image-3",
+                    "item_list": [
+                        {
+                            "type": 2,
+                            "image_item": {
+                                "media": {
+                                    "encrypt_query_param": "enc-param",
+                                    "aes_key": "MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
+                                },
+                                "aeskey": "00112233445566778899aabbccddeeff",
+                            },
+                        }
+                    ],
+                }
+            )
+            assert incoming is not None
+            with patch(
+                "daedalus_wechat.daemon.download_incoming_image",
+                return_value=SavedIncomingImage(
+                    index=0,
+                    path=Path("/tmp/incoming_media/msg-image-3_1.png"),
+                    source_url="https://ilinkai.weixin.qq.com/download?encrypted_query_param=enc-param",
+                    content_type="",
+                    size_bytes=2222,
+                ),
+            ):
+                daemon._handle_incoming(incoming)
+            self.assertIn("/tmp/incoming_media/msg-image-3_1.png", runner.submitted[-1][1])
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                (
+                    "user@im.wechat",
+                    "ctx-image",
+                    "⚙️ 已收到 1 张图片并注入 terminal。",
+                ),
+            )
+
     def test_recent_replays_latest_outgoing_messages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state_dir = Path(tmpdir)

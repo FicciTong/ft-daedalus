@@ -1112,6 +1112,9 @@ class BridgeDaemon:
                     image,
                     target_dir=self.config.incoming_media_dir,
                     message_id=incoming.message_id or "wechat-image",
+                    cdn_base_url=str(
+                        getattr(getattr(self.wechat, "account", None), "base_url", "") or ""
+                    ).strip(),
                 )
             except Exception as exc:  # noqa: BLE001
                 reason = str(exc)
@@ -1193,6 +1196,16 @@ class BridgeDaemon:
                         url=str(image_item.get("url", "")).strip(),
                         has_media_info=isinstance(media, dict) and bool(media),
                         aes_key=str(image_item.get("aeskey", "")).strip(),
+                        media_encrypt_query_param=(
+                            str(media.get("encrypt_query_param", "")).strip()
+                            if isinstance(media, dict)
+                            else ""
+                        ),
+                        media_aes_key=(
+                            str(media.get("aes_key", "")).strip()
+                            if isinstance(media, dict)
+                            else ""
+                        ),
                     )
                 )
                 continue

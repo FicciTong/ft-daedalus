@@ -61,10 +61,12 @@ Inbound owner input currently supports:
 
 - plain text
 - voice messages when WeChat provides transcript text
-- image messages with direct `image_item.url`
+- image messages with either:
+  - direct `image_item.url`
+  - encrypted `image_item.media.encrypt_query_param` plus usable AES key fields
   - the bridge saves them under `~/.local/state/daedalus-wechat/incoming_media/`
   - then injects the absolute local file path into the active Codex session
-  - encrypted media without a direct URL still fails closed for now
+  - image payloads that still lack enough decrypt material continue to fail closed
 
 ## 🧭 Truthful Boundaries
 
@@ -437,10 +439,16 @@ uv run daedalus-wechat send-bound "hello from desktop"
 Plain text messages are sent to whatever Codex thread is **currently active
 inside the active live tmux session**.
 
-If you send a WeChat image that includes a direct `image_item.url`, the bridge
-now downloads it into the local bridge state dir and injects the absolute file
-path into the active Codex session so the live agent can inspect the image from
-disk.
+If you send a WeChat image, the bridge now tries the shortest truthful path in
+this order:
+
+1. use direct `image_item.url` when present
+2. otherwise use encrypted CDN media (`encrypt_query_param` + AES key) and
+   decrypt it locally
+
+When successful, the bridge saves the image into the local state dir and
+injects the absolute file path into the active Codex session so the live agent
+can inspect the image from disk.
 
 Examples:
 

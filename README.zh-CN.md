@@ -62,10 +62,12 @@ surface 落在这里。
 
 - 普通文本
 - 微信提供转写文本的语音
-- 带直接 `image_item.url` 的图片消息
+- 图片消息，支持两种最短正确路径：
+  - 直接 `image_item.url`
+  - `image_item.media.encrypt_query_param` + 可用 AES key 的加密图片
   - bridge 会把图片落到 `~/.local/state/daedalus-wechat/incoming_media/`
   - 再把绝对本地路径注入当前 active Codex session
-  - 只有加密 media、没有直链的图片目前仍然 fail-closed
+  - 仍然缺少足够解密材料的图片继续 fail-closed
 
 ## 🧭 这套东西的真实边界
 
@@ -424,9 +426,13 @@ uv run daedalus-wechat send-bound "hello from desktop"
 帮我检查今天的 package outcome
 ```
 
-如果你发的是带直接 `image_item.url` 的微信图片，bridge 现在会先把图下载到
-本地 state dir，再把绝对路径注入当前 active Codex session，让 live agent
-直接从磁盘读图。
+如果你发的是微信图片，bridge 现在会按这两个顺序尝试：
+
+1. 直接使用 `image_item.url`
+2. 如果没有直链，就走加密 CDN media 下载 + 本地解密
+
+成功后会先把图片落到本地 state dir，再把绝对路径注入当前 active Codex
+session，让 live agent 直接从磁盘读图。
 
 手机侧语义：
 
