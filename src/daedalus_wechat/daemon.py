@@ -10,6 +10,7 @@ from zoneinfo import ZoneInfo
 
 from .config import BridgeConfig
 from .delivery_ledger import append_delivery, read_recent_for_user
+from .incoming_media import IncomingImageRef, SavedIncomingImage, download_incoming_image
 from .live_session import PLAN_MARKER, LiveCodexSessionManager
 from .state import BridgeState, now_iso
 from .systemd_notify import notify as systemd_notify
@@ -64,6 +65,7 @@ class IncomingMessage:
     message_id: str
     is_voice: bool = False
     has_transcript: bool = False
+    images: tuple[IncomingImageRef, ...] = ()
 
 
 class BridgeDaemon:
@@ -186,10 +188,10 @@ class BridgeDaemon:
             )
             self._flush_bound_outbox_if_any()
             return
-        if not body:
+        if not body and not incoming.images:
             self._flush_bound_outbox_if_any()
             return
-        if body.startswith("/") or body.startswith("\\"):
+        if (body.startswith("/") or body.startswith("\\")) and not incoming.images:
             with self._lock:
                 reply = self._handle_command(body)
                 thread_id = self.state.active_session_id
@@ -204,13 +206,36 @@ class BridgeDaemon:
             )
             self._flush_bound_outbox_if_any()
             return
+        saved_images, image_failures = self._materialize_incoming_images(incoming)
+        if incoming.images and not saved_images:
+            error_text = "收到图片，但当前无法取回可用本地文件。"
+            if image_failures:
+                error_text = f"{error_text}\n" + "\n".join(
+                    f"- {reason}" for reason in image_failures
+                )
+            self._reply(
+                incoming.from_user_id,
+                incoming.context_token,
+                error_text,
+                kind="progress",
+                origin="wechat-prompt-error",
+                thread_id=self.state.active_session_id,
+                tmux_session=self.state.active_tmux_session,
+            )
+            self._flush_bound_outbox_if_any()
+            return
         with self._lock:
             active_record = self.runner.require_live_session(self.state)
             self.state.active_session_id = active_record.thread_id
             self.state.active_tmux_session = active_record.tmux_session
             self._sync_mirror_cursor(active_record.thread_id)
             self._save_state()
-        refreshed = self.runner.submit_prompt(record=active_record, prompt=incoming.body)
+        prompt = self._compose_prompt(
+            incoming=incoming,
+            saved_images=saved_images,
+            image_failures=image_failures,
+        )
+        refreshed = self.runner.submit_prompt(record=active_record, prompt=prompt)
         with self._lock:
             self.state.active_session_id = refreshed.thread_id
             self.state.active_tmux_session = refreshed.tmux_session
@@ -228,13 +253,16 @@ class BridgeDaemon:
             {
                 "thread": self._short_thread(thread_id),
                 "from": incoming.from_user_id,
-                "body": incoming.body[:400],
+                "body": prompt[:400],
             },
         )
+        ack_text = "已注入 terminal。"
+        if saved_images:
+            ack_text = f"已收到 {len(saved_images)} 张图片并注入 terminal。"
         self._reply(
             incoming.from_user_id,
             incoming.context_token,
-            "已注入 terminal。",
+            ack_text,
             kind="progress",
             origin="wechat-prompt-submitted",
             thread_id=thread_id,
@@ -1073,25 +1101,110 @@ class BridgeDaemon:
             current = current[limit:]
         return chunks
 
+    def _materialize_incoming_images(
+        self, incoming: IncomingMessage
+    ) -> tuple[list[SavedIncomingImage], list[str]]:
+        saved: list[SavedIncomingImage] = []
+        failures: list[str] = []
+        for image in incoming.images:
+            try:
+                saved_image = download_incoming_image(
+                    image,
+                    target_dir=self.config.incoming_media_dir,
+                    message_id=incoming.message_id or "wechat-image",
+                )
+            except Exception as exc:  # noqa: BLE001
+                reason = str(exc)
+                if image.has_media_info and not image.url:
+                    reason = "image_item has encrypted media but no direct url yet"
+                failures.append(f"image {image.index + 1}: {reason}")
+                self._log_event(
+                    "incoming_image_unavailable",
+                    {
+                        "message_id": incoming.message_id,
+                        "index": image.index + 1,
+                        "url": image.url[:400],
+                        "reason": reason,
+                    },
+                )
+                continue
+            saved.append(saved_image)
+            self._log_event(
+                "incoming_image_saved",
+                {
+                    "message_id": incoming.message_id,
+                    "index": saved_image.index + 1,
+                    "path": str(saved_image.path),
+                    "bytes": saved_image.size_bytes,
+                    "content_type": saved_image.content_type,
+                },
+            )
+        return saved, failures
+
+    def _compose_prompt(
+        self,
+        *,
+        incoming: IncomingMessage,
+        saved_images: list[SavedIncomingImage],
+        image_failures: list[str],
+    ) -> str:
+        body = incoming.body.strip()
+        if not saved_images and not image_failures:
+            return body
+        parts: list[str] = []
+        if saved_images:
+            lines = [
+                "Owner 通过微信发送了图片。",
+                "如果你的判断依赖图片，请先查看这些本地图片文件，再回答。",
+            ]
+            for image in saved_images:
+                lines.append(f"- image {image.index + 1}: {image.path}")
+            parts.append("\n".join(lines))
+        if image_failures:
+            parts.append(
+                "图片 ingress 备注：\n" + "\n".join(f"- {reason}" for reason in image_failures)
+            )
+        if body:
+            parts.append("Owner 消息：\n" + body)
+        elif saved_images:
+            parts.append("Owner 没有附加文字。请直接检查图片，并如实说明你看到的内容。")
+        return "\n\n".join(part.strip() for part in parts if part.strip())
+
     def _parse_incoming(self, raw: dict) -> IncomingMessage | None:
         message_type = raw.get("message_type")
         if message_type == 2:
             return None
-        body = ""
+        body_parts: list[str] = []
         is_voice = False
         has_transcript = False
+        images: list[IncomingImageRef] = []
         for item in raw.get("item_list", []) or []:
             if item.get("type") == 1:
-                body = str(item.get("text_item", {}).get("text", "")).strip()
-                break
+                text = str(item.get("text_item", {}).get("text", "")).strip()
+                if text:
+                    body_parts.append(text)
+                continue
+            if item.get("type") == 2:
+                image_item = item.get("image_item", {}) or {}
+                media = image_item.get("media")
+                images.append(
+                    IncomingImageRef(
+                        index=len(images),
+                        url=str(image_item.get("url", "")).strip(),
+                        has_media_info=isinstance(media, dict) and bool(media),
+                        aes_key=str(image_item.get("aeskey", "")).strip(),
+                    )
+                )
+                continue
             if item.get("type") == 3:
                 is_voice = True
                 voice_text = item.get("voice_item", {}).get("text")
                 if voice_text:
-                    body = str(voice_text).strip()
+                    body_parts.append(str(voice_text).strip())
                     has_transcript = True
-                    break
-        if not body and not is_voice:
+                continue
+        body = "\n".join(part for part in body_parts if part).strip()
+        if not body and not is_voice and not images:
             return None
         return IncomingMessage(
             from_user_id=str(raw.get("from_user_id", "")),
@@ -1100,6 +1213,7 @@ class BridgeDaemon:
             message_id=str(raw.get("message_id", "")),
             is_voice=is_voice,
             has_transcript=has_transcript,
+            images=tuple(images),
         )
 
     def _is_authorized_sender(self, from_user_id: str) -> bool:

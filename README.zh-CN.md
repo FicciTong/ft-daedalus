@@ -58,6 +58,15 @@ surface 落在这里。
 - `⏳` = progress commentary
 - `✅` = 这一轮真的结束了
 
+当前 owner 入站支持：
+
+- 普通文本
+- 微信提供转写文本的语音
+- 带直接 `image_item.url` 的图片消息
+  - bridge 会把图片落到 `~/.local/state/daedalus-wechat/incoming_media/`
+  - 再把绝对本地路径注入当前 active Codex session
+  - 只有加密 media、没有直链的图片目前仍然 fail-closed
+
 ## 🧭 这套东西的真实边界
 
 它：
@@ -414,6 +423,10 @@ uv run daedalus-wechat send-bound "hello from desktop"
 /switch 123
 帮我检查今天的 package outcome
 ```
+
+如果你发的是带直接 `image_item.url` 的微信图片，bridge 现在会先把图下载到
+本地 state dir，再把绝对路径注入当前 active Codex session，让 live agent
+直接从磁盘读图。
 
 手机侧语义：
 

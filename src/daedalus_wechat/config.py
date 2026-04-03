@@ -35,6 +35,10 @@ class BridgeConfig:
         return self.state_dir / "deliveries.jsonl"
 
     @property
+    def incoming_media_dir(self) -> Path:
+        return self.state_dir / "incoming_media"
+
+    @property
     def openclaw_state_dir(self) -> Path:
         if self.openclaw_profile == "default":
             return Path.home() / ".openclaw"

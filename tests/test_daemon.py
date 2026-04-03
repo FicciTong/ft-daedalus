@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from daedalus_wechat.config import BridgeConfig
 from daedalus_wechat.daemon import BridgeDaemon
+from daedalus_wechat.incoming_media import SavedIncomingImage
 from daedalus_wechat.live_session import (
     PLAN_MARKER,
     LiveRuntimeStatus,
@@ -1725,6 +1726,32 @@ class DaemonTests(unittest.TestCase):
             self.assertTrue(incoming.is_voice)
             self.assertFalse(incoming.has_transcript)
 
+    def test_image_without_message_type_is_still_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-image",
+                    "message_id": "msg-image",
+                    "item_list": [
+                        {
+                            "type": 2,
+                            "image_item": {"url": "https://example.com/test.jpg"},
+                        }
+                    ],
+                }
+            )
+            self.assertIsNotNone(incoming)
+            assert incoming is not None
+            self.assertEqual(len(incoming.images), 1)
+            self.assertEqual(incoming.images[0].url, "https://example.com/test.jpg")
+
     def test_explicit_bot_message_type_is_ignored(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             daemon = _TestDaemon(
@@ -1780,6 +1807,94 @@ class DaemonTests(unittest.TestCase):
                     "⚙️ 已注入 terminal。",
                 ),
             )
+
+    def test_image_prompt_is_submitted_with_local_file_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=BridgeState(
+                    active_session_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                ),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-image",
+                    "message_id": "msg-image-1",
+                    "item_list": [
+                        {
+                            "type": 2,
+                            "image_item": {"url": "https://example.com/test.jpg"},
+                        },
+                        {"type": 1, "text_item": {"text": "看下这张图"}},
+                    ],
+                }
+            )
+            self.assertIsNotNone(incoming)
+            assert incoming is not None
+            with patch(
+                "daedalus_wechat.daemon.download_incoming_image",
+                return_value=SavedIncomingImage(
+                    index=0,
+                    path=Path("/tmp/incoming_media/msg-image-1_1.jpg"),
+                    source_url="https://example.com/test.jpg",
+                    content_type="image/jpeg",
+                    size_bytes=1234,
+                ),
+            ):
+                daemon._handle_incoming(incoming)
+            submitted_prompt = runner.submitted[-1][1]
+            self.assertIn("Owner 通过微信发送了图片", submitted_prompt)
+            self.assertIn("/tmp/incoming_media/msg-image-1_1.jpg", submitted_prompt)
+            self.assertIn("看下这张图", submitted_prompt)
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                (
+                    "user@im.wechat",
+                    "ctx-image",
+                    "⚙️ 已收到 1 张图片并注入 terminal。",
+                ),
+            )
+
+    def test_image_without_direct_url_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=BridgeState(
+                    active_session_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                ),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-image",
+                    "message_id": "msg-image-2",
+                    "item_list": [
+                        {
+                            "type": 2,
+                            "image_item": {
+                                "media": {"encrypt_query_param": "abc"},
+                                "aeskey": "00112233",
+                            },
+                        }
+                    ],
+                }
+            )
+            self.assertIsNotNone(incoming)
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            self.assertEqual(runner.submitted, [])
+            self.assertIn("无法取回可用本地文件", fake_wechat.sent[-1][2])
 
     def test_recent_replays_latest_outgoing_messages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
