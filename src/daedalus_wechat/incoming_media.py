@@ -30,6 +30,9 @@ class IncomingImageRef:
     aes_key: str = ""
     media_encrypt_query_param: str = ""
     media_aes_key: str = ""
+    media_source: str = ""
+    media_keys: tuple[str, ...] = ()
+    thumb_media_keys: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -77,11 +80,11 @@ def _sniff_image_suffix(payload: bytes) -> str:
     return ".img"
 
 
-def _parse_aes_key_bytes(image: IncomingImageRef) -> bytes:
+def _parse_aes_key_bytes(image: IncomingImageRef) -> bytes | None:
     if image.aes_key:
         return bytes.fromhex(image.aes_key)
     if not image.media_aes_key:
-        raise RuntimeError("encrypted image has no aes key")
+        return None
     decoded = base64.b64decode(image.media_aes_key)
     if len(decoded) == 16:
         return decoded
@@ -155,12 +158,16 @@ def download_incoming_image(
             + "/download?encrypted_query_param="
             + quote(image.media_encrypt_query_param, safe="")
         )
-        encrypted_payload, _ = _download_bytes(source_url, max_bytes=max_bytes)
-        payload = _decrypt_aes_128_ecb(
-            encrypted_payload,
-            key_bytes=_parse_aes_key_bytes(image),
-        )
-        content_type = ""
+        encrypted_payload, content_type = _download_bytes(source_url, max_bytes=max_bytes)
+        key_bytes = _parse_aes_key_bytes(image)
+        if key_bytes is None:
+            payload = encrypted_payload
+        else:
+            payload = _decrypt_aes_128_ecb(
+                encrypted_payload,
+                key_bytes=key_bytes,
+            )
+            content_type = ""
     else:
         raise RuntimeError("image_item has no direct url or encrypted media query")
     suffix = _suffix_for_image(content_type=content_type, url=source_url)

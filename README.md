@@ -64,9 +64,12 @@ Inbound owner input currently supports:
 - image messages with either:
   - direct `image_item.url`
   - encrypted `image_item.media.encrypt_query_param` plus usable AES key fields
+  - or a plain CDN fallback attempt when the encrypted query is present but no
+    AES key is provided
   - the bridge saves them under `~/.local/state/daedalus-wechat/incoming_media/`
   - then injects the absolute local file path into the active Codex session
-  - image payloads that still lack enough decrypt material continue to fail closed
+  - image payloads that still cannot be reconstructed truthfully continue to
+    fail closed
 
 ## 🧭 Truthful Boundaries
 

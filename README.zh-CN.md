@@ -65,9 +65,10 @@ surface 落在这里。
 - 图片消息，支持两种最短正确路径：
   - 直接 `image_item.url`
   - `image_item.media.encrypt_query_param` + 可用 AES key 的加密图片
+  - 如果只有加密 query、没有 AES key，也会先按 plain CDN 路径尝试一次
   - bridge 会把图片落到 `~/.local/state/daedalus-wechat/incoming_media/`
   - 再把绝对本地路径注入当前 active Codex session
-  - 仍然缺少足够解密材料的图片继续 fail-closed
+  - 仍然无法被 truthfully 重建的图片继续 fail-closed
 
 ## 🧭 这套东西的真实边界
 

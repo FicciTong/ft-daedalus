@@ -1118,8 +1118,6 @@ class BridgeDaemon:
                 )
             except Exception as exc:  # noqa: BLE001
                 reason = str(exc)
-                if image.has_media_info and not image.url:
-                    reason = "image_item has encrypted media but no direct url yet"
                 failures.append(f"image {image.index + 1}: {reason}")
                 self._log_event(
                     "incoming_image_unavailable",
@@ -1128,6 +1126,12 @@ class BridgeDaemon:
                         "index": image.index + 1,
                         "url": image.url[:400],
                         "reason": reason,
+                        "has_media_info": image.has_media_info,
+                        "media_source": image.media_source,
+                        "has_encrypt_query": bool(image.media_encrypt_query_param),
+                        "has_aes": bool(image.aes_key or image.media_aes_key),
+                        "media_keys": list(image.media_keys),
+                        "thumb_media_keys": list(image.thumb_media_keys),
                     },
                 )
                 continue
@@ -1190,22 +1194,50 @@ class BridgeDaemon:
             if item.get("type") == 2:
                 image_item = item.get("image_item", {}) or {}
                 media = image_item.get("media")
+                thumb_media = image_item.get("thumb_media")
+                media_dict = media if isinstance(media, dict) else {}
+                thumb_media_dict = thumb_media if isinstance(thumb_media, dict) else {}
+                chosen_media = media_dict
+                chosen_source = "media"
+                if not self._first_non_empty(
+                    media_dict,
+                    "encrypt_query_param",
+                    "encrypted_query_param",
+                    "encryptQueryParam",
+                ) and self._first_non_empty(
+                    thumb_media_dict,
+                    "encrypt_query_param",
+                    "encrypted_query_param",
+                    "encryptQueryParam",
+                ):
+                    chosen_media = thumb_media_dict
+                    chosen_source = "thumb_media"
                 images.append(
                     IncomingImageRef(
                         index=len(images),
                         url=str(image_item.get("url", "")).strip(),
-                        has_media_info=isinstance(media, dict) and bool(media),
-                        aes_key=str(image_item.get("aeskey", "")).strip(),
+                        has_media_info=bool(media_dict or thumb_media_dict),
+                        aes_key=self._first_non_empty(
+                            image_item, "aeskey", "aes_key", "aesKey"
+                        ),
                         media_encrypt_query_param=(
-                            str(media.get("encrypt_query_param", "")).strip()
-                            if isinstance(media, dict)
-                            else ""
+                            self._first_non_empty(
+                                chosen_media,
+                                "encrypt_query_param",
+                                "encrypted_query_param",
+                                "encryptQueryParam",
+                            )
                         ),
                         media_aes_key=(
-                            str(media.get("aes_key", "")).strip()
-                            if isinstance(media, dict)
-                            else ""
+                            self._first_non_empty(
+                                chosen_media,
+                                "aes_key",
+                                "aesKey",
+                            )
                         ),
+                        media_source=chosen_source if chosen_media else "",
+                        media_keys=tuple(sorted(media_dict.keys())),
+                        thumb_media_keys=tuple(sorted(thumb_media_dict.keys())),
                     )
                 )
                 continue
@@ -1228,6 +1260,17 @@ class BridgeDaemon:
             has_transcript=has_transcript,
             images=tuple(images),
         )
+
+    @staticmethod
+    def _first_non_empty(mapping: dict, *keys: str) -> str:
+        for key in keys:
+            value = mapping.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
 
     def _is_authorized_sender(self, from_user_id: str) -> bool:
         if not self.config.allowed_users:

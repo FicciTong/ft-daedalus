@@ -1950,6 +1950,43 @@ class DaemonTests(unittest.TestCase):
                 ),
             )
 
+    def test_parse_incoming_image_supports_thumb_media_and_field_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-image",
+                    "message_id": "msg-image-4",
+                    "item_list": [
+                        {
+                            "type": 2,
+                            "image_item": {
+                                "thumb_media": {
+                                    "encrypted_query_param": "thumb-enc",
+                                    "aesKey": "MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
+                                },
+                                "aes_key": "00112233445566778899aabbccddeeff",
+                            },
+                        }
+                    ],
+                }
+            )
+            assert incoming is not None
+            self.assertEqual(len(incoming.images), 1)
+            image = incoming.images[0]
+            self.assertEqual(image.media_source, "thumb_media")
+            self.assertEqual(image.media_encrypt_query_param, "thumb-enc")
+            self.assertEqual(
+                image.aes_key, "00112233445566778899aabbccddeeff"
+            )
+
     def test_recent_replays_latest_outgoing_messages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state_dir = Path(tmpdir)

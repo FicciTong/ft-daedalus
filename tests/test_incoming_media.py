@@ -86,3 +86,27 @@ class IncomingMediaTests(unittest.TestCase):
                     "https://ilinkai.weixin.qq.com/download?encrypted_query_param="
                 )
             )
+
+    def test_download_incoming_image_allows_plain_cdn_fallback_without_aes_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            image = IncomingImageRef(
+                index=0,
+                media_encrypt_query_param="encrypted-query",
+                has_media_info=True,
+            )
+            plain_body = b"\x89PNG\r\n\x1a\nplaintext"
+            with patch(
+                "daedalus_wechat.incoming_media._download_bytes",
+                return_value=(plain_body, "image/png"),
+            ), patch(
+                "daedalus_wechat.incoming_media._decrypt_aes_128_ecb"
+            ) as decrypt_mock:
+                saved = download_incoming_image(
+                    image,
+                    target_dir=Path(tmpdir),
+                    message_id="msg-plain",
+                    cdn_base_url="https://ilinkai.weixin.qq.com",
+                )
+            decrypt_mock.assert_not_called()
+            self.assertEqual(saved.path.suffix, ".png")
+            self.assertEqual(saved.path.read_bytes(), plain_body)
