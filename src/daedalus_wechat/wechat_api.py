@@ -12,6 +12,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
+DEFAULT_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c"
+
 
 def _random_wechat_uin() -> str:
     value = secrets.randbelow(2**32)
@@ -38,6 +40,7 @@ def _derive_account_id(token: str, path: Path) -> str:
 class WeChatAccount:
     token: str
     base_url: str
+    cdn_base_url: str
     account_id: str
     user_id: str | None
 
@@ -46,11 +49,18 @@ class WeChatAccount:
         obj = json.loads(path.read_text())
         token = obj.get("token", "").strip()
         base_url = obj.get("baseUrl", "").strip()
+        cdn_base_url = obj.get("cdnBaseUrl", "").strip() or DEFAULT_CDN_BASE_URL
         account_id = obj.get("accountId", "").strip() or _derive_account_id(token, path)
         user_id = obj.get("userId")
         if not token or not base_url or not account_id:
             raise RuntimeError(f"Incomplete WeChat account file: {path}")
-        return cls(token=token, base_url=base_url, account_id=account_id, user_id=user_id)
+        return cls(
+            token=token,
+            base_url=base_url,
+            cdn_base_url=cdn_base_url,
+            account_id=account_id,
+            user_id=user_id,
+        )
 
 
 class WeChatClient:

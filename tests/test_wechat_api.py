@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
+from pathlib import Path
 
-from daedalus_wechat.wechat_api import WeChatAccount, WeChatClient
+from daedalus_wechat.wechat_api import (
+    DEFAULT_CDN_BASE_URL,
+    WeChatAccount,
+    WeChatClient,
+)
 
 
 class _RetryClient(WeChatClient):
@@ -11,6 +17,7 @@ class _RetryClient(WeChatClient):
             WeChatAccount(
                 token="token",
                 base_url="http://localhost",
+                cdn_base_url="http://cdn.localhost",
                 account_id="test-bot",
                 user_id=None,
             )
@@ -27,6 +34,21 @@ class _RetryClient(WeChatClient):
 
 
 class WeChatApiTests(unittest.TestCase):
+    def test_load_defaults_cdn_base_url_when_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "account.json"
+            path.write_text(
+                '{\n'
+                '  "token": "tok",\n'
+                '  "baseUrl": "https://ilinkai.weixin.qq.com",\n'
+                '  "accountId": "bot",\n'
+                '  "userId": "u@im.wechat"\n'
+                '}\n',
+                encoding="utf-8",
+            )
+            account = WeChatAccount.load(path)
+            self.assertEqual(account.cdn_base_url, DEFAULT_CDN_BASE_URL)
+
     def test_send_text_retries_without_context_token_on_ret_minus_2(self) -> None:
         client = _RetryClient()
         response = client.send_text(

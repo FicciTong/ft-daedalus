@@ -157,6 +157,8 @@ def _import_latest_openclaw_account(config, state: BridgeState) -> int:
     account_obj = json.loads(account_src.read_text())
     if not account_obj.get("accountId"):
         account_obj["accountId"] = account_src.stem
+    if not account_obj.get("cdnBaseUrl"):
+        account_obj["cdnBaseUrl"] = "https://novac2c.cdn.weixin.qq.com/c2c"
     config.account_file.write_text(
         json.dumps(account_obj, ensure_ascii=False, indent=2) + "\n"
     )

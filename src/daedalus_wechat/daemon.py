@@ -14,7 +14,7 @@ from .incoming_media import IncomingImageRef, SavedIncomingImage, download_incom
 from .live_session import PLAN_MARKER, LiveCodexSessionManager
 from .state import BridgeState, now_iso
 from .systemd_notify import notify as systemd_notify
-from .wechat_api import WeChatClient
+from .wechat_api import DEFAULT_CDN_BASE_URL, WeChatClient
 
 DISPLAY_TZ = ZoneInfo("Asia/Shanghai")
 STALE_AUTO_FLUSH_SECONDS = 300.0
@@ -1113,7 +1113,12 @@ class BridgeDaemon:
                     target_dir=self.config.incoming_media_dir,
                     message_id=incoming.message_id or "wechat-image",
                     cdn_base_url=str(
-                        getattr(getattr(self.wechat, "account", None), "base_url", "") or ""
+                        getattr(
+                            getattr(self.wechat, "account", None),
+                            "cdn_base_url",
+                            DEFAULT_CDN_BASE_URL,
+                        )
+                        or DEFAULT_CDN_BASE_URL
                     ).strip(),
                 )
             except Exception as exc:  # noqa: BLE001
