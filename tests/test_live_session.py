@@ -114,7 +114,9 @@ class LiveSessionTests(unittest.TestCase):
                     )
             self.assertEqual(reply, "WECHAT_FINAL_ONLY_OK")
 
-    def test_send_prompt_falls_back_to_visible_pane_reply_when_final_missing(self) -> None:
+    def test_send_prompt_falls_back_to_visible_pane_reply_when_final_missing(
+        self,
+    ) -> None:
         record = SessionRecord(
             thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
             label="attached-last",
@@ -125,10 +127,16 @@ class LiveSessionTests(unittest.TestCase):
             tmux_session="codex",
         )
         with patch.object(self.runner, "_ensure_running_tmux", return_value="codex"):
-            with patch.object(self.runner, "_capture_clean_text", side_effect=["baseline", "baseline"]):
-                with patch.object(self.runner, "_resolve_rollout_file", return_value=None):
+            with patch.object(
+                self.runner, "_capture_clean_text", side_effect=["baseline", "baseline"]
+            ):
+                with patch.object(
+                    self.runner, "_resolve_rollout_file", return_value=None
+                ):
                     with patch.object(self.runner, "_inject_prompt") as inject_mock:
-                        with patch.object(self.runner, "_wait_for_final_reply", return_value=""):
+                        with patch.object(
+                            self.runner, "_wait_for_final_reply", return_value=""
+                        ):
                             with patch.object(
                                 self.runner,
                                 "_collect_response",
@@ -282,6 +290,193 @@ class LiveSessionTests(unittest.TestCase):
         self.assertEqual(scan.progress_texts, [])
         self.assertGreater(scan.end_offset, 0)
 
+    def test_latest_mirror_since_keeps_opencode_final_with_later_commentary(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "opencode.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.executescript(
+                    """
+                    create table session (
+                        id text primary key,
+                        directory text not null,
+                        time_created integer not null,
+                        time_updated integer not null,
+                        time_archived integer
+                    );
+                    create table message (
+                        id text primary key,
+                        session_id text not null,
+                        time_created integer not null,
+                        time_updated integer not null,
+                        data text not null
+                    );
+                    create table part (
+                        id text primary key,
+                        message_id text not null,
+                        session_id text not null,
+                        time_created integer not null,
+                        time_updated integer not null,
+                        data text not null
+                    );
+                    """
+                )
+                conn.execute(
+                    "insert into session (id, directory, time_created, time_updated, time_archived) values (?, ?, ?, ?, null)",
+                    ("ses_test", "/tmp", 10, 40),
+                )
+                conn.execute(
+                    "insert into message (id, session_id, time_created, time_updated, data) values (?, ?, ?, ?, ?)",
+                    (
+                        "msg_final",
+                        "ses_test",
+                        10,
+                        20,
+                        json.dumps({"role": "assistant"}, ensure_ascii=False),
+                    ),
+                )
+                conn.execute(
+                    "insert into message (id, session_id, time_created, time_updated, data) values (?, ?, ?, ?, ?)",
+                    (
+                        "msg_progress",
+                        "ses_test",
+                        30,
+                        40,
+                        json.dumps({"role": "assistant"}, ensure_ascii=False),
+                    ),
+                )
+                conn.execute(
+                    "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?, ?, ?, ?, ?, ?)",
+                    (
+                        "part_final",
+                        "msg_final",
+                        "ses_test",
+                        10,
+                        20,
+                        json.dumps(
+                            {
+                                "type": "text",
+                                "text": "OK",
+                                "metadata": {"openai": {"phase": "final_answer"}},
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ),
+                )
+                conn.execute(
+                    "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?, ?, ?, ?, ?, ?)",
+                    (
+                        "part_progress",
+                        "msg_progress",
+                        "ses_test",
+                        30,
+                        40,
+                        json.dumps(
+                            {
+                                "type": "text",
+                                "text": "later commentary",
+                                "metadata": {"openai": {"phase": "commentary"}},
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            self.runner.opencode_state_db = db_path
+            scan = self.runner.latest_mirror_since(thread_id="ses_test", start_offset=0)
+        self.assertIsNotNone(scan)
+        assert scan is not None
+        self.assertEqual(scan.final_text, "OK")
+        self.assertEqual(scan.progress_texts, ["later commentary"])
+        self.assertGreater(scan.end_offset, 0)
+
+    def test_latest_mirror_since_reads_opencode_stop_finished_text_as_final(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "opencode.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.executescript(
+                    """
+                    create table session (
+                        id text primary key,
+                        directory text not null,
+                        time_created integer not null,
+                        time_updated integer not null,
+                        time_archived integer
+                    );
+                    create table message (
+                        id text primary key,
+                        session_id text not null,
+                        time_created integer not null,
+                        time_updated integer not null,
+                        data text not null
+                    );
+                    create table part (
+                        id text primary key,
+                        message_id text not null,
+                        session_id text not null,
+                        time_created integer not null,
+                        time_updated integer not null,
+                        data text not null
+                    );
+                    """
+                )
+                conn.execute(
+                    "insert into session (id, directory, time_created, time_updated, time_archived) values (?, ?, ?, ?, null)",
+                    ("ses_test", "/tmp", 10, 20),
+                )
+                conn.execute(
+                    "insert into message (id, session_id, time_created, time_updated, data) values (?, ?, ?, ?, ?)",
+                    (
+                        "msg_assistant",
+                        "ses_test",
+                        10,
+                        20,
+                        json.dumps({"role": "assistant"}, ensure_ascii=False),
+                    ),
+                )
+                conn.execute(
+                    "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?, ?, ?, ?, ?, ?)",
+                    (
+                        "part_text",
+                        "msg_assistant",
+                        "ses_test",
+                        10,
+                        20,
+                        json.dumps({"type": "text", "text": " OK"}, ensure_ascii=False),
+                    ),
+                )
+                conn.execute(
+                    "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?, ?, ?, ?, ?, ?)",
+                    (
+                        "part_finish",
+                        "msg_assistant",
+                        "ses_test",
+                        11,
+                        21,
+                        json.dumps(
+                            {"type": "step-finish", "reason": "stop"},
+                            ensure_ascii=False,
+                        ),
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            self.runner.opencode_state_db = db_path
+            scan = self.runner.latest_mirror_since(thread_id="ses_test", start_offset=0)
+        self.assertIsNotNone(scan)
+        assert scan is not None
+        self.assertEqual(scan.final_text, "OK")
+        self.assertEqual(scan.progress_texts, [])
+        self.assertGreater(scan.end_offset, 0)
+
     def test_submit_prompt_resolves_opencode_session_from_db_after_inject(self) -> None:
         record = SessionRecord(
             thread_id="pending:opencode",
@@ -321,17 +516,69 @@ class LiveSessionTests(unittest.TestCase):
                         "_latest_opencode_session_info",
                         side_effect=[("ses_before", 10), ("ses_after", 25)],
                     ):
-                        with patch.object(self.runner, "_set_tmux_runtime_id") as set_hint:
-                            submitted = self.runner.submit_prompt(record=record, prompt="hello")
+                        with patch.object(
+                            self.runner, "_set_tmux_runtime_id"
+                        ) as set_hint:
+                            submitted = self.runner.submit_prompt(
+                                record=record, prompt="hello"
+                            )
         inject_mock.assert_called_once_with("opencode", "hello")
         set_hint.assert_called_with("opencode", "ses_after")
         self.assertEqual(submitted.thread_id, "ses_after")
 
-    def test_list_live_runtime_statuses_filters_to_workspace_codex_sessions(self) -> None:
+    def test_runtime_status_prefers_hinted_opencode_backend_for_node_shell(
+        self,
+    ) -> None:
+        with patch.object(self.runner, "_tmux_exists", return_value=True):
+            with patch.object(
+                self.runner, "_pane_current_command", return_value="node"
+            ):
+                with patch.object(
+                    self.runner, "_pane_current_path", return_value="/tmp"
+                ):
+                    with patch.object(
+                        self.runner, "_capture_clean_text", return_value=""
+                    ):
+                        with patch.object(
+                            self.runner, "_pane_start_command", return_value=""
+                        ):
+                            with patch.object(
+                                self.runner,
+                                "_get_tmux_runtime_id",
+                                return_value="ses_owner_opencode",
+                            ):
+                                status = self.runner._runtime_status_for_tmux(
+                                    "opencode"
+                                )
+        self.assertEqual(status.backend, "opencode")
+        self.assertEqual(status.thread_id, "ses_owner_opencode")
+
+    def test_resolve_opencode_session_prefers_db_truth_over_pending_tmux_hint(
+        self,
+    ) -> None:
+        with patch.object(
+            self.runner,
+            "_get_tmux_runtime_id",
+            return_value="pending:opencode",
+        ):
+            with patch.object(
+                self.runner,
+                "_latest_opencode_session_info",
+                return_value=("ses_old", 123),
+            ):
+                resolved = self.runner._resolve_opencode_session_id(
+                    tmux_session="opencode",
+                    pane_cwd="/tmp",
+                )
+        self.assertEqual(resolved, "ses_old")
+
+    def test_inventory_marks_duplicate_runtime_ids_without_guessing_backend(
+        self,
+    ) -> None:
         with patch.object(
             self.runner,
             "_list_tmux_sessions",
-            return_value=["codex", "123", "foreign", "idle"],
+            return_value=["codex", "opencode"],
         ):
             with patch.object(
                 self.runner,
@@ -341,31 +588,283 @@ class LiveSessionTests(unittest.TestCase):
                         tmux_session="codex",
                         exists=True,
                         pane_command="node",
+                        thread_id="ses_shared",
+                        pane_cwd="/tmp",
+                        backend="opencode",
+                    ),
+                    LiveRuntimeStatus(
+                        tmux_session="opencode",
+                        exists=True,
+                        pane_command="node",
+                        thread_id="ses_shared",
+                        pane_cwd="/tmp",
+                        backend="opencode",
+                    ),
+                    LiveRuntimeStatus(
+                        tmux_session="opencode",
+                        exists=True,
+                        pane_command="node",
+                        thread_id="ses_shared",
+                        pane_cwd="/tmp",
+                        backend="opencode",
+                    ),
+                    LiveRuntimeStatus(
+                        tmux_session="codex",
+                        exists=True,
+                        pane_command="node",
+                        thread_id="ses_shared",
+                        pane_cwd="/tmp",
+                        backend="opencode",
+                    ),
+                ],
+            ):
+                items = self.runner.list_tmux_runtime_inventory()
+        self.assertEqual(items[0].reason, "duplicate-runtime-id")
+        self.assertFalse(items[0].switchable)
+        self.assertEqual(items[1].reason, "duplicate-runtime-id")
+        self.assertFalse(items[1].switchable)
+
+    def test_resolve_opencode_session_prefers_tmux_title_before_latest_cwd(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "opencode.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.executescript(
+                    """
+                    create table session (
+                        id text primary key,
+                        directory text not null,
+                        title text not null,
+                        time_created integer not null,
+                        time_updated integer not null,
+                        time_archived integer
+                    );
+                    """
+                )
+                conn.execute(
+                    "insert into session (id, directory, title, time_created, time_updated, time_archived) values (?, ?, ?, ?, ?, ?)",
+                    ("ses_latest", "/tmp", "other", 10, 200, None),
+                )
+                conn.execute(
+                    "insert into session (id, directory, title, time_created, time_updated, time_archived) values (?, ?, ?, ?, ?, ?)",
+                    ("ses_match", "/tmp", "ockimi1", 10, 100, None),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            self.runner.opencode_state_db = db_path
+
+            with patch.object(self.runner, "_get_tmux_runtime_id", return_value=None):
+                resolved = self.runner._resolve_opencode_session_id(
+                    tmux_session="ockimi1",
+                    pane_cwd="/tmp",
+                )
+
+        self.assertEqual(resolved, "ses_match")
+
+    def test_resolve_opencode_session_prefers_db_truth_over_stale_tmux_hint(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "opencode.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.executescript(
+                    """
+                    create table session (
+                        id text primary key,
+                        directory text not null,
+                        title text not null,
+                        time_created integer not null,
+                        time_updated integer not null,
+                        time_archived integer
+                    );
+                    """
+                )
+                conn.execute(
+                    "insert into session (id, directory, title, time_created, time_updated, time_archived) values (?, ?, ?, ?, ?, ?)",
+                    ("ses_match", "/tmp", "ockimi2", 10, 100, None),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            self.runner.opencode_state_db = db_path
+
+            with patch.object(
+                self.runner,
+                "_get_tmux_runtime_id",
+                return_value="ses_stale_hint",
+            ):
+                resolved = self.runner._resolve_opencode_session_id(
+                    tmux_session="ockimi2",
+                    pane_cwd="/tmp",
+                )
+
+        self.assertEqual(resolved, "ses_match")
+
+    def test_ensure_resumed_session_routes_opencode_thread_to_opencode_tmux(
+        self,
+    ) -> None:
+        state = BridgeState(
+            sessions={
+                "ses_conflict": SessionRecord(
+                    thread_id="ses_conflict",
+                    label="opencode",
+                    cwd="/tmp",
+                    source="tmux-live",
+                    created_at="2026-03-26T00:00:00+00:00",
+                    updated_at="2026-03-26T00:00:00+00:00",
+                    tmux_session="codex",
+                )
+            }
+        )
+        with patch.object(self.runner, "_find_live_runtime_status", return_value=None):
+            with patch.object(
+                self.runner,
+                "_tmux_exists",
+                side_effect=lambda name: name == "opencode",
+            ):
+                with patch.object(
+                    self.runner,
+                    "_runtime_status_for_tmux",
+                    return_value=LiveRuntimeStatus(
+                        tmux_session="opencode",
+                        exists=True,
+                        pane_command="opencode",
+                        thread_id="ses_conflict",
+                        pane_cwd="/tmp",
+                        backend="opencode",
+                    ),
+                ):
+                    with patch.object(self.runner, "_set_tmux_runtime_id") as set_hint:
+                        record = self.runner.ensure_resumed_session(
+                            thread_id="ses_conflict",
+                            state=state,
+                            label="opencode",
+                            source="tmux-live",
+                        )
+        self.assertEqual(record.tmux_session, "opencode")
+        set_hint.assert_called_with("opencode", "ses_conflict")
+
+    def test_ensure_resumed_session_routes_pending_opencode_thread_to_opencode_tmux(
+        self,
+    ) -> None:
+        state = BridgeState(
+            sessions={
+                "pending:opencode": SessionRecord(
+                    thread_id="pending:opencode",
+                    label="opencode",
+                    cwd="/tmp",
+                    source="tmux-live-provisional",
+                    created_at="2026-04-04T00:00:00+00:00",
+                    updated_at="2026-04-04T00:00:00+00:00",
+                    tmux_session="opencode",
+                )
+            }
+        )
+        with patch.object(self.runner, "_find_live_runtime_status", return_value=None):
+            with patch.object(
+                self.runner,
+                "_tmux_exists",
+                side_effect=lambda name: name == "opencode",
+            ):
+                with patch.object(
+                    self.runner,
+                    "_runtime_status_for_tmux",
+                    return_value=LiveRuntimeStatus(
+                        tmux_session="opencode",
+                        exists=True,
+                        pane_command="node",
+                        thread_id="pending:opencode",
+                        pane_cwd="/tmp",
+                        backend="opencode",
+                    ),
+                ):
+                    with patch.object(self.runner, "_set_tmux_runtime_id") as set_hint:
+                        record = self.runner.ensure_resumed_session(
+                            thread_id="pending:opencode",
+                            state=state,
+                            label="opencode",
+                            source="tmux-live-provisional",
+                        )
+        self.assertEqual(record.tmux_session, "opencode")
+        set_hint.assert_called_with("opencode", "pending:opencode")
+
+    def test_ensure_resumed_session_does_not_create_missing_tmux(self) -> None:
+        state = BridgeState(
+            sessions={
+                "pending:opencode": SessionRecord(
+                    thread_id="pending:opencode",
+                    label="opencode",
+                    cwd="/tmp",
+                    source="tmux-live-provisional",
+                    created_at="2026-04-04T00:00:00+00:00",
+                    updated_at="2026-04-04T00:00:00+00:00",
+                    tmux_session="opencode",
+                )
+            }
+        )
+        with patch.object(self.runner, "_find_live_runtime_status", return_value=None):
+            with patch.object(self.runner, "_tmux_exists", return_value=False):
+                with self.assertRaises(RuntimeError) as exc_info:
+                    self.runner.ensure_resumed_session(
+                        thread_id="pending:opencode",
+                        state=state,
+                        label="opencode",
+                        source="tmux-live-provisional",
+                    )
+        self.assertIn("不会自动创建 session", str(exc_info.exception))
+
+    def test_create_new_session_does_not_create_missing_tmux(self) -> None:
+        state = BridgeState()
+        with patch.object(self.runner, "_tmux_exists", return_value=False):
+            with self.assertRaises(RuntimeError) as exc_info:
+                self.runner.create_new_session(state=state, label="owner")
+        self.assertIn("不会自动创建 session", str(exc_info.exception))
+
+    def test_list_live_runtime_statuses_filters_to_workspace_codex_sessions(
+        self,
+    ) -> None:
+        with patch.object(
+            self.runner,
+            "_list_tmux_sessions",
+            return_value=["codex", "123", "foreign", "idle"],
+        ):
+            with patch.object(
+                self.runner,
+                "_runtime_status_for_tmux",
+                side_effect=lambda tmux_session: {
+                    "codex": LiveRuntimeStatus(
+                        tmux_session="codex",
+                        exists=True,
+                        pane_command="node",
                         thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
                         pane_cwd="/tmp",
                     ),
-                    LiveRuntimeStatus(
+                    "123": LiveRuntimeStatus(
                         tmux_session="123",
                         exists=True,
                         pane_command="codex",
                         thread_id="11111111-2222-3333-4444-555555555555",
                         pane_cwd="/tmp/subdir",
                     ),
-                    LiveRuntimeStatus(
+                    "foreign": LiveRuntimeStatus(
                         tmux_session="foreign",
                         exists=True,
                         pane_command="node",
                         thread_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
                         pane_cwd="/var/tmp",
                     ),
-                    LiveRuntimeStatus(
+                    "idle": LiveRuntimeStatus(
                         tmux_session="idle",
                         exists=True,
                         pane_command="bash",
                         thread_id=None,
                         pane_cwd="/tmp",
                     ),
-                ],
+                }[tmux_session],
             ):
                 statuses = self.runner.list_live_runtime_statuses()
         self.assertEqual([item.tmux_session for item in statuses], ["codex", "123"])
@@ -406,7 +905,9 @@ class LiveSessionTests(unittest.TestCase):
         ):
             records = self.runner.sync_live_sessions(state)
         self.assertEqual([item.label for item in records], ["main-live", "123"])
-        self.assertEqual(state.sessions["11111111-2222-3333-4444-555555555555"].cwd, "/tmp/ft-kairos")
+        self.assertEqual(
+            state.sessions["11111111-2222-3333-4444-555555555555"].cwd, "/tmp/ft-kairos"
+        )
 
     def test_sync_live_sessions_rewrites_legacy_codex_label_for_opencode(self) -> None:
         state = BridgeState(
@@ -440,6 +941,43 @@ class LiveSessionTests(unittest.TestCase):
         self.assertEqual(records[0].label, "opencode")
         self.assertEqual(state.sessions["ses_legacy_opencode"].label, "opencode")
 
+    def test_sync_live_sessions_renames_generic_opencode_label_when_tmux_moves(
+        self,
+    ) -> None:
+        state = BridgeState(
+            sessions={
+                "ses_old_opencode": SessionRecord(
+                    thread_id="ses_old_opencode",
+                    label="opencode",
+                    cwd="/tmp",
+                    source="tmux-live",
+                    created_at="2026-04-04T00:00:00+00:00",
+                    updated_at="2026-04-04T00:00:00+00:00",
+                    tmux_session="opencode",
+                )
+            }
+        )
+        with patch.object(
+            self.runner,
+            "list_live_runtime_statuses",
+            return_value=[
+                LiveRuntimeStatus(
+                    tmux_session="opencode-debug-20260404",
+                    exists=True,
+                    pane_command="node",
+                    thread_id="ses_old_opencode",
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ],
+        ):
+            records = self.runner.sync_live_sessions(state)
+        self.assertEqual(records[0].label, "opencode-debug-20260404")
+        self.assertEqual(
+            state.sessions["ses_old_opencode"].label,
+            "opencode-debug-20260404",
+        )
+
     def test_runtime_status_prefers_latest_thread_with_fresher_rollout(self) -> None:
         stale_thread = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
         fresh_thread = "019d332d-1bc8-7151-a874-ab0fbc493747"
@@ -454,8 +992,12 @@ class LiveSessionTests(unittest.TestCase):
             os.utime(fresh_rollout, (2000, 2000))
             self.runner.session_root = session_root
             with patch.object(self.runner, "_tmux_exists", return_value=True):
-                with patch.object(self.runner, "_pane_current_command", return_value="codex"):
-                    with patch.object(self.runner, "_pane_current_path", return_value="/tmp"):
+                with patch.object(
+                    self.runner, "_pane_current_command", return_value="codex"
+                ):
+                    with patch.object(
+                        self.runner, "_pane_current_path", return_value="/tmp"
+                    ):
                         with patch.object(
                             self.runner,
                             "_capture_clean_text",
@@ -532,7 +1074,7 @@ class LiveSessionTests(unittest.TestCase):
                         "/tmp/child.jsonl",
                         100,
                         300,
-                        "{\"subagent\":true}",
+                        '{"subagent":true}',
                         "openai",
                         "/tmp",
                         "child",
@@ -554,7 +1096,9 @@ class LiveSessionTests(unittest.TestCase):
             self.runner.codex_state_db = db_path
             self.assertEqual(self.runner.find_latest_thread(), root_thread)
 
-    def test_find_latest_thread_falls_back_to_child_when_only_child_exists(self) -> None:
+    def test_find_latest_thread_falls_back_to_child_when_only_child_exists(
+        self,
+    ) -> None:
         child_thread = "019d46e2-1b23-7e01-941b-269961074b52"
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "state.sqlite"
@@ -596,7 +1140,7 @@ class LiveSessionTests(unittest.TestCase):
                         "/tmp/child.jsonl",
                         100,
                         300,
-                        "{\"subagent\":true}",
+                        '{"subagent":true}',
                         "openai",
                         "/tmp",
                         "child",
@@ -618,7 +1162,9 @@ class LiveSessionTests(unittest.TestCase):
             self.runner.codex_state_db = db_path
             self.assertEqual(self.runner.find_latest_thread(), child_thread)
 
-    def test_runtime_status_ignores_newer_spawn_child_rollout_for_mirror_resolution(self) -> None:
+    def test_runtime_status_ignores_newer_spawn_child_rollout_for_mirror_resolution(
+        self,
+    ) -> None:
         stale_thread = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
         root_thread = "019d332d-1bc8-7151-a874-ab0fbc493747"
         child_thread = "019d46e2-1b23-7e01-941b-269961074b52"
@@ -705,8 +1251,12 @@ class LiveSessionTests(unittest.TestCase):
             self.runner.session_root = session_root
             self.runner.codex_state_db = db_path
             with patch.object(self.runner, "_tmux_exists", return_value=True):
-                with patch.object(self.runner, "_pane_current_command", return_value="codex"):
-                    with patch.object(self.runner, "_pane_current_path", return_value="/tmp"):
+                with patch.object(
+                    self.runner, "_pane_current_command", return_value="codex"
+                ):
+                    with patch.object(
+                        self.runner, "_pane_current_path", return_value="/tmp"
+                    ):
                         with patch.object(
                             self.runner,
                             "_capture_clean_text",
@@ -721,11 +1271,17 @@ class LiveSessionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             session_root = Path(tmpdir) / "sessions"
             session_root.mkdir(parents=True, exist_ok=True)
-            (session_root / f"fresh-{fresh_thread}.jsonl").write_text("fresh\n", encoding="utf-8")
+            (session_root / f"fresh-{fresh_thread}.jsonl").write_text(
+                "fresh\n", encoding="utf-8"
+            )
             self.runner.session_root = session_root
             with patch.object(self.runner, "_tmux_exists", return_value=True):
-                with patch.object(self.runner, "_pane_current_command", return_value="codex"):
-                    with patch.object(self.runner, "_pane_current_path", return_value="/var/tmp"):
+                with patch.object(
+                    self.runner, "_pane_current_command", return_value="codex"
+                ):
+                    with patch.object(
+                        self.runner, "_pane_current_path", return_value="/var/tmp"
+                    ):
                         with patch.object(
                             self.runner,
                             "_capture_clean_text",

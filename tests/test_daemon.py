@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from daedalus_wechat.config import BridgeConfig
-from daedalus_wechat.daemon import BridgeDaemon
+from daedalus_wechat.daemon import BridgeDaemon, IncomingMessage
 from daedalus_wechat.incoming_media import SavedIncomingImage
 from daedalus_wechat.live_session import (
     PLAN_MARKER,
@@ -98,7 +98,10 @@ class _FakeRunner:
         return records
 
     def current_runtime_status(
-        self, *, active_session_id: str | None = None, active_tmux_session: str | None = None
+        self,
+        *,
+        active_session_id: str | None = None,
+        active_tmux_session: str | None = None,
     ) -> LiveRuntimeStatus:
         if active_tmux_session:
             for status in self._live_statuses():
@@ -122,16 +125,19 @@ class _FakeRunner:
             and status.pane_command in {"node", "codex"}
             and bool(status.thread_id)
             and bool(status.pane_cwd)
+            and self.runtime_conflict_reason(status) is None
         ]
 
     def list_tmux_runtime_inventory(self):
         items = []
         for status in self._live_statuses():
+            conflict_reason = self.runtime_conflict_reason(status)
             switchable = (
                 status.exists
                 and status.pane_command in {"node", "codex"}
                 and bool(status.thread_id)
                 and bool(status.pane_cwd)
+                and conflict_reason is None
             )
             items.append(
                 TmuxRuntimeInventoryItem(
@@ -140,10 +146,31 @@ class _FakeRunner:
                     thread_id=status.thread_id,
                     pane_cwd=status.pane_cwd,
                     switchable=switchable,
-                    reason="live" if switchable else "outside-workspace",
+                    reason=conflict_reason
+                    or ("live" if switchable else "outside-workspace"),
                 )
             )
         return items
+
+    def expected_backend_for_tmux_session(self, tmux_session: str | None) -> str | None:
+        name = str(tmux_session or "").strip().lower()
+        if not name:
+            return None
+        if name == "codex":
+            return "codex"
+        if "opencode" in name or name.startswith("oc-"):
+            return "opencode"
+        return None
+
+    def runtime_conflict_reason(self, status: LiveRuntimeStatus) -> str | None:
+        if not status.thread_id:
+            return None
+        for other in self._live_statuses():
+            if other.tmux_session == status.tmux_session:
+                continue
+            if other.thread_id == status.thread_id:
+                return "duplicate-runtime-id"
+        return None
 
     def ensure_resumed_session(
         self,
@@ -171,7 +198,10 @@ class _FakeRunner:
         )
 
     def create_new_session(self, *, state: BridgeState, label: str) -> SessionRecord:
-        status = self.current_runtime_status(active_session_id=state.active_session_id, active_tmux_session=state.active_tmux_session)
+        status = self.current_runtime_status(
+            active_session_id=state.active_session_id,
+            active_tmux_session=state.active_tmux_session,
+        )
         return state.touch_session(
             status.thread_id or self.runtime_thread_id,
             label=label,
@@ -184,7 +214,10 @@ class _FakeRunner:
         return f"tmux attach -t {record.tmux_session or 'codex'}"
 
     def require_live_session(self, state: BridgeState) -> SessionRecord:
-        status = self.current_runtime_status(active_session_id=state.active_session_id, active_tmux_session=state.active_tmux_session)
+        status = self.current_runtime_status(
+            active_session_id=state.active_session_id,
+            active_tmux_session=state.active_tmux_session,
+        )
         thread_id = status.thread_id or self.runtime_thread_id
         return state.touch_session(
             thread_id,
@@ -227,7 +260,9 @@ class _FakeRunner:
             if value is None:
                 from daedalus_wechat.live_session import MirrorScan
 
-                return MirrorScan(progress_texts=[], final_text="", end_offset=start_offset)
+                return MirrorScan(
+                    progress_texts=[], final_text="", end_offset=start_offset
+                )
             text, end_offset = value
             from daedalus_wechat.live_session import MirrorScan
 
@@ -235,7 +270,9 @@ class _FakeRunner:
         progress_texts, final_text, end_offset = value
         from daedalus_wechat.live_session import MirrorScan
 
-        return MirrorScan(progress_texts=progress_texts, final_text=final_text, end_offset=end_offset)
+        return MirrorScan(
+            progress_texts=progress_texts, final_text=final_text, end_offset=end_offset
+        )
 
     def _label_for(self, state: BridgeState, status: LiveRuntimeStatus) -> str:
         existing = state.sessions.get(status.thread_id or "")
@@ -260,6 +297,7 @@ class _FakeRunner:
                         pane_command=status.pane_command,
                         thread_id=self.runtime_thread_id,
                         pane_cwd=status.pane_cwd,
+                        backend=status.backend,
                     )
                 )
                 continue
@@ -276,7 +314,9 @@ class _TestDaemon(BridgeDaemon):
 
 
 class DaemonTests(unittest.TestCase):
-    def _make_config(self, state_dir: Path, allowed_users: frozenset[str]) -> BridgeConfig:
+    def _make_config(
+        self, state_dir: Path, allowed_users: frozenset[str]
+    ) -> BridgeConfig:
         return BridgeConfig(
             codex_bin="codex",
             account_file=state_dir / "account.json",
@@ -362,6 +402,48 @@ class DaemonTests(unittest.TestCase):
             assert daemon.wechat.sent
             self.assertIn("未被授权", daemon.wechat.sent[0][2])
 
+    def test_plain_text_requires_explicit_active_session_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(bound_user_id="user@im.wechat")
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="ockimi2",
+                    exists=True,
+                    pane_command="node",
+                    thread_id="ses_live",
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset({"user@im.wechat"})),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+
+            daemon._handle_incoming(
+                IncomingMessage(
+                    from_user_id="user@im.wechat",
+                    context_token="ctx-1",
+                    body="hello",
+                    message_id="msg-1",
+                )
+            )
+
+            self.assertIsNone(state.active_session_id)
+            self.assertIsNone(state.active_tmux_session)
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                (
+                    "user@im.wechat",
+                    "ctx-1",
+                    "⚙️ 没有 active session；请先用 /switch <tmux> 选择一个 live session。",
+                ),
+            )
+
     def test_invalid_poll_cursor_is_cleared_after_ret_minus_one(self) -> None:
         class _InvalidCursorWeChat(_FakeWeChat):
             def __init__(self) -> None:
@@ -385,7 +467,9 @@ class DaemonTests(unittest.TestCase):
                 runner=_FakeRunner(),
                 state=state,
             )
-            with patch("daedalus_wechat.daemon.time.sleep", side_effect=KeyboardInterrupt):
+            with patch(
+                "daedalus_wechat.daemon.time.sleep", side_effect=KeyboardInterrupt
+            ):
                 with self.assertRaises(KeyboardInterrupt):
                     daemon.run_forever()
             self.assertEqual(state.get_updates_buf, "")
@@ -480,6 +564,144 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("tmux=codex", text)
             self.assertIn("attach=tmux attach -t codex", text)
 
+    def test_status_text_marks_pending_runtime_id_as_provisional(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pending_thread = "pending:opencode"
+            state = BridgeState(
+                active_session_id=pending_thread,
+                active_tmux_session="opencode",
+                sessions={
+                    pending_thread: SessionRecord(
+                        thread_id=pending_thread,
+                        label="opencode",
+                        cwd="/tmp",
+                        source="tmux-live-provisional",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="opencode",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="opencode",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=pending_thread,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            daemon = BridgeDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+            text = daemon._status_text()
+            self.assertIn("status=ok", text)
+            self.assertIn("thread=provisional", text)
+            self.assertIn("runtime_id=pending:opencode", text)
+            self.assertIn("label=opencode", text)
+            self.assertIn("tmux=opencode", text)
+
+    def test_status_text_is_read_only_when_no_active_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "ses_live"
+            state = BridgeState(
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="ockimi2",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="ockimi2",
+                    )
+                }
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="ockimi2",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+
+            text = daemon._status_text()
+
+            self.assertEqual(
+                text, "status=no_active\nhint=先用 /switch <tmux> 选择一个 live session"
+            )
+            self.assertIsNone(state.active_session_id)
+            self.assertIsNone(state.active_tmux_session)
+
+    def test_bootstrap_runtime_does_not_auto_select_live_session_without_active(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "ses_live"
+            state = BridgeState()
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="ockimi2",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+
+            self.assertIsNone(state.active_session_id)
+            self.assertIsNone(state.active_tmux_session)
+
+    def test_current_mirror_thread_id_returns_none_without_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "ses_live"
+            state = BridgeState()
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="ockimi2",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+
+            mirror_thread = daemon._current_mirror_thread_id()
+
+            self.assertIsNone(mirror_thread)
+            self.assertIsNone(state.active_session_id)
+            self.assertIsNone(state.active_tmux_session)
 
     def test_sessions_text_shows_excluded_tmux_inventory_items(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -633,6 +855,412 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("tmux=123", text)
             self.assertIn("attach=tmux attach -t 123", text)
 
+    def test_switch_keeps_old_active_state_until_resume_completes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_old = "ses_old_active"
+            thread_new = "ses_new_target"
+            state = BridgeState(
+                active_session_id=thread_old,
+                active_tmux_session="ockimi2",
+                sessions={
+                    thread_old: SessionRecord(
+                        thread_id=thread_old,
+                        label="ockimi2",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="ockimi2",
+                    ),
+                    thread_new: SessionRecord(
+                        thread_id=thread_new,
+                        label="ockimi1",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="ockimi1",
+                    ),
+                },
+            )
+
+            class _SwitchOrderRunner(_FakeRunner):
+                def __init__(self) -> None:
+                    super().__init__()
+                    self.observed_active: tuple[str | None, str | None] | None = None
+                    self.runtime_statuses = [
+                        LiveRuntimeStatus(
+                            tmux_session="ockimi2",
+                            exists=True,
+                            pane_command="node",
+                            thread_id=thread_old,
+                            pane_cwd="/tmp",
+                            backend="opencode",
+                        ),
+                        LiveRuntimeStatus(
+                            tmux_session="ockimi1",
+                            exists=True,
+                            pane_command="node",
+                            thread_id=thread_new,
+                            pane_cwd="/tmp",
+                            backend="opencode",
+                        ),
+                    ]
+
+                def ensure_resumed_session(self, *, thread_id, state, label, source):
+                    self.observed_active = (
+                        state.active_session_id,
+                        state.active_tmux_session,
+                    )
+                    return super().ensure_resumed_session(
+                        thread_id=thread_id,
+                        state=state,
+                        label=label,
+                        source=source,
+                    )
+
+            runner = _SwitchOrderRunner()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+
+            text = daemon._handle_command("/switch ockimi1")
+
+            self.assertEqual(runner.observed_active, (thread_old, "ockimi2"))
+            self.assertEqual(state.active_session_id, thread_new)
+            self.assertEqual(state.active_tmux_session, "ockimi1")
+            self.assertIn("tmux=ockimi1", text)
+
+    def test_current_mirror_thread_id_does_not_overwrite_newer_switch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_old = "ses_old_active"
+            thread_new = "ses_new_target"
+            state = BridgeState(
+                active_session_id=thread_old,
+                active_tmux_session="ocgpt",
+                sessions={
+                    thread_old: SessionRecord(
+                        thread_id=thread_old,
+                        label="ocgpt",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="ocgpt",
+                    ),
+                    thread_new: SessionRecord(
+                        thread_id=thread_new,
+                        label="ockimi2",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="ockimi2",
+                    ),
+                },
+            )
+
+            class _NoBootstrapDaemon(_TestDaemon):
+                def _bootstrap_runtime(self) -> None:
+                    return None
+
+            class _MirrorRaceRunner(_FakeRunner):
+                def __init__(self, state_ref: BridgeState) -> None:
+                    super().__init__()
+                    self._state_ref = state_ref
+                    self.calls = 0
+
+                def current_runtime_status(
+                    self,
+                    *,
+                    active_session_id: str | None = None,
+                    active_tmux_session: str | None = None,
+                ) -> LiveRuntimeStatus:
+                    self.calls += 1
+                    if self.calls == 1:
+                        self._state_ref.active_session_id = thread_new
+                        self._state_ref.active_tmux_session = "ockimi2"
+                        return LiveRuntimeStatus(
+                            tmux_session="ocgpt",
+                            exists=True,
+                            pane_command="node",
+                            thread_id=thread_old,
+                            pane_cwd="/tmp",
+                            backend="opencode",
+                        )
+                    return LiveRuntimeStatus(
+                        tmux_session="ockimi2",
+                        exists=True,
+                        pane_command="node",
+                        thread_id=thread_new,
+                        pane_cwd="/tmp",
+                        backend="opencode",
+                    )
+
+            runner = _MirrorRaceRunner(state)
+            daemon = _NoBootstrapDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+
+            thread_id = daemon._current_mirror_thread_id()
+
+            self.assertEqual(thread_id, thread_new)
+            self.assertEqual(state.active_session_id, thread_new)
+            self.assertEqual(state.active_tmux_session, "ockimi2")
+
+    def test_switch_text_marks_pending_runtime_id_as_provisional(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pending_thread = "pending:opencode"
+            codex_thread = "019d332d-1bc8-7151-a874-ab0fbc493747"
+            state = BridgeState(
+                active_session_id=codex_thread,
+                active_tmux_session="codex",
+                sessions={
+                    codex_thread: SessionRecord(
+                        thread_id=codex_thread,
+                        label="codex",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="codex",
+                    ),
+                    pending_thread: SessionRecord(
+                        thread_id=pending_thread,
+                        label="opencode",
+                        cwd="/tmp",
+                        source="tmux-live-provisional",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="opencode",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=codex_thread,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="opencode",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=pending_thread,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                ),
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+            text = daemon._handle_command("/switch opencode")
+            self.assertEqual(state.active_session_id, pending_thread)
+            self.assertEqual(state.active_tmux_session, "opencode")
+            self.assertIn("已切换到 session:", text)
+            self.assertIn("session=provisional", text)
+            self.assertIn("runtime_id=pending:opencode", text)
+            self.assertIn("tmux=opencode", text)
+
+    def test_promote_runtime_record_migrates_pending_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+
+            class _NoBootstrapDaemon(_TestDaemon):
+                def _bootstrap_runtime(self) -> None:
+                    return None
+
+            pending_thread = "pending:opencode"
+            real_thread = "ses_real_opencode_session"
+            state = BridgeState(
+                active_session_id=pending_thread,
+                active_tmux_session="opencode",
+                mirror_offsets={pending_thread: 42},
+                recent_delivery_cursors={pending_thread: 7},
+                last_progress_summaries={pending_thread: "working"},
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "✅ parked",
+                        "created_at": "2026-04-04T00:00:00+00:00",
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                        "thread_id": pending_thread,
+                        "tmux_session": "opencode",
+                        "attempt_count": 1,
+                        "last_attempt_at": "2026-04-04T00:00:00+00:00",
+                        "last_error": "",
+                    }
+                ],
+                sessions={
+                    pending_thread: SessionRecord(
+                        thread_id=pending_thread,
+                        label="opencode",
+                        cwd="/tmp",
+                        source="tmux-live-provisional",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="opencode",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="opencode",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=pending_thread,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            daemon = _NoBootstrapDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+            record = daemon._promote_runtime_record(
+                old_thread_id=pending_thread,
+                new_thread_id=real_thread,
+                tmux_session="opencode",
+                fallback_label="opencode",
+                fallback_cwd="/tmp",
+                fallback_source="tmux-live",
+            )
+            assert record is not None
+            self.assertEqual(state.active_session_id, real_thread)
+            self.assertEqual(state.active_tmux_session, "opencode")
+            self.assertNotIn(pending_thread, state.sessions)
+            self.assertIn(real_thread, state.sessions)
+            self.assertEqual(state.sessions[real_thread].label, "opencode")
+            self.assertEqual(state.get_mirror_offset(real_thread), 42)
+            self.assertEqual(state.get_recent_delivery_cursor(real_thread), 7)
+            self.assertEqual(state.get_last_progress_summary(real_thread), "working")
+            self.assertEqual(state.pending_outbox[0]["thread_id"], real_thread)
+
+    def test_promote_runtime_record_updates_tmux_scope_when_thread_stays_same(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+
+            class _NoBootstrapDaemon(_TestDaemon):
+                def _bootstrap_runtime(self) -> None:
+                    return None
+
+            thread_id = "ses_real_opencode_session"
+            state = BridgeState(
+                active_session_id=thread_id,
+                active_tmux_session="opencode",
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "✅ parked",
+                        "created_at": "2026-04-04T00:00:00+00:00",
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                        "thread_id": thread_id,
+                        "tmux_session": "opencode",
+                        "attempt_count": 1,
+                        "last_attempt_at": "2026-04-04T00:00:00+00:00",
+                        "last_error": "",
+                    }
+                ],
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="ocgpt",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="opencode",
+                    )
+                },
+            )
+            daemon = _NoBootstrapDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=state,
+            )
+
+            record = daemon._promote_runtime_record(
+                old_thread_id=thread_id,
+                new_thread_id=thread_id,
+                tmux_session="ocgpt",
+                fallback_label="ocgpt",
+                fallback_cwd="/tmp",
+                fallback_source="tmux-live",
+            )
+
+            assert record is not None
+            self.assertEqual(record.tmux_session, "ocgpt")
+            self.assertEqual(state.sessions[thread_id].tmux_session, "ocgpt")
+            self.assertEqual(state.active_tmux_session, "ocgpt")
+            self.assertEqual(state.pending_outbox[0]["tmux_session"], "ocgpt")
+
+    def test_current_mirror_thread_promotes_pending_active_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+
+            class _NoBootstrapDaemon(_TestDaemon):
+                def _bootstrap_runtime(self) -> None:
+                    return None
+
+            pending_thread = "pending:opencode"
+            real_thread = "ses_real_opencode_session"
+            state = BridgeState(
+                active_session_id=pending_thread,
+                active_tmux_session="opencode",
+                sessions={
+                    pending_thread: SessionRecord(
+                        thread_id=pending_thread,
+                        label="opencode",
+                        cwd="/tmp",
+                        source="tmux-live-provisional",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="opencode",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="opencode",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=real_thread,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            daemon = _NoBootstrapDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+            resolved = daemon._current_mirror_thread_id()
+            self.assertEqual(resolved, real_thread)
+            self.assertEqual(state.active_session_id, real_thread)
+            self.assertEqual(state.active_tmux_session, "opencode")
+            self.assertNotIn(pending_thread, state.sessions)
+            self.assertIn(real_thread, state.sessions)
+
     def test_plain_message_submits_to_active_tmux_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_codex = "019d332d-1bc8-7151-a874-ab0fbc493747"
@@ -702,8 +1330,9 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(state.active_tmux_session, "daedalus")
             self.assertEqual(state.active_session_id, thread_daedalus)
 
-
-    def test_switch_prefers_live_tmux_match_over_historical_tmux_duplicates(self) -> None:
+    def test_switch_prefers_live_tmux_match_over_historical_tmux_duplicates(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_active = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
             thread_live_codex = "11111111-2222-3333-4444-555555555555"
@@ -823,6 +1452,92 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(state.active_session_id, thread_b)
             self.assertEqual(state.active_tmux_session, "1")
             self.assertIn("tmux=1", text)
+
+    def test_switch_does_not_bind_stale_tmux_name_without_live_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_opencode = "ses_conflict"
+            state = BridgeState(
+                active_session_id=thread_opencode,
+                sessions={
+                    thread_opencode: SessionRecord(
+                        thread_id=thread_opencode,
+                        label="opencode",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="codex",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="opencode",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_opencode,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+            text = daemon._handle_command("/switch codex")
+            self.assertEqual(text, "没有找到 session: codex")
+
+    def test_status_text_reports_runtime_conflict(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "ses_conflict"
+            state = BridgeState(
+                active_session_id=thread_id,
+                active_tmux_session="codex",
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="codex",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="codex",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_thread_id = thread_id
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="opencode",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                ),
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+            text = daemon._status_text()
+            self.assertIn("status=runtime_conflict", text)
+            self.assertIn("tmux=codex", text)
+            self.assertIn("conflict=duplicate-runtime-id", text)
 
     def test_sessions_text_marks_active_tmux_when_thread_changed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -995,6 +1710,131 @@ class DaemonTests(unittest.TestCase):
             daemon._bind_peer("user@im.wechat", "ctx-1")
             self.assertEqual(state.get_mirror_offset(thread_id), 42)
 
+    def test_bind_peer_same_user_rebind_preserves_cursor(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "ses_2a9b9b59cffeTTpVS0iNdPRuoB"
+            state = BridgeState(
+                active_session_id=thread_id,
+                active_tmux_session="opencode",
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                mirror_offsets={thread_id: 17},
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="opencode",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="opencode",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.rollout_sizes[thread_id] = 99
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+            daemon._bind_peer("user@im.wechat", "ctx-2")
+            self.assertEqual(state.get_mirror_offset(thread_id), 17)
+
+    def test_new_prompt_does_not_skip_unread_mirror_final(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "ses_2a9b9b59cffeTTpVS0iNdPRuoB"
+            state = BridgeState(
+                active_session_id=thread_id,
+                active_tmux_session="opencode",
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                mirror_offsets={thread_id: 100},
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="opencode",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="opencode",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="opencode",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            runner.rollout_sizes[thread_id] = 150
+            runner.progresses[(thread_id, 100)] = ([], "UNREAD_FINAL", 150)
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-2",
+                    "message_id": "msg-opencode",
+                    "item_list": [{"type": 1, "text_item": {"text": "next prompt"}}],
+                }
+            )
+            assert incoming is not None
+
+            daemon._handle_incoming(incoming)
+
+            self.assertEqual(state.get_mirror_offset(thread_id), 100)
+            self.assertEqual(runner.submitted[-1][0], thread_id)
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                ("user@im.wechat", "ctx-2", "⚙️ 已注入 terminal。"),
+            )
+
+    def test_new_prompt_opencode_cursor_keeps_last_mutable_row(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "ses_2a9b9b59cffeTTpVS0iNdPRuoB"
+            state = BridgeState(
+                active_session_id=thread_id,
+                active_tmux_session="opencode",
+                mirror_offsets={thread_id: 100},
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="opencode",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="opencode",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.progresses[(thread_id, 100)] = (["working"], "", 150)
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+
+            daemon._sync_mirror_cursor_for_new_prompt(thread_id)
+
+            self.assertEqual(state.get_mirror_offset(thread_id), 149)
+
     def test_bind_peer_does_not_flush_pending_outbox(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
@@ -1050,13 +1890,17 @@ class DaemonTests(unittest.TestCase):
             )
             self.assertEqual(state.pending_outbox, [])
 
-    def test_flush_pending_outbox_preserves_remaining_after_mid_flush_failure(self) -> None:
+    def test_flush_pending_outbox_preserves_remaining_after_mid_flush_failure(
+        self,
+    ) -> None:
         class _FlakyWeChat(_FakeWeChat):
             def __init__(self) -> None:
                 super().__init__()
                 self.calls = 0
 
-            def send_text(self, *, to_user_id: str, context_token: str | None, text: str):
+            def send_text(
+                self, *, to_user_id: str, context_token: str | None, text: str
+            ):
                 self.calls += 1
                 if self.calls == 2:
                     raise RuntimeError("ret=-2")
@@ -1071,9 +1915,21 @@ class DaemonTests(unittest.TestCase):
             state = BridgeState(
                 active_session_id=thread_id,
                 pending_outbox=[
-                    {"to": "user@im.wechat", "text": "FIRST", "created_at": "2026-03-26T00:00:00+00:00"},
-                    {"to": "user@im.wechat", "text": "SECOND", "created_at": "2026-03-26T00:00:01+00:00"},
-                    {"to": "user@im.wechat", "text": "THIRD", "created_at": "2026-03-26T00:00:02+00:00"},
+                    {
+                        "to": "user@im.wechat",
+                        "text": "FIRST",
+                        "created_at": "2026-03-26T00:00:00+00:00",
+                    },
+                    {
+                        "to": "user@im.wechat",
+                        "text": "SECOND",
+                        "created_at": "2026-03-26T00:00:01+00:00",
+                    },
+                    {
+                        "to": "user@im.wechat",
+                        "text": "THIRD",
+                        "created_at": "2026-03-26T00:00:02+00:00",
+                    },
                 ],
             )
             runner = _FakeRunner()
@@ -1287,7 +2143,9 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("head=FIRST PLAN", text)
             self.assertIn("tail_any=SECOND FINAL", text)
 
-    def test_queue_text_marks_waiting_head_when_active_tmux_has_no_visible_backlog(self) -> None:
+    def test_queue_text_marks_waiting_head_when_active_tmux_has_no_visible_backlog(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_a = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
             daemon = _TestDaemon(
@@ -1476,7 +2334,9 @@ class DaemonTests(unittest.TestCase):
             daemon._bind_peer("user@im.wechat", "ctx-2")
             self.assertFalse(state.outbox_waiting_for_bind)
 
-    def test_desktop_mirror_backlog_does_not_stay_blocked_by_wait_for_bind(self) -> None:
+    def test_desktop_mirror_backlog_does_not_stay_blocked_by_wait_for_bind(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
                 bound_user_id="user@im.wechat",
@@ -1504,7 +2364,9 @@ class DaemonTests(unittest.TestCase):
             )
 
             daemon._flush_bound_outbox_if_any()
-            self.assertEqual(fake_wechat.sent, [("user@im.wechat", "ctx-1", "PENDING_MIRROR_OK")])
+            self.assertEqual(
+                fake_wechat.sent, [("user@im.wechat", None, "PENDING_MIRROR_OK")]
+            )
             self.assertEqual(state.pending_outbox, [])
 
     def test_failed_desktop_mirror_waits_for_rebind_before_stale_timeout(self) -> None:
@@ -1580,7 +2442,9 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(daemon.state.pending_outbox[0]["text"], "CLI_PENDING")
             self.assertEqual(daemon.state.pending_outbox[0]["origin"], "desktop-direct")
 
-    def test_wait_for_bind_only_blocks_context_bound_items_not_desktop_pushes(self) -> None:
+    def test_wait_for_bind_only_blocks_context_bound_items_not_desktop_pushes(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
                 bound_user_id="user@im.wechat",
@@ -1618,9 +2482,13 @@ class DaemonTests(unittest.TestCase):
 
             daemon._flush_bound_outbox_if_any()
 
-            self.assertEqual(fake_wechat.sent, [("user@im.wechat", "ctx-1", "PENDING_MIRROR_OK")])
+            self.assertEqual(
+                fake_wechat.sent, [("user@im.wechat", None, "PENDING_MIRROR_OK")]
+            )
             self.assertEqual(len(state.pending_outbox), 1)
-            self.assertEqual(state.pending_outbox[0]["origin"], "wechat-prompt-submitted")
+            self.assertEqual(
+                state.pending_outbox[0]["origin"], "wechat-prompt-submitted"
+            )
 
     def test_desktop_direct_pending_retry_uses_bound_context_first(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1650,7 +2518,9 @@ class DaemonTests(unittest.TestCase):
 
             daemon._flush_bound_outbox_if_any()
 
-            self.assertEqual(fake_wechat.sent, [("user@im.wechat", "ctx-1", "DIRECT_OK")])
+            self.assertEqual(
+                fake_wechat.sent, [("user@im.wechat", "ctx-1", "DIRECT_OK")]
+            )
             self.assertEqual(state.pending_outbox, [])
 
     def test_queue_text_marks_waiting_for_next_wechat_message(self) -> None:
@@ -1771,7 +2641,9 @@ class DaemonTests(unittest.TestCase):
             )
             self.assertIsNone(incoming)
 
-    def test_prompt_is_submitted_to_live_codex_and_acknowledged_immediately(self) -> None:
+    def test_prompt_is_submitted_to_live_codex_and_acknowledged_immediately(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fake_wechat = _FakeWeChat()
             runner = _FakeRunner()
@@ -1896,7 +2768,9 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(runner.submitted, [])
             self.assertIn("无法取回可用本地文件", fake_wechat.sent[-1][2])
 
-    def test_encrypted_image_without_direct_url_is_downloaded_and_submitted(self) -> None:
+    def test_encrypted_image_without_direct_url_is_downloaded_and_submitted(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             fake_wechat = _FakeWeChat()
             runner = _FakeRunner()
@@ -1940,7 +2814,9 @@ class DaemonTests(unittest.TestCase):
                 ),
             ):
                 daemon._handle_incoming(incoming)
-            self.assertIn("/tmp/incoming_media/msg-image-3_1.png", runner.submitted[-1][1])
+            self.assertIn(
+                "/tmp/incoming_media/msg-image-3_1.png", runner.submitted[-1][1]
+            )
             self.assertEqual(
                 fake_wechat.sent[-1],
                 (
@@ -1983,9 +2859,7 @@ class DaemonTests(unittest.TestCase):
             image = incoming.images[0]
             self.assertEqual(image.media_source, "thumb_media")
             self.assertEqual(image.media_encrypt_query_param, "thumb-enc")
-            self.assertEqual(
-                image.aes_key, "00112233445566778899aabbccddeeff"
-            )
+            self.assertEqual(image.aes_key, "00112233445566778899aabbccddeeff")
 
     def test_recent_replays_latest_outgoing_messages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2010,7 +2884,7 @@ class DaemonTests(unittest.TestCase):
             )
             text = daemon._recent_text("2")
             self.assertIn("recent:", text)
-            self.assertIn("scope=all-fallback", text)
+            self.assertIn("scope=all", text)
             self.assertIn("progress one", text)
             self.assertIn("FINAL_OK", text)
             self.assertIn("[1][sent][progress][13:00:00] progress one", text)
@@ -2102,7 +2976,7 @@ class DaemonTests(unittest.TestCase):
             )
             text = daemon._recent_text("after 1")
             self.assertNotIn("one", text)
-            self.assertIn("scope=all-fallback", text)
+            self.assertIn("scope=all", text)
             self.assertIn("three", text)
             self.assertNotIn("two", text)
             self.assertIn("next=/recent after 3", text)
@@ -2167,7 +3041,9 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("[codex] codex one", text)
             self.assertIn("[daedalus] daedalus final", text)
 
-    def test_catchup_replays_latest_effective_messages_when_no_pending_backlog(self) -> None:
+    def test_catchup_replays_latest_effective_messages_when_no_pending_backlog(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state_dir = Path(tmpdir)
             config = self._make_config(state_dir, frozenset())
@@ -2300,7 +3176,7 @@ class DaemonTests(unittest.TestCase):
 
             self.assertEqual(
                 fake_wechat.sent,
-                [("user@im.wechat", "ctx-1", "VERY_OLD_FINAL")],
+                [("user@im.wechat", None, "VERY_OLD_FINAL")],
             )
             self.assertEqual(len(state.pending_outbox), 0)
 
@@ -2360,6 +3236,67 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(fake_wechat.sent, [])
             self.assertEqual(state.pending_outbox, [])
 
+    def test_stale_inactive_desktop_mirror_final_is_kept_for_later_scope_flush(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            active_thread = "active-thread"
+            parked_thread = "parked-thread"
+            state = BridgeState(
+                active_session_id=active_thread,
+                active_tmux_session="codex",
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "PARKED_FINAL",
+                        "created_at": "2026-03-26T00:00:00+00:00",
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                        "thread_id": parked_thread,
+                        "tmux_session": "opencode",
+                        "attempt_count": 1,
+                        "last_error": "",
+                    }
+                ],
+                sessions={
+                    active_thread: SessionRecord(
+                        thread_id=active_thread,
+                        label="codex",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="codex",
+                    ),
+                    parked_thread: SessionRecord(
+                        thread_id=parked_thread,
+                        label="opencode",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="opencode",
+                    ),
+                },
+            )
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+
+            daemon._prune_stale_desktop_mirror_backlog()
+
+            self.assertEqual(fake_wechat.sent, [])
+            self.assertEqual(
+                [item["text"] for item in state.pending_outbox],
+                ["PARKED_FINAL"],
+            )
+
     def test_stale_desktop_mirror_backlog_with_ret_minus_2_is_dropped(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_id = "thread-1"
@@ -2395,7 +3332,9 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(fake_wechat.sent, [])
             self.assertEqual(state.pending_outbox, [])
 
-    def test_pending_desktop_progress_is_suppressed_when_progress_disabled(self) -> None:
+    def test_pending_desktop_progress_is_suppressed_when_progress_disabled(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
                 bound_user_id="user@im.wechat",
@@ -2481,7 +3420,7 @@ class DaemonTests(unittest.TestCase):
             daemon._mirror_desktop_final_if_any()
             self.assertEqual(
                 fake_wechat.sent[-1],
-                ("user@im.wechat", "ctx-1", "✅ DESKTOP_FINAL_OK"),
+                ("user@im.wechat", None, "✅ DESKTOP_FINAL_OK"),
             )
             self.assertEqual(state.get_mirror_offset(thread_id), 150)
 
@@ -2498,7 +3437,11 @@ class DaemonTests(unittest.TestCase):
             )
             fake_wechat = _FakeWeChat()
             runner = _FakeRunner()
-            runner.progresses[(thread_id, 100)] = (["我先检查 bridge 当前状态。"], "FINAL_OK", 150)
+            runner.progresses[(thread_id, 100)] = (
+                ["我先检查 bridge 当前状态。"],
+                "FINAL_OK",
+                150,
+            )
             daemon = _TestDaemon(
                 config=self._make_config(Path(tmpdir), frozenset()),
                 wechat=fake_wechat,
@@ -2508,13 +3451,15 @@ class DaemonTests(unittest.TestCase):
             daemon._mirror_desktop_final_if_any()
             self.assertEqual(
                 fake_wechat.sent[0],
-                ("user@im.wechat", "ctx-1", "⏳ 我先检查 bridge 当前状态。"),
+                ("user@im.wechat", None, "⏳ 我先检查 bridge 当前状态。"),
             )
             self.assertEqual(
                 fake_wechat.sent[1],
-                ("user@im.wechat", "ctx-1", "✅ FINAL_OK"),
+                ("user@im.wechat", None, "✅ FINAL_OK"),
             )
-            self.assertEqual(state.get_last_progress_summary(thread_id), "我先检查 bridge 当前状态。")
+            self.assertEqual(
+                state.get_last_progress_summary(thread_id), "我先检查 bridge 当前状态。"
+            )
 
     def test_mirror_plan_survives_when_progress_disabled(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2547,8 +3492,8 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(
                 fake_wechat.sent,
                 [
-                    ("user@im.wechat", "ctx-1", "📋 Plan\n1. 进行中: 保留 plan"),
-                    ("user@im.wechat", "ctx-1", "✅ FINAL_OK"),
+                    ("user@im.wechat", None, "📋 Plan\n1. 进行中: 保留 plan"),
+                    ("user@im.wechat", None, "✅ FINAL_OK"),
                 ],
             )
 
@@ -2599,7 +3544,7 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(state.sessions[new_thread].tmux_session, "codex")
             self.assertEqual(
                 fake_wechat.sent[-1],
-                ("user@im.wechat", "ctx-1", "✅ NEW_THREAD_FINAL_OK"),
+                ("user@im.wechat", None, "✅ NEW_THREAD_FINAL_OK"),
             )
             self.assertEqual(state.get_mirror_offset(new_thread), 30)
 
@@ -2662,9 +3607,264 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(state.active_session_id, thread_b)
             self.assertEqual(
                 fake_wechat.sent[-1],
-                ("user@im.wechat", "ctx-1", "✅ ACTIVE_SWITCH_FINAL_OK"),
+                ("user@im.wechat", None, "✅ ACTIVE_SWITCH_FINAL_OK"),
             )
             self.assertEqual(state.get_mirror_offset(thread_b), 30)
+
+    def test_mirror_does_not_leak_stale_final_after_switch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            codex_thread = "019d332d-1bc8-7151-a874-ab0fbc493747"
+            opencode_thread = "ses_2a9b9b59cffeTTpVS0iNdPRuoB"
+            state = BridgeState(
+                active_session_id=codex_thread,
+                active_tmux_session="codex",
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                mirror_offsets={codex_thread: 100},
+                sessions={
+                    codex_thread: SessionRecord(
+                        thread_id=codex_thread,
+                        label="codex",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="codex",
+                    ),
+                    opencode_thread: SessionRecord(
+                        thread_id=opencode_thread,
+                        label="opencode",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="opencode",
+                    ),
+                },
+            )
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            runner.runtime_thread_id = codex_thread
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+
+            def _switch_during_scan(*, thread_id: str, start_offset: int):
+                self.assertEqual(thread_id, codex_thread)
+                self.assertEqual(start_offset, 100)
+                daemon.state.active_session_id = opencode_thread
+                daemon.state.active_tmux_session = "opencode"
+                from daedalus_wechat.live_session import MirrorScan
+
+                return MirrorScan(
+                    progress_texts=[],
+                    final_text="STALE_CODEX_FINAL",
+                    end_offset=150,
+                )
+
+            with patch.object(
+                runner, "latest_mirror_since", side_effect=_switch_during_scan
+            ):
+                daemon._mirror_desktop_final_if_any()
+
+            self.assertEqual(fake_wechat.sent, [])
+            self.assertEqual(state.get_mirror_offset(codex_thread), 100)
+
+    def test_mirror_keeps_cursor_when_final_send_is_queued(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "ses_2a9b9b59cffeTTpVS0iNdPRuoB"
+            state = BridgeState(
+                active_session_id=thread_id,
+                active_tmux_session="opencode",
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                mirror_offsets={thread_id: 100},
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="opencode",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="opencode",
+                    )
+                },
+            )
+            fake_wechat = _FakeWeChat()
+            fake_wechat.fail = True
+            runner = _FakeRunner()
+            runner.runtime_thread_id = thread_id
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="opencode",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            runner.progresses[(thread_id, 100)] = ([], "OK", 150)
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+
+            daemon._mirror_desktop_final_if_any()
+
+            self.assertEqual(state.get_mirror_offset(thread_id), 100)
+            self.assertEqual(len(state.pending_outbox), 1)
+            self.assertEqual(state.pending_outbox[0]["text"], "✅ OK")
+            self.assertEqual(state.pending_outbox[0]["origin"], "desktop-mirror")
+
+    def test_opencode_mirror_revisits_last_mutable_row_until_final_arrives(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "ses_2a9b9b59cffeTTpVS0iNdPRuoB"
+            state = BridgeState(
+                active_session_id=thread_id,
+                active_tmux_session="opencode",
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                mirror_offsets={thread_id: 100},
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="opencode",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="opencode",
+                    )
+                },
+            )
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="opencode",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            runner.progresses[(thread_id, 100)] = (["working"], "", 150)
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+
+            daemon._mirror_desktop_final_if_any()
+
+            self.assertEqual(fake_wechat.sent, [])
+            self.assertEqual(state.get_mirror_offset(thread_id), 149)
+
+            runner.progresses[(thread_id, 149)] = ([], "FINAL_OK", 150)
+
+            daemon._mirror_desktop_final_if_any()
+
+            self.assertEqual(
+                fake_wechat.sent,
+                [("user@im.wechat", None, "✅ FINAL_OK")],
+            )
+            self.assertEqual(state.get_mirror_offset(thread_id), 150)
+
+    def test_inactive_mirror_final_is_queued_for_scope_and_flushed_after_switch(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            codex_thread = "019d332d-1bc8-7151-a874-ab0fbc493747"
+            opencode_thread = "ses_2a9b9b59cffeTTpVS0iNdPRuoB"
+            state = BridgeState(
+                active_session_id=codex_thread,
+                active_tmux_session="codex",
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                mirror_offsets={opencode_thread: 100},
+                sessions={
+                    codex_thread: SessionRecord(
+                        thread_id=codex_thread,
+                        label="codex",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="codex",
+                    ),
+                    opencode_thread: SessionRecord(
+                        thread_id=opencode_thread,
+                        label="opencode",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="opencode",
+                    ),
+                },
+            )
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            runner.runtime_thread_id = codex_thread
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=codex_thread,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="opencode",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=opencode_thread,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                ),
+            ]
+            runner.progresses[(opencode_thread, 100)] = ([], "OK", 150)
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+
+            daemon._queue_inactive_desktop_finals_if_any()
+
+            self.assertEqual(fake_wechat.sent, [])
+            self.assertEqual(state.get_mirror_offset(opencode_thread), 150)
+            self.assertEqual(
+                [item["text"] for item in state.pending_outbox],
+                ["✅ OK"],
+            )
+            self.assertEqual(
+                [item["tmux_session"] for item in state.pending_outbox],
+                ["opencode"],
+            )
+
+            state.active_session_id = opencode_thread
+            state.active_tmux_session = "opencode"
+            daemon._flush_bound_outbox_if_any()
+
+            self.assertEqual(
+                fake_wechat.sent,
+                [("user@im.wechat", None, "✅ OK")],
+            )
+            self.assertEqual(state.pending_outbox, [])
 
     def test_command_reply_gets_system_tag(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2721,6 +3921,35 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(progress_text, "⏳ 我先检查 bridge 当前状态。")
             self.assertEqual(plan_text, "📋 Plan\n1. 进行中: 实现 plan icon")
 
+    def test_render_reply_text_flattens_markdown_for_wechat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            rendered = daemon._render_reply_text(
+                "**关键信息：**\n\n"
+                "- 标题就是 `[WSL][tmux] opencode cannot copy text in WSL tmux`\n"
+                "- 复制链路是 `opencode -> tmux -> 终端 -> 系统剪贴板`\n\n"
+                "```tmux\n"
+                "set -g allow-passthrough on\n"
+                "set -g set-clipboard on\n"
+                "```",
+                kind="final",
+                origin="desktop-mirror",
+            )
+            self.assertEqual(
+                rendered,
+                "✅ 关键信息：\n\n"
+                "- 标题就是 '[WSL][tmux] opencode cannot copy text in WSL tmux'\n"
+                "- 复制链路是 'opencode -> tmux -> 终端 -> 系统剪贴板'\n\n"
+                "tmux:\n"
+                "> set -g allow-passthrough on\n"
+                "> set -g set-clipboard on",
+            )
+
     def test_mirror_plan_with_dedicated_icon(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
@@ -2746,7 +3975,7 @@ class DaemonTests(unittest.TestCase):
             daemon._mirror_desktop_final_if_any()
             self.assertEqual(
                 fake_wechat.sent[-1],
-                ("user@im.wechat", "ctx-1", "📋 Plan\n1. 进行中: 实现 plan icon"),
+                ("user@im.wechat", None, "📋 Plan\n1. 进行中: 实现 plan icon"),
             )
 
     def test_desktop_progress_pending_queue_preserves_backlog_for_thread(self) -> None:
@@ -2819,7 +4048,7 @@ class DaemonTests(unittest.TestCase):
                 origin="desktop-mirror",
                 thread_id="thread-1",
             )
-            self.assertEqual(fake_wechat.sent, [("user@im.wechat", "ctx-1", "✅ 123")])
+            self.assertEqual(fake_wechat.sent, [("user@im.wechat", None, "✅ 123")])
             self.assertEqual(
                 [item["text"] for item in state.pending_outbox],
                 ["45678", "90ABC", "DE"],
@@ -2887,7 +4116,7 @@ class DaemonTests(unittest.TestCase):
             daemon._flush_bound_outbox_if_any()
             self.assertEqual(
                 fake_wechat.sent,
-                [("user@im.wechat", "ctx-1", "DAEDALUS BACKLOG")],
+                [("user@im.wechat", None, "DAEDALUS BACKLOG")],
             )
             self.assertEqual(
                 [item["text"] for item in state.pending_outbox],

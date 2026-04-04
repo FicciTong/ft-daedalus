@@ -7,8 +7,12 @@ from enum import Enum
 
 # Codex shows status lines like:
 #   gpt-4o · thread-id-uuid
-CODEX_STATUS_RE = re.compile(r"\bgpt-[^\n]*·[^\n]*\b[0-9a-f]{8}-[0-9a-f-]{28}\b")
-OPENCODE_HINT_RE = re.compile(r"\bOpenCode\b|\bAsk anything\b|\bBuild\b.*\bgpt-", re.IGNORECASE)
+CODEX_STATUS_RE = re.compile(
+    r"\bgpt-[^\n]*·\s*[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"
+)
+OPENCODE_HINT_RE = re.compile(
+    r"\bOpenCode\b|\bAsk anything\b|\bBuild\b.*\bgpt-", re.IGNORECASE
+)
 
 
 class CliBackend(Enum):
@@ -20,10 +24,12 @@ class CliBackend(Enum):
 def detect_backend(
     *,
     pane_command: str | None,
+    pane_start_command: str | None = None,
     screen_text: str | None = None,
 ) -> CliBackend:
     """Detect whether the active tmux pane is a supported live runtime."""
     cmd = (pane_command or "").strip().lower()
+    start_cmd = (pane_start_command or "").strip().lower()
 
     if cmd == "codex":
         return CliBackend.CODEX
@@ -36,13 +42,21 @@ def detect_backend(
             return CliBackend.OPENCODE
         if screen_text and CODEX_STATUS_RE.search(screen_text):
             return CliBackend.CODEX
-        return CliBackend.CODEX  # legacy default
+        if "opencode" in start_cmd:
+            return CliBackend.OPENCODE
+        if "codex" in start_cmd:
+            return CliBackend.CODEX
+        return CliBackend.UNKNOWN
 
     if not cmd or cmd in {"bash", "zsh", "sh", "fish"}:
         if screen_text and CODEX_STATUS_RE.search(screen_text):
             return CliBackend.CODEX
         if screen_text and OPENCODE_HINT_RE.search(screen_text):
             return CliBackend.OPENCODE
+        if "opencode" in start_cmd:
+            return CliBackend.OPENCODE
+        if "codex" in start_cmd:
+            return CliBackend.CODEX
         return CliBackend.UNKNOWN
 
     return CliBackend.UNKNOWN

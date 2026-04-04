@@ -15,13 +15,35 @@ def test_detect_opencode_by_command():
     assert detect_backend(pane_command="opencode") == CliBackend.OPENCODE
 
 
-def test_detect_node_defaults_to_codex():
-    assert detect_backend(pane_command="node") == CliBackend.CODEX
+def test_detect_node_without_hints_is_unknown():
+    assert detect_backend(pane_command="node") == CliBackend.UNKNOWN
+
+
+def test_detect_node_prefers_visible_runtime_over_stale_start_command():
+    screen = "OpenCode\nBuild GPT-5.4 OpenAI · xhigh\nAsk anything"
+    assert (
+        detect_backend(
+            pane_command="node",
+            pane_start_command="codex resume 123 -C /tmp --no-alt-screen",
+            screen_text=screen,
+        )
+        == CliBackend.OPENCODE
+    )
+
+
+def test_detect_node_prefers_opencode_start_command():
+    assert (
+        detect_backend(
+            pane_command="node",
+            pane_start_command="opencode /tmp",
+        )
+        == CliBackend.OPENCODE
+    )
 
 
 def test_detect_node_with_claude_screen():
     screen = "some output\n╭─ Claude Code\nmodel: claude-opus"
-    assert detect_backend(pane_command="node", screen_text=screen) == CliBackend.CODEX
+    assert detect_backend(pane_command="node", screen_text=screen) == CliBackend.UNKNOWN
 
 
 def test_detect_node_with_codex_screen():
@@ -31,7 +53,9 @@ def test_detect_node_with_codex_screen():
 
 def test_detect_node_with_opencode_screen():
     screen = "OpenCode\nBuild GPT-5.4 OpenAI · xhigh\nAsk anything"
-    assert detect_backend(pane_command="node", screen_text=screen) == CliBackend.OPENCODE
+    assert (
+        detect_backend(pane_command="node", screen_text=screen) == CliBackend.OPENCODE
+    )
 
 
 def test_detect_unknown_for_bash():
@@ -45,7 +69,9 @@ def test_detect_bash_with_claude_screen():
 
 def test_detect_bash_with_opencode_screen():
     screen = "OpenCode\nBuild GPT-5.4 OpenAI · xhigh\nAsk anything"
-    assert detect_backend(pane_command="bash", screen_text=screen) == CliBackend.OPENCODE
+    assert (
+        detect_backend(pane_command="bash", screen_text=screen) == CliBackend.OPENCODE
+    )
 
 
 def test_detect_none_command():

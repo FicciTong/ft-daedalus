@@ -124,8 +124,16 @@ class LiveCodexSessionManager:
         finally:
             conn.close()
 
-    def find_latest_opencode_session(self, *, pane_cwd: str | None = None) -> str | None:
-        info = self._latest_opencode_session_info(pane_cwd=pane_cwd)
+    def find_latest_opencode_session(
+        self,
+        *,
+        pane_cwd: str | None = None,
+        tmux_session: str | None = None,
+    ) -> str | None:
+        info = self._latest_opencode_session_info(
+            pane_cwd=pane_cwd,
+            tmux_session=tmux_session,
+        )
         return info[0] if info else None
 
     def _preferred_canonical_backend(self) -> str:
@@ -133,6 +141,54 @@ class LiveCodexSessionManager:
         if "opencode" in session_name or session_name.startswith("oc-"):
             return CliBackend.OPENCODE.value
         return CliBackend.CODEX.value
+
+    def _backend_for_runtime_id(self, runtime_id: str | None) -> str:
+        if self._is_pending_runtime_id(runtime_id):
+            tmux_name = str(runtime_id or "")[len(PENDING_RUNTIME_PREFIX) :]
+            expected_backend = self.expected_backend_for_tmux_session(tmux_name)
+            if expected_backend:
+                return expected_backend
+        if self._is_opencode_runtime_id(runtime_id):
+            return CliBackend.OPENCODE.value
+        return CliBackend.CODEX.value
+
+    def _tmux_name_for_backend(self, backend: str) -> str:
+        if backend == self._preferred_canonical_backend():
+            return self.canonical_tmux_session
+        return backend
+
+    def expected_backend_for_tmux_session(self, tmux_session: str | None) -> str | None:
+        name = str(tmux_session or "").strip().lower()
+        if not name:
+            return None
+        if name == self.canonical_tmux_session.strip().lower():
+            return self._preferred_canonical_backend()
+        if "opencode" in name or name.startswith("oc-"):
+            return CliBackend.OPENCODE.value
+        if "codex" in name:
+            return CliBackend.CODEX.value
+        return None
+
+    def runtime_conflict_reason(self, status: LiveRuntimeStatus) -> str | None:
+        if (
+            not status.exists
+            or not status.thread_id
+            or status.backend == CliBackend.UNKNOWN.value
+        ):
+            return None
+        for tmux_session in self._list_tmux_sessions():
+            if tmux_session == status.tmux_session:
+                continue
+            other = self._runtime_status_for_tmux(tmux_session)
+            if (
+                not other.exists
+                or not other.thread_id
+                or other.backend == CliBackend.UNKNOWN.value
+            ):
+                continue
+            if other.thread_id == status.thread_id:
+                return "duplicate-runtime-id"
+        return None
 
     def _resolved_live_label(
         self,
@@ -147,6 +203,13 @@ class LiveCodexSessionManager:
         if not current:
             return default_label
         current_lower = current.lower()
+        tmux_lower = (status.tmux_session or "").strip().lower()
+        if (
+            current_lower == status.backend
+            and tmux_lower
+            and tmux_lower != current_lower
+        ):
+            return default_label
         if (
             status.backend == CliBackend.OPENCODE.value
             and "codex" in current_lower
@@ -166,13 +229,18 @@ class LiveCodexSessionManager:
         if live:
             return live
         canonical_status = self._runtime_status_for_tmux(self.canonical_tmux_session)
-        backend = (
-            canonical_status.backend
-            if canonical_status.exists and canonical_status.backend != CliBackend.UNKNOWN.value
-            else self._preferred_canonical_backend()
-        )
+        backend = self._preferred_canonical_backend()
+        if (
+            canonical_status.exists
+            and canonical_status.backend != CliBackend.UNKNOWN.value
+            and self.runtime_conflict_reason(canonical_status) is None
+        ):
+            backend = canonical_status.backend
         if backend == CliBackend.OPENCODE.value:
-            thread_id = self.find_latest_opencode_session(pane_cwd=canonical_status.pane_cwd)
+            thread_id = self.find_latest_opencode_session(
+                pane_cwd=canonical_status.pane_cwd,
+                tmux_session=canonical_status.tmux_session,
+            )
         else:
             thread_id = self.find_latest_thread()
         if not thread_id:
@@ -196,6 +264,7 @@ class LiveCodexSessionManager:
         source: str,
     ) -> SessionRecord:
         existing = state.sessions.get(thread_id)
+        thread_backend = self._backend_for_runtime_id(thread_id)
         live_status = self._find_live_runtime_status(
             thread_id=thread_id,
             tmux_session=existing.tmux_session if existing else None,
@@ -203,23 +272,37 @@ class LiveCodexSessionManager:
         tmux_session = (
             live_status.tmux_session
             if live_status
-            else existing.tmux_session if existing and existing.tmux_session
+            else existing.tmux_session
+            if existing and existing.tmux_session
             else self._tmux_name_for(thread_id)
         )
+        if not self._tmux_exists(tmux_session):
+            fallback_tmux = self._tmux_name_for(thread_id)
+            if fallback_tmux != tmux_session and self._tmux_exists(fallback_tmux):
+                tmux_session = fallback_tmux
         if self._tmux_exists(tmux_session):
-            current_thread_id = self._runtime_status_for_tmux(tmux_session).thread_id
+            runtime_status = self._runtime_status_for_tmux(tmux_session)
+            runtime_conflict = self.runtime_conflict_reason(runtime_status)
+            if runtime_conflict is not None or (
+                runtime_status.backend != CliBackend.UNKNOWN.value
+                and runtime_status.backend != thread_backend
+            ):
+                fallback_tmux = self._tmux_name_for(thread_id)
+                if fallback_tmux != tmux_session:
+                    tmux_session = fallback_tmux
+                    runtime_status = (
+                        self._runtime_status_for_tmux(tmux_session)
+                        if self._tmux_exists(tmux_session)
+                        else None
+                    )
+            current_thread_id = runtime_status.thread_id if runtime_status else None
             effective_thread_id = current_thread_id or thread_id
             self._set_tmux_runtime_id(tmux_session, effective_thread_id)
         else:
-            backend = (
-                CliBackend.OPENCODE.value
-                if self._is_opencode_runtime_id(thread_id)
-                else CliBackend.CODEX.value
+            raise RuntimeError(
+                f"当前 `tmux {tmux_session}` 不存在。"
+                "\nbridge 不会自动创建 session；请先在你自己的 shell 里启动/恢复它。"
             )
-            self._start_tmux_session(tmux_session, self._start_command(backend=backend, thread_id=thread_id))
-            time.sleep(2.0)
-            effective_thread_id = self._runtime_status_for_tmux(tmux_session).thread_id or thread_id
-            self._set_tmux_runtime_id(tmux_session, effective_thread_id)
         return state.touch_session(
             effective_thread_id,
             label=label,
@@ -241,12 +324,15 @@ class LiveCodexSessionManager:
             for status in live_statuses:
                 if status.thread_id == active_session_id:
                     return status
+        canonical_status = self._runtime_status_for_tmux(self.canonical_tmux_session)
+        if canonical_status.exists:
+            return canonical_status
         for status in live_statuses:
             if status.tmux_session == self.canonical_tmux_session:
                 return status
         if live_statuses:
             return live_statuses[0]
-        return self._runtime_status_for_tmux(self.canonical_tmux_session)
+        return canonical_status
 
     def list_tmux_runtime_inventory(self) -> list[TmuxRuntimeInventoryItem]:
         items: list[TmuxRuntimeInventoryItem] = []
@@ -264,7 +350,11 @@ class LiveCodexSessionManager:
                     )
                 )
                 continue
-            if status.backend == "unknown":
+            conflict_reason = self.runtime_conflict_reason(status)
+            if conflict_reason is not None:
+                reason = conflict_reason
+                switchable = False
+            elif status.backend == "unknown":
                 reason = "unrecognized-cli"
                 switchable = False
             elif not status.thread_id:
@@ -317,7 +407,9 @@ class LiveCodexSessionManager:
                 state.touch_session(
                     status.thread_id,
                     label=self._resolved_live_label(existing=existing, status=status),
-                    cwd=existing.cwd if existing else status.pane_cwd or str(self.default_cwd),
+                    cwd=existing.cwd
+                    if existing
+                    else status.pane_cwd or str(self.default_cwd),
                     source=existing.source if existing else "tmux-live",
                     tmux_session=status.tmux_session,
                 )
@@ -330,7 +422,11 @@ class LiveCodexSessionManager:
             active_session_id=state.active_session_id,
             active_tmux_session=state.active_tmux_session,
         )
-        if not status.exists or not status.thread_id:
+        if (
+            not status.exists
+            or not status.thread_id
+            or self.runtime_conflict_reason(status) is not None
+        ):
             return None
         existing = state.sessions.get(status.thread_id)
         label = self._resolved_live_label(existing=existing, status=status)
@@ -364,24 +460,39 @@ class LiveCodexSessionManager:
                     f"tmux new -s {self.canonical_tmux_session} "
                     f"'{self.opencode_bin} {self.default_cwd}'"
                 )
-            raise RuntimeError(
-                start_hint
-            )
+            raise RuntimeError(start_hint)
         if status.backend == "unknown":
             raise RuntimeError(
                 f"`tmux {status.tmux_session}` 已存在，但里面当前不是受支持的 live runtime "
                 f"(pane_current_command={status.pane_command or 'unknown'})。"
                 "\n请先 attach 进去并启动 Codex 或 OpenCode。"
             )
+        conflict_reason = self.runtime_conflict_reason(status)
+        if conflict_reason is not None:
+            lines = [
+                f"`tmux {status.tmux_session}` 当前处于 runtime 冲突状态。",
+                f"conflict={conflict_reason}",
+                f"backend={status.backend}",
+            ]
+            lines.append("请先恢复 shell/runtime 隔离后再继续使用 bridge。")
+            raise RuntimeError("\n".join(lines))
         if not status.thread_id:
             if status.backend == CliBackend.OPENCODE.value:
-                existing = self._find_existing_tmux_record(state=state, tmux_session=status.tmux_session)
-                thread_id = existing.thread_id if existing else self._pending_runtime_id(status.tmux_session)
+                existing = self._find_existing_tmux_record(
+                    state=state, tmux_session=status.tmux_session
+                )
+                thread_id = (
+                    existing.thread_id
+                    if existing
+                    else self._pending_runtime_id(status.tmux_session)
+                )
                 self._set_tmux_runtime_id(status.tmux_session, thread_id)
                 return state.touch_session(
                     thread_id,
                     label=self._resolved_live_label(existing=existing, status=status),
-                    cwd=existing.cwd if existing else status.pane_cwd or str(self.default_cwd),
+                    cwd=existing.cwd
+                    if existing
+                    else status.pane_cwd or str(self.default_cwd),
                     source=existing.source if existing else "tmux-live-provisional",
                     tmux_session=status.tmux_session,
                 )
@@ -417,18 +528,14 @@ class LiveCodexSessionManager:
                     source="bridge-canonical-existing",
                     tmux_session=tmux_session,
                 )
-            backend = status.backend if status.backend != CliBackend.UNKNOWN.value else backend
-        self._start_tmux_session(tmux_session, self._start_command(backend=backend))
-        thread_id = self._wait_for_runtime_id(tmux_session, backend=backend)
-        if not thread_id:
-            thread_id = self._pending_runtime_id(tmux_session)
-        self._set_tmux_runtime_id(tmux_session, thread_id)
-        return state.touch_session(
-            thread_id,
-            label=label,
-            cwd=str(self.default_cwd),
-            source="bridge-new",
-            tmux_session=tmux_session,
+            backend = (
+                status.backend
+                if status.backend != CliBackend.UNKNOWN.value
+                else backend
+            )
+        raise RuntimeError(
+            f"当前 `tmux {tmux_session}` 不存在。"
+            "\nbridge 不会自动创建 session；请先在你自己的 shell 里启动 canonical live runtime。"
         )
 
     def submit_prompt(self, *, record: SessionRecord, prompt: str) -> SessionRecord:
@@ -436,7 +543,10 @@ class LiveCodexSessionManager:
         runtime_before = self._runtime_status_for_tmux(tmux_session)
         opencode_before = None
         if runtime_before.backend == CliBackend.OPENCODE.value:
-            opencode_before = self._latest_opencode_session_info(pane_cwd=runtime_before.pane_cwd)
+            opencode_before = self._latest_opencode_session_info(
+                pane_cwd=runtime_before.pane_cwd,
+                tmux_session=tmux_session,
+            )
         self._inject_prompt(tmux_session, prompt)
         runtime_after = self._runtime_status_for_tmux(tmux_session)
         thread_id = runtime_after.thread_id or record.thread_id
@@ -467,9 +577,7 @@ class LiveCodexSessionManager:
         baseline_text = self._capture_clean_text(tmux_session)
         rollout_file = self._resolve_rollout_file(record.thread_id)
         rollout_offset = (
-            rollout_file.stat().st_size
-            if rollout_file and rollout_file.exists()
-            else 0
+            rollout_file.stat().st_size if rollout_file and rollout_file.exists() else 0
         )
         self._inject_prompt(tmux_session, prompt)
         response_text = self._wait_for_final_reply(
@@ -488,8 +596,12 @@ class LiveCodexSessionManager:
                 "桌面 tmux live runtime 仍然保留完整输出；"
                 "如果这次回答还在继续生成，请回到电脑侧查看。"
             )
-        thread_id = self._runtime_status_for_tmux(tmux_session).thread_id or record.thread_id
-        return LiveReply(thread_id=thread_id, response_text=response_text or "(无文本回复)")
+        thread_id = (
+            self._runtime_status_for_tmux(tmux_session).thread_id or record.thread_id
+        )
+        return LiveReply(
+            thread_id=thread_id, response_text=response_text or "(无文本回复)"
+        )
 
     def attach_hint(self, record: SessionRecord) -> str:
         tmux_session = record.tmux_session or self._tmux_name_for(record.thread_id)
@@ -503,9 +615,13 @@ class LiveCodexSessionManager:
             return 0
         return int(rollout_file.stat().st_size)
 
-    def latest_mirror_since(self, *, thread_id: str, start_offset: int) -> MirrorScan | None:
+    def latest_mirror_since(
+        self, *, thread_id: str, start_offset: int
+    ) -> MirrorScan | None:
         if self._is_opencode_runtime_id(thread_id):
-            return self._opencode_mirror_since(thread_id=thread_id, start_offset=start_offset)
+            return self._opencode_mirror_since(
+                thread_id=thread_id, start_offset=start_offset
+            )
         rollout_file = self._resolve_rollout_file(thread_id)
         if rollout_file is None or not rollout_file.exists():
             return None
@@ -549,9 +665,13 @@ class LiveCodexSessionManager:
                 extracted = self._extract_final_text(event)
                 if extracted:
                     final_text = extracted
-        return MirrorScan(progress_texts=progress_texts, final_text=final_text, end_offset=end_offset)
+        return MirrorScan(
+            progress_texts=progress_texts, final_text=final_text, end_offset=end_offset
+        )
 
-    def latest_final_since(self, *, thread_id: str, start_offset: int) -> FinalScan | None:
+    def latest_final_since(
+        self, *, thread_id: str, start_offset: int
+    ) -> FinalScan | None:
         scan = self.latest_mirror_since(thread_id=thread_id, start_offset=start_offset)
         if scan is None:
             return None
@@ -566,26 +686,12 @@ class LiveCodexSessionManager:
         return tmux_session
 
     def _start_tmux_session(self, tmux_session: str, cmd: list[str]) -> None:
-        if self._tmux_exists(tmux_session):
-            return
         shell_cmd = shlex.join(cmd)
-        subprocess.run(
-            [
-                "tmux",
-                "new-session",
-                "-d",
-                "-s",
-                tmux_session,
-                "-c",
-                str(self.default_cwd),
-                shell_cmd,
-            ],
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+        raise RuntimeError(
+            f"当前 `tmux {tmux_session}` 不存在。"
+            "\nbridge 不会自动创建 session；请先在你自己的 shell 里启动它，例如："
+            f"\n{shell_cmd}"
         )
-        if not self._tmux_exists(tmux_session):
-            raise RuntimeError(f"tmux session did not stay alive: {tmux_session}")
 
     def _inject_prompt(self, tmux_session: str, prompt: str) -> None:
         normalized = prompt.replace("\r\n", "\n").replace("\r", "\n")
@@ -626,7 +732,9 @@ class LiveCodexSessionManager:
             time.sleep(1.0)
             current = self._capture_clean_text(tmux_session)
             if current != seen:
-                visible_now = self._extract_visible_after_prompt(current, submitted_prompt)
+                visible_now = self._extract_visible_after_prompt(
+                    current, submitted_prompt
+                )
                 visible = self._delta_text(visible_seen, visible_now)
                 if visible:
                     visible_seen = visible_now
@@ -700,7 +808,16 @@ class LiveCodexSessionManager:
 
     def _capture_clean_text(self, tmux_session: str) -> str:
         proc = subprocess.run(
-            ["tmux", "capture-pane", "-p", "-J", "-t", f"{tmux_session}:0.0", "-S", "-2000"],
+            [
+                "tmux",
+                "capture-pane",
+                "-p",
+                "-J",
+                "-t",
+                f"{tmux_session}:0.0",
+                "-S",
+                "-2000",
+            ],
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -715,7 +832,9 @@ class LiveCodexSessionManager:
             filtered.append(line)
         return "\n".join(filtered).strip("\n")
 
-    def _extract_visible_after_prompt(self, full_text: str, submitted_prompt: str) -> str:
+    def _extract_visible_after_prompt(
+        self, full_text: str, submitted_prompt: str
+    ) -> str:
         if not full_text.strip():
             return ""
         first_line = submitted_prompt.splitlines()[0].strip()
@@ -963,13 +1082,16 @@ class LiveCodexSessionManager:
         tmux_session: str,
         pane_cwd: str | None,
     ) -> str | None:
-        hinted = self._get_tmux_runtime_id(tmux_session)
-        if hinted and self._is_opencode_runtime_id(hinted):
-            return hinted
-        latest = self._latest_opencode_session_info(pane_cwd=pane_cwd)
+        latest = self._latest_opencode_session_info(
+            pane_cwd=pane_cwd,
+            tmux_session=tmux_session,
+        )
         if latest:
             return latest[0]
-        if hinted and self._is_pending_runtime_id(hinted):
+        hinted = self._get_tmux_runtime_id(tmux_session)
+        if hinted and (
+            self._is_opencode_runtime_id(hinted) or self._is_pending_runtime_id(hinted)
+        ):
             return hinted
         return None
 
@@ -1002,6 +1124,7 @@ class LiveCodexSessionManager:
         self,
         *,
         pane_cwd: str | None = None,
+        tmux_session: str | None = None,
     ) -> tuple[str, int] | None:
         state_db = self.opencode_state_db
         if not state_db.exists():
@@ -1010,17 +1133,39 @@ class LiveCodexSessionManager:
         if not directories:
             return None
         placeholders = ",".join("?" for _ in directories)
-        query = f"""
-            select id, time_updated
-            from session
-            where time_archived is null
-              and directory in ({placeholders})
-            order by time_updated desc, time_created desc
-            limit 1
-        """
+        title = str(tmux_session or "").strip()
         conn = sqlite3.connect(state_db)
         try:
-            row = conn.execute(query, directories).fetchone()
+            row = None
+            if title:
+                try:
+                    row = conn.execute(
+                        f"""
+                        select id, time_updated
+                        from session
+                        where time_archived is null
+                          and title = ?
+                          and directory in ({placeholders})
+                        order by time_updated desc, time_created desc
+                        limit 1
+                        """,
+                        [title, *directories],
+                    ).fetchone()
+                except sqlite3.OperationalError:
+                    row = None
+            if row:
+                return str(row[0]), int(row[1] or 0)
+            row = conn.execute(
+                f"""
+                select id, time_updated
+                from session
+                where time_archived is null
+                  and directory in ({placeholders})
+                order by time_updated desc, time_created desc
+                limit 1
+                """,
+                directories,
+            ).fetchone()
             if row:
                 return str(row[0]), int(row[1] or 0)
             return None
@@ -1037,10 +1182,16 @@ class LiveCodexSessionManager:
     ) -> str | None:
         deadline = time.monotonic() + 20.0
         while time.monotonic() < deadline:
-            info = self._latest_opencode_session_info(pane_cwd=pane_cwd)
+            info = self._latest_opencode_session_info(
+                pane_cwd=pane_cwd,
+                tmux_session=tmux_session,
+            )
             if info:
                 session_id, time_updated = info
-                if session_id != previous_session_id or time_updated > previous_time_updated:
+                if (
+                    session_id != previous_session_id
+                    or time_updated > previous_time_updated
+                ):
                     self._set_tmux_runtime_id(tmux_session, session_id)
                     return session_id
             time.sleep(0.25)
@@ -1060,7 +1211,9 @@ class LiveCodexSessionManager:
         finally:
             conn.close()
 
-    def _opencode_mirror_since(self, *, thread_id: str, start_offset: int) -> MirrorScan | None:
+    def _opencode_mirror_since(
+        self, *, thread_id: str, start_offset: int
+    ) -> MirrorScan | None:
         state_db = self.opencode_state_db
         if not state_db.exists():
             return None
@@ -1068,7 +1221,7 @@ class LiveCodexSessionManager:
         try:
             rows = conn.execute(
                 """
-                select p.rowid, p.data, m.data
+                select p.rowid, p.message_id, p.data, m.data
                 from part p
                 join message m on m.id = p.message_id
                 where p.session_id = ?
@@ -1080,24 +1233,69 @@ class LiveCodexSessionManager:
         finally:
             conn.close()
         if not rows:
-            return MirrorScan(progress_texts=[], final_text="", end_offset=int(start_offset))
+            return MirrorScan(
+                progress_texts=[], final_text="", end_offset=int(start_offset)
+            )
+        message_parts: dict[str, dict[str, object]] = {}
         progress_texts: list[str] = []
         final_text = ""
         end_offset = int(start_offset)
-        for rowid, part_raw, message_raw in rows:
+        for rowid, message_id, part_raw, message_raw in rows:
             end_offset = max(end_offset, int(rowid))
             try:
                 part = json.loads(part_raw)
                 message = json.loads(message_raw)
             except json.JSONDecodeError:
                 continue
-            progress = self._extract_opencode_progress_text(part=part, message=message)
-            if progress:
-                progress_texts.append(progress)
-            extracted = self._extract_opencode_final_text(part=part, message=message)
-            if extracted:
-                final_text = extracted
-        return MirrorScan(progress_texts=progress_texts, final_text=final_text, end_offset=end_offset)
+            if str(message.get("role", "")).strip() != "assistant":
+                continue
+            bucket = message_parts.setdefault(
+                str(message_id),
+                {
+                    "progress_chunks": [],
+                    "final_chunks": [],
+                    "saw_stop": False,
+                },
+            )
+            part_type = str(part.get("type", "")).strip()
+            if part_type == "text":
+                text = str(part.get("text", "")).strip()
+                if not text:
+                    continue
+                if self._opencode_part_phase(part) == "final_answer":
+                    bucket["final_chunks"].append(text)
+                else:
+                    bucket["progress_chunks"].append(text)
+                continue
+            if (
+                part_type == "step-finish"
+                and str(part.get("reason", "")).strip() == "stop"
+            ):
+                bucket["saw_stop"] = True
+        for bucket in message_parts.values():
+            final_chunks = [
+                str(chunk).strip()
+                for chunk in bucket.get("final_chunks", [])
+                if str(chunk).strip()
+            ]
+            if final_chunks:
+                final_text = "".join(final_chunks).strip()
+                continue
+            progress_chunks = [
+                str(chunk).strip()
+                for chunk in bucket.get("progress_chunks", [])
+                if str(chunk).strip()
+            ]
+            if bucket.get("saw_stop") and progress_chunks:
+                final_text = "".join(progress_chunks).strip()
+                continue
+            for chunk in progress_chunks:
+                normalized = self._normalize_progress_text(chunk)
+                if normalized:
+                    progress_texts.append(normalized)
+        return MirrorScan(
+            progress_texts=progress_texts, final_text=final_text, end_offset=end_offset
+        )
 
     def _extract_opencode_final_text(self, *, part: dict, message: dict) -> str:
         if str(message.get("role", "")).strip() != "assistant":
@@ -1131,9 +1329,11 @@ class LiveCodexSessionManager:
         return ""
 
     def _tmux_name_for(self, thread_id: str) -> str:
-        return self.canonical_tmux_session
+        return self._tmux_name_for_backend(self._backend_for_runtime_id(thread_id))
 
-    def _start_command(self, *, backend: str, thread_id: str | None = None) -> list[str]:
+    def _start_command(
+        self, *, backend: str, thread_id: str | None = None
+    ) -> list[str]:
         if backend == CliBackend.OPENCODE.value:
             cmd = [self.opencode_bin, str(self.default_cwd)]
             if thread_id and self._is_opencode_runtime_id(thread_id):
@@ -1196,10 +1396,28 @@ class LiveCodexSessionManager:
         pane_command = self._pane_current_command(tmux_session)
         pane_cwd = self._pane_current_path(tmux_session)
         screen_text = self._capture_clean_text(tmux_session)
+        pane_start_command = self._pane_start_command(tmux_session)
+        hinted_runtime_id = self._get_tmux_runtime_id(tmux_session)
+        hinted_backend = (
+            self._backend_for_runtime_id(hinted_runtime_id)
+            if hinted_runtime_id
+            else None
+        )
         backend = detect_backend(
             pane_command=pane_command,
+            pane_start_command=pane_start_command,
             screen_text=screen_text,
         )
+        if backend == CliBackend.UNKNOWN:
+            if hinted_backend:
+                backend = CliBackend(hinted_backend)
+        elif (
+            pane_command == "node"
+            and not (pane_start_command or "").strip()
+            and hinted_backend
+            and backend.value != hinted_backend
+        ):
+            backend = CliBackend(hinted_backend)
         thread_id = self._resolve_runtime_thread_id(
             tmux_session=tmux_session,
             pane_cwd=pane_cwd,
@@ -1267,7 +1485,14 @@ class LiveCodexSessionManager:
         if not runtime_id:
             return
         subprocess.run(
-            ["tmux", "set-option", "-t", tmux_session, TMUX_RUNTIME_ID_OPTION, runtime_id],
+            [
+                "tmux",
+                "set-option",
+                "-t",
+                tmux_session,
+                TMUX_RUNTIME_ID_OPTION,
+                runtime_id,
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
@@ -1275,7 +1500,14 @@ class LiveCodexSessionManager:
 
     def _pane_current_command(self, tmux_session: str) -> str | None:
         proc = subprocess.run(
-            ["tmux", "display-message", "-p", "-t", f"{tmux_session}:0.0", "#{pane_current_command}"],
+            [
+                "tmux",
+                "display-message",
+                "-p",
+                "-t",
+                f"{tmux_session}:0.0",
+                "#{pane_current_command}",
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
@@ -1286,7 +1518,32 @@ class LiveCodexSessionManager:
 
     def _pane_current_path(self, tmux_session: str) -> str | None:
         proc = subprocess.run(
-            ["tmux", "display-message", "-p", "-t", f"{tmux_session}:0.0", "#{pane_current_path}"],
+            [
+                "tmux",
+                "display-message",
+                "-p",
+                "-t",
+                f"{tmux_session}:0.0",
+                "#{pane_current_path}",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return None
+        return proc.stdout.decode(errors="replace").strip() or None
+
+    def _pane_start_command(self, tmux_session: str) -> str | None:
+        proc = subprocess.run(
+            [
+                "tmux",
+                "display-message",
+                "-p",
+                "-t",
+                f"{tmux_session}:0.0",
+                "#{pane_start_command}",
+            ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=False,
