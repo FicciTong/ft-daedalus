@@ -1,0 +1,13 @@
+● daedalus-wechat.service - Daedalus WeChat Operator
+     Loaded: loaded (/home/ft/.config/systemd/user/daedalus-wechat.service; enabled; preset: enabled)
+     Active: active (running) since Sat 2026-04-04 10:36:28 CST; 3ms ago
+   Main PID: 206941 (daedalus-wechat)
+     Status: "bridge running"
+      Tasks: 3 (limit: 76736)
+     Memory: 13.8M (peak: 16.2M)
+        CPU: 117ms
+     CGroup: /user.slice/user-1000.slice/user@1000.service/app.slice/daedalus-wechat.service
+             └─206941 /home/ft/dev/ft-cosmos/ft-daedalus/.venv/bin/python3 /home/ft/dev/ft-cosmos/ft-daedalus/.venv/bin/daedalus-wechat run
+
+Apr 04 10:36:28 ft-lab systemd[1469]: Starting daedalus-wechat.service - Daedalus WeChat Operator...
+Apr 04 10:36:28 ft-lab systemd[1469]: Started daedalus-wechat.service - Daedalus WeChat Operator.

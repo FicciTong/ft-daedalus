@@ -408,6 +408,38 @@ class LiveSessionTests(unittest.TestCase):
         self.assertEqual([item.label for item in records], ["main-live", "123"])
         self.assertEqual(state.sessions["11111111-2222-3333-4444-555555555555"].cwd, "/tmp/ft-kairos")
 
+    def test_sync_live_sessions_rewrites_legacy_codex_label_for_opencode(self) -> None:
+        state = BridgeState(
+            sessions={
+                "ses_legacy_opencode": SessionRecord(
+                    thread_id="ses_legacy_opencode",
+                    label="codex",
+                    cwd="/tmp",
+                    source="tmux-live",
+                    created_at="2026-04-04T00:00:00+00:00",
+                    updated_at="2026-04-04T00:00:00+00:00",
+                    tmux_session="opencode",
+                )
+            }
+        )
+        with patch.object(
+            self.runner,
+            "list_live_runtime_statuses",
+            return_value=[
+                LiveRuntimeStatus(
+                    tmux_session="opencode",
+                    exists=True,
+                    pane_command="node",
+                    thread_id="ses_legacy_opencode",
+                    pane_cwd="/tmp/ft-cosmos",
+                    backend="opencode",
+                )
+            ],
+        ):
+            records = self.runner.sync_live_sessions(state)
+        self.assertEqual(records[0].label, "opencode")
+        self.assertEqual(state.sessions["ses_legacy_opencode"].label, "opencode")
+
     def test_runtime_status_prefers_latest_thread_with_fresher_rollout(self) -> None:
         stale_thread = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
         fresh_thread = "019d332d-1bc8-7151-a874-ab0fbc493747"

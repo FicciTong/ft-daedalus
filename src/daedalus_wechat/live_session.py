@@ -134,6 +134,33 @@ class LiveCodexSessionManager:
             return CliBackend.OPENCODE.value
         return CliBackend.CODEX.value
 
+    def _resolved_live_label(
+        self,
+        *,
+        existing: SessionRecord | None,
+        status: LiveRuntimeStatus,
+    ) -> str:
+        default_label = status.tmux_session or status.backend or "live-runtime"
+        if existing is None:
+            return default_label
+        current = existing.label.strip()
+        if not current:
+            return default_label
+        current_lower = current.lower()
+        if (
+            status.backend == CliBackend.OPENCODE.value
+            and "codex" in current_lower
+            and "opencode" not in current_lower
+        ):
+            return default_label
+        if (
+            status.backend == CliBackend.CODEX.value
+            and "opencode" in current_lower
+            and "codex" not in current_lower
+        ):
+            return default_label
+        return existing.label
+
     def ensure_attached_latest(self, state: BridgeState) -> SessionRecord | None:
         live = self.try_live_session(state)
         if live:
@@ -289,7 +316,7 @@ class LiveCodexSessionManager:
             records.append(
                 state.touch_session(
                     status.thread_id,
-                    label=existing.label if existing else status.tmux_session,
+                    label=self._resolved_live_label(existing=existing, status=status),
                     cwd=existing.cwd if existing else status.pane_cwd or str(self.default_cwd),
                     source=existing.source if existing else "tmux-live",
                     tmux_session=status.tmux_session,
@@ -306,7 +333,7 @@ class LiveCodexSessionManager:
         if not status.exists or not status.thread_id:
             return None
         existing = state.sessions.get(status.thread_id)
-        label = existing.label if existing else status.tmux_session
+        label = self._resolved_live_label(existing=existing, status=status)
         source = existing.source if existing else "tmux-live"
         return state.touch_session(
             status.thread_id,
@@ -353,7 +380,7 @@ class LiveCodexSessionManager:
                 self._set_tmux_runtime_id(status.tmux_session, thread_id)
                 return state.touch_session(
                     thread_id,
-                    label=existing.label if existing else status.tmux_session,
+                    label=self._resolved_live_label(existing=existing, status=status),
                     cwd=existing.cwd if existing else status.pane_cwd or str(self.default_cwd),
                     source=existing.source if existing else "tmux-live-provisional",
                     tmux_session=status.tmux_session,
@@ -365,7 +392,7 @@ class LiveCodexSessionManager:
             )
         self._set_tmux_runtime_id(status.tmux_session, status.thread_id)
         existing = state.sessions.get(status.thread_id)
-        label = existing.label if existing else status.tmux_session
+        label = self._resolved_live_label(existing=existing, status=status)
         source = existing.source if existing else "tmux-live"
         return state.touch_session(
             status.thread_id,
