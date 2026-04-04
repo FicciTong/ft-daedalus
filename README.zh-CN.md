@@ -13,13 +13,20 @@
   runtime 的 operator surface，并支持在多个本地 live session 之间切换
 
 > 📱 手机微信  
-> 🖥️ 本地 `tmux` 里的 live runtime（如 Codex / OpenCode）  
+> 🖥️ 本地 `tmux` 里的 live runtime（如 Codex / OpenCode / Claude）  
 > 🔁 同一时刻只盯一个 active live session
 
 [English Version](./README.md)
 
 今天，`daedalus-wechat` 这件工具把**本地 live tmux 会话**桥接到微信，
-走的是**官方** OpenClaw Weixin 通道（`@tencent-weixin/openclaw-weixin`）。
+走的是腾讯官方开放出来的 `iLink bot` 链路。
+
+当前主线真相：
+
+- 腾讯提供官方 `iLink bot` 上游
+- `ft-daedalus` 现在直接对接这条上游
+- 这台机器已经不再需要安装 OpenClaw 宿主
+- bridge 仍然只是 owner-facing 的本地 operator surface
 
 它**不是**云端任务转发器，也**不是**“换个平台聊同一个机器人”的空壳。  
 它的核心目标只有一个：
@@ -29,7 +36,7 @@
 默认约定：
 
 - 默认 canonical tmux 名：`codex`
-- tmux 里跑的 agent/runtime：本地 live CLI（当前支持 Codex / OpenCode）
+- tmux 里跑的 agent/runtime：本地 live CLI（当前支持 Codex / OpenCode / Claude）
 - 微信是远程 operator surface，不是另一个独立 bot
 - 如果你有意识地维护多个同 workspace 下的 live tmux session，微信可以
   list / switch，但仍然一次只对准一个 active session
@@ -78,7 +85,8 @@ surface 落在这里。
 - **不会**放进 `ft-cosmos`
 - **不会**接管 repo 治理
 - **不会**把多个 live shell 同时混流到一个聊天窗口
-- **会**使用官方 `openclaw-weixin` 登录链路
+- **会**使用腾讯官方 iLink 上游
+- **不会**把 OpenClaw 继续当长期必需宿主依赖
 - **会**把 workspace 下的 live tmux session 当成可切换 runtime target，
   同时保留一个 canonical default tmux
 - **会**在当前微信会话绑定后，把桌面侧产生的 final reply 镜像回微信
@@ -122,11 +130,10 @@ tmux attach -t codex
 
 装在那台拥有本地 live session 的机器上：
 
-- `codex` 或 `opencode`
+- `codex`、`opencode` 或 `claude`
 - `tmux`
 - Python `3.13+`
 - `uv`
-- `openclaw`
 - 你手机上的微信
 
 快速检查：
@@ -137,23 +144,13 @@ opencode --version
 tmux -V
 python3 --version
 uv --version
-openclaw --version
 ```
 
-这里有一个真话必须说清楚：
+这里现在的真话是：
 
-> **对，这套实现确实依赖 OpenClaw。**
-
-因为我们走的是官方 OpenClaw Weixin 通道，而不是自己造一套微信接入协议。
-
-腾讯官方当前插件路径大致是：
-
-```bash
-npx -y @tencent-weixin/openclaw-weixin-cli install
-openclaw channels login --channel openclaw-weixin
-```
-
-本项目已经把这条官方路径包起来了，所以你一般不需要自己手打这些底层命令。
+- 腾讯官方上游是 `iLink bot`
+- bridge 现在直接对接这条上游
+- 当前主线不再需要 OpenClaw 宿主
 
 ## 🚀 安装
 
@@ -175,7 +172,7 @@ bash scripts/install-user-service.sh
 
 这个脚本会自动做：
 
-1. 检查依赖命令（`codex`、`tmux`、`python3`、`uv`、`openclaw`、`systemctl`）
+1. 检查依赖命令（`codex`、`tmux`、`python3`、`uv`、`systemctl`）
 2. 执行 `uv sync`
 3. 安装 user-level systemd 服务
 4. 创建 `~/.config/daedalus-wechat.env`
@@ -192,19 +189,19 @@ bash scripts/doctor.sh
 
 ## 🔐 官方微信登录
 
-canonical 登录命令：
+canonical 登录命令现在是：
 
 ```bash
 cd ~/dev/ft-cosmos/ft-daedalus
-uv run daedalus-wechat auth-openclaw
+uv run daedalus-wechat auth-ilink
 ```
 
 它会自动：
 
-1. 在专用 OpenClaw profile `daedalus-wechat` 下 bootstrap 官方插件
-2. 启用插件
-3. 走官方二维码登录
-4. 把账号导入 bridge 的本地状态目录
+1. 直接调用腾讯官方 iLink 二维码登录接口
+2. 等待扫码确认
+3. 把结果写入 bridge 的本地状态目录
+4. 自动重载正在运行的 bridge service，让新 token 立刻生效
 
 默认账号文件位置：
 
@@ -220,7 +217,7 @@ uv run daedalus-wechat auth-openclaw
 直接重新跑一次：
 
 ```bash
-uv run daedalus-wechat auth-openclaw
+uv run daedalus-wechat auth-ilink
 ```
 
 如果后面微信发不出去并出现 `ret=-2`，bridge 现在会自动再试一次：
@@ -235,10 +232,30 @@ uv run daedalus-wechat auth-openclaw
 /recent 6
 ```
 
-如果你要故意改 OpenClaw profile：
+当前主线不需要 OpenClaw profile。
+
+## 🤖 给别的 Agent 的最短部署路径
+
+如果是别的 coding agent 帮 owner 安装，这条最短：
 
 ```bash
-export DAEDALUS_WECHAT_OPENCLAW_PROFILE=my-profile
+cd ~/dev/ft-cosmos/ft-daedalus
+bash scripts/install-user-service.sh
+```
+
+然后验证：
+
+```bash
+cd ~/dev/ft-cosmos/ft-daedalus
+uv run daedalus-wechat doctor
+```
+
+再在微信里发：
+
+```text
+/status
+/sessions
+/switch codex
 ```
 
 ## 🛡️ 安全边界
@@ -471,7 +488,7 @@ tmux attach -t codex
 ```
 
 不要期待另一个独立开的桌面 Codex 窗口会自动和微信实时同步。  
-只有看起来像 live Codex runtime 且 cwd 落在 configured workspace 下的 tmux session，才会出现在可切换列表里。
+只有看起来像受支持 live runtime 且 cwd 落在 configured workspace 下的 tmux session，才会出现在可切换列表里。
 
 ## 🧩 可选环境变量
 
@@ -479,8 +496,9 @@ tmux attach -t codex
 - `DAEDALUS_WECHAT_STATE_DIR`
 - `DAEDALUS_WECHAT_ACCOUNT_FILE`
 - `DAEDALUS_WECHAT_CODEX_BIN`
+- `DAEDALUS_WECHAT_OPENCODE_BIN`
+- `DAEDALUS_WECHAT_OPENCODE_STATE_DB`
 - `DAEDALUS_WECHAT_PROGRESS_UPDATES`
-- `DAEDALUS_WECHAT_OPENCLAW_PROFILE`
 - `DAEDALUS_WECHAT_TMUX_SESSION`
 
 ## 🧯 故障恢复
@@ -503,7 +521,7 @@ uv run daedalus-wechat doctor
 3. 如果登录过期：
 
 ```bash
-uv run daedalus-wechat auth-openclaw
+uv run daedalus-wechat auth-ilink
 ```
 
 4. 如果 bridge 健康但 Codex 不在了，重建 canonical tmux：

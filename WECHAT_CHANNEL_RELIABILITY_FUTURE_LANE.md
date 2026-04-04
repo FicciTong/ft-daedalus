@@ -25,7 +25,7 @@ The purpose of this document is to preserve:
 As of `2026-04-04`, the current `daedalus-wechat` bridge already has:
 
 - one canonical local live tmux runtime
-- WeChat inbound polling through the official OpenClaw Weixin route
+- WeChat inbound polling through the official Tencent iLink route
 - prompt injection into the live terminal
 - desktop mirror of `progress / plan / final`
 - a persisted `pending_outbox`
@@ -54,7 +54,7 @@ This is not the same problem as:
 
 - Codex model latency
 - tmux runtime correctness
-- OpenClaw login/bootstrap
+- iLink login/bootstrap and channel delivery semantics
 
 It is specifically a **channel delivery and drain semantics** problem.
 

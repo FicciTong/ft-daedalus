@@ -1539,6 +1539,47 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("tmux=codex", text)
             self.assertIn("conflict=duplicate-runtime-id", text)
 
+    def test_status_text_claude_no_thread_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(active_tmux_session="claude")
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="claude",
+                    exists=True,
+                    pane_command="claude",
+                    thread_id=None,
+                    pane_cwd="/tmp",
+                    backend="claude",
+                )
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+
+            text = daemon._status_text()
+
+            self.assertIn("status=no_thread", text)
+            self.assertIn("backend=claude", text)
+            self.assertIn("Claude Code", text)
+
+    def test_short_thread_keeps_claude_runtime_id_visible(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+
+            self.assertEqual(
+                daemon._short_thread("claude:9d39ab4b-c37d-4ff8-8104-e83cdd6c4307"),
+                "claude:9d39ab4b-c37d-4ff8-8104-e83cdd6c4307",
+            )
+
     def test_sessions_text_marks_active_tmux_when_thread_changed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_old_codex = "019cdfe5-fa14-74a3-aa31-5451128ea58d"

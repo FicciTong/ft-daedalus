@@ -4,7 +4,7 @@ from daedalus_wechat.cli_backend import CliBackend, detect_backend
 
 
 def test_detect_claude_by_command():
-    assert detect_backend(pane_command="claude") == CliBackend.UNKNOWN
+    assert detect_backend(pane_command="claude") == CliBackend.CLAUDE
 
 
 def test_detect_codex_by_command():
@@ -43,7 +43,7 @@ def test_detect_node_prefers_opencode_start_command():
 
 def test_detect_node_with_claude_screen():
     screen = "some output\n╭─ Claude Code\nmodel: claude-opus"
-    assert detect_backend(pane_command="node", screen_text=screen) == CliBackend.UNKNOWN
+    assert detect_backend(pane_command="node", screen_text=screen) == CliBackend.CLAUDE
 
 
 def test_detect_node_with_codex_screen():
@@ -64,7 +64,7 @@ def test_detect_unknown_for_bash():
 
 def test_detect_bash_with_claude_screen():
     screen = "Claude Code ⏵⏵ bypass permissions on"
-    assert detect_backend(pane_command="bash", screen_text=screen) == CliBackend.UNKNOWN
+    assert detect_backend(pane_command="bash", screen_text=screen) == CliBackend.CLAUDE
 
 
 def test_detect_bash_with_opencode_screen():

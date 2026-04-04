@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from .cli_backend import CliBackend
 from .config import BridgeConfig
 from .delivery_ledger import append_delivery, read_recent_for_user
 from .incoming_media import (
@@ -875,7 +876,7 @@ class BridgeDaemon:
                 "status=tmux_no_cli\n"
                 f"tmux={runtime.tmux_session}\n"
                 f"pane={runtime.pane_command or 'unknown'}\n"
-                "hint=attach 后启动 Codex 或 OpenCode"
+                "hint=attach 后启动 Codex、OpenCode 或 Claude"
             )
         if conflict_reason is not None:
             lines = [
@@ -887,11 +888,16 @@ class BridgeDaemon:
             lines.append("hint=先恢复 shell/runtime 隔离")
             return "\n".join(lines)
         if not runtime.thread_id:
+            no_thread_hint = "hint=attach 后进入 live session"
+            if runtime.backend == CliBackend.OPENCODE.value:
+                no_thread_hint = "hint=attach 后进入 live session；OpenCode 首条 prompt 后会绑定 session"
+            elif runtime.backend == CliBackend.CLAUDE.value:
+                no_thread_hint = "hint=attach 后确认 Claude Code 已进入当前项目会话"
             return (
                 "status=no_thread\n"
                 f"tmux={runtime.tmux_session}\n"
                 f"backend={runtime.backend}\n"
-                "hint=attach 后进入 live session；OpenCode 首条 prompt 后会绑定 session"
+                f"{no_thread_hint}"
             )
         record = self.state.sessions.get(runtime.thread_id)
         if not record:
@@ -2381,6 +2387,8 @@ class BridgeDaemon:
                 )
 
     def _short_thread(self, thread_id: str) -> str:
+        if thread_id.startswith("claude:"):
+            return thread_id
         return thread_id[:8]
 
     def _is_pending_runtime_id(self, thread_id: str | None) -> bool:

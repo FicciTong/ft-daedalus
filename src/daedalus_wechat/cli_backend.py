@@ -13,11 +13,13 @@ CODEX_STATUS_RE = re.compile(
 OPENCODE_HINT_RE = re.compile(
     r"\bOpenCode\b|\bAsk anything\b|\bBuild\b.*\bgpt-", re.IGNORECASE
 )
+CLAUDE_HINT_RE = re.compile(r"\bClaude Code\b|\bclaude-(opus|sonnet)\b", re.IGNORECASE)
 
 
 class CliBackend(Enum):
     CODEX = "codex"
     OPENCODE = "opencode"
+    CLAUDE = "claude"
     UNKNOWN = "unknown"
 
 
@@ -37,15 +39,22 @@ def detect_backend(
     if cmd == "opencode":
         return CliBackend.OPENCODE
 
+    if cmd == "claude":
+        return CliBackend.CLAUDE
+
     if cmd == "node":
         if screen_text and OPENCODE_HINT_RE.search(screen_text):
             return CliBackend.OPENCODE
         if screen_text and CODEX_STATUS_RE.search(screen_text):
             return CliBackend.CODEX
+        if screen_text and CLAUDE_HINT_RE.search(screen_text):
+            return CliBackend.CLAUDE
         if "opencode" in start_cmd:
             return CliBackend.OPENCODE
         if "codex" in start_cmd:
             return CliBackend.CODEX
+        if "claude" in start_cmd:
+            return CliBackend.CLAUDE
         return CliBackend.UNKNOWN
 
     if not cmd or cmd in {"bash", "zsh", "sh", "fish"}:
@@ -53,10 +62,14 @@ def detect_backend(
             return CliBackend.CODEX
         if screen_text and OPENCODE_HINT_RE.search(screen_text):
             return CliBackend.OPENCODE
+        if screen_text and CLAUDE_HINT_RE.search(screen_text):
+            return CliBackend.CLAUDE
         if "opencode" in start_cmd:
             return CliBackend.OPENCODE
         if "codex" in start_cmd:
             return CliBackend.CODEX
+        if "claude" in start_cmd:
+            return CliBackend.CLAUDE
         return CliBackend.UNKNOWN
 
     return CliBackend.UNKNOWN

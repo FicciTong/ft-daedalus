@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from daedalus_wechat.cli_backend import CliBackend
 from daedalus_wechat.live_session import (
     PLAN_MARKER,
     LiveCodexSessionManager,
@@ -46,6 +47,44 @@ class LiveSessionTests(unittest.TestCase):
             },
         }
         self.assertEqual(self.runner._extract_final_text(event), "FINAL_OK")
+
+    def test_extract_claude_final_text_reads_end_turn_text(self) -> None:
+        event = {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "stop_reason": "end_turn",
+                "content": [{"type": "text", "text": "OK"}],
+            },
+        }
+        self.assertEqual(self.runner._extract_claude_final_text(event), "OK")
+
+    def test_extract_claude_final_text_accepts_text_only_turn_without_stop_reason(
+        self,
+    ) -> None:
+        event = {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "stop_reason": None,
+                "content": [{"type": "text", "text": "I'm Claude."}],
+            },
+        }
+        self.assertEqual(self.runner._extract_claude_final_text(event), "I'm Claude.")
+
+    def test_extract_claude_final_text_ignores_tool_use_turn_without_stop(self) -> None:
+        event = {
+            "type": "assistant",
+            "message": {
+                "role": "assistant",
+                "stop_reason": None,
+                "content": [
+                    {"type": "tool_use", "id": "toolu_123", "name": "Bash"},
+                    {"type": "text", "text": "working"},
+                ],
+            },
+        }
+        self.assertEqual(self.runner._extract_claude_final_text(event), "")
 
     def test_extract_progress_text_keeps_full_commentary_block(self) -> None:
         event = {
@@ -287,6 +326,38 @@ class LiveSessionTests(unittest.TestCase):
         self.assertIsNotNone(scan)
         assert scan is not None
         self.assertEqual(scan.final_text, "OPENCODE_FINAL_OK")
+        self.assertEqual(scan.progress_texts, [])
+        self.assertGreater(scan.end_offset, 0)
+
+    def test_latest_mirror_since_reads_claude_final_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            projects_root = Path(tmpdir) / ".claude" / "projects" / "proj"
+            projects_root.mkdir(parents=True, exist_ok=True)
+            session_id = "9d39ab4b-c37d-4ff8-8104-e83cdd6c4307"
+            session_file = projects_root / f"{session_id}.jsonl"
+            session_file.write_text(
+                json.dumps(
+                    {
+                        "type": "assistant",
+                        "message": {
+                            "role": "assistant",
+                            "stop_reason": "end_turn",
+                            "content": [{"type": "text", "text": "OK"}],
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            self.runner.claude_projects_root = Path(tmpdir) / ".claude" / "projects"
+            scan = self.runner.latest_mirror_since(
+                thread_id=f"claude:{session_id}",
+                start_offset=0,
+            )
+        self.assertIsNotNone(scan)
+        assert scan is not None
+        self.assertEqual(scan.final_text, "OK")
         self.assertEqual(scan.progress_texts, [])
         self.assertGreater(scan.end_offset, 0)
 
@@ -704,6 +775,20 @@ class LiveSessionTests(unittest.TestCase):
 
         self.assertEqual(resolved, "ses_match")
 
+    def test_resolve_claude_session_id_prefers_open_project_jsonl(self) -> None:
+        session_id = "9d39ab4b-c37d-4ff8-8104-e83cdd6c4307"
+        session_file = Path(
+            f"/home/ft/.claude/projects/-home-ft-dev-ft-cosmos/{session_id}.jsonl"
+        )
+        with patch.object(
+            self.runner,
+            "_current_claude_session_file",
+            return_value=session_file,
+        ):
+            resolved = self.runner._resolve_claude_session_id(tmux_session="claude")
+
+        self.assertEqual(resolved, f"claude:{session_id}")
+
     def test_ensure_resumed_session_routes_opencode_thread_to_opencode_tmux(
         self,
     ) -> None:
@@ -823,6 +908,16 @@ class LiveSessionTests(unittest.TestCase):
             with self.assertRaises(RuntimeError) as exc_info:
                 self.runner.create_new_session(state=state, label="owner")
         self.assertIn("不会自动创建 session", str(exc_info.exception))
+
+    def test_preferred_canonical_backend_accepts_claude_tmux_name(self) -> None:
+        runner = LiveCodexSessionManager(
+            codex_bin="codex",
+            opencode_bin="opencode",
+            default_cwd=Path("/tmp"),
+            canonical_tmux_session="claude",
+        )
+
+        self.assertEqual(runner._preferred_canonical_backend(), CliBackend.CLAUDE.value)
 
     def test_list_live_runtime_statuses_filters_to_workspace_codex_sessions(
         self,

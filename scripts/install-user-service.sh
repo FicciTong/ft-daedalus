@@ -17,7 +17,6 @@ require_cmd() {
 require_cmd python3
 require_cmd uv
 require_cmd tmux
-require_cmd openclaw
 require_cmd systemctl
 require_cmd codex
 
@@ -51,8 +50,8 @@ install -m 0644 "$SERVICE_SRC" "$SERVICE_DST"
 systemctl --user daemon-reload
 systemctl --user enable daedalus-wechat
 
-echo "==> official WeChat login"
-uv run daedalus-wechat auth-openclaw
+echo "==> official iLink WeChat login"
+uv run daedalus-wechat auth-ilink
 
 echo "==> restart bridge service"
 systemctl --user restart daedalus-wechat

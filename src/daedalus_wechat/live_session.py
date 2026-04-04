@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shlex
 import sqlite3
@@ -24,7 +25,11 @@ EPHEMERAL_LINE_RE = re.compile(
 PLAN_MARKER = "__DAEDALUS_PLAN__\n"
 TMUX_RUNTIME_ID_OPTION = "@daedalus_runtime_id"
 OPENCODE_SESSION_PREFIX = "ses_"
+CLAUDE_SESSION_PREFIX = "claude:"
 PENDING_RUNTIME_PREFIX = "pending:"
+CLAUDE_SESSION_FILE_RE = re.compile(
+    r"/\.claude/projects/[^/]+/(?P<session_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?: \(deleted\))?$"
+)
 
 
 @dataclass(frozen=True)
@@ -85,6 +90,7 @@ class LiveCodexSessionManager:
         self.codex_state_db = codex_state_db or default_codex_state_db()
         self.opencode_state_db = opencode_state_db or default_opencode_state_db()
         self.session_root = Path.home() / ".codex" / "sessions"
+        self.claude_projects_root = Path.home() / ".claude" / "projects"
 
     def find_latest_thread(self) -> str | None:
         state_db = self.codex_state_db
@@ -138,6 +144,8 @@ class LiveCodexSessionManager:
 
     def _preferred_canonical_backend(self) -> str:
         session_name = self.canonical_tmux_session.strip().lower()
+        if "claude" in session_name:
+            return CliBackend.CLAUDE.value
         if "opencode" in session_name or session_name.startswith("oc-"):
             return CliBackend.OPENCODE.value
         return CliBackend.CODEX.value
@@ -148,6 +156,8 @@ class LiveCodexSessionManager:
             expected_backend = self.expected_backend_for_tmux_session(tmux_name)
             if expected_backend:
                 return expected_backend
+        if self._is_claude_runtime_id(runtime_id):
+            return CliBackend.CLAUDE.value
         if self._is_opencode_runtime_id(runtime_id):
             return CliBackend.OPENCODE.value
         return CliBackend.CODEX.value
@@ -163,6 +173,8 @@ class LiveCodexSessionManager:
             return None
         if name == self.canonical_tmux_session.strip().lower():
             return self._preferred_canonical_backend()
+        if "claude" in name:
+            return CliBackend.CLAUDE.value
         if "opencode" in name or name.startswith("oc-"):
             return CliBackend.OPENCODE.value
         if "codex" in name:
@@ -221,6 +233,8 @@ class LiveCodexSessionManager:
             and "opencode" in current_lower
             and "codex" not in current_lower
         ):
+            return default_label
+        if status.backend == CliBackend.CLAUDE.value and "claude" not in current_lower:
             return default_label
         return existing.label
 
@@ -460,12 +474,17 @@ class LiveCodexSessionManager:
                     f"tmux new -s {self.canonical_tmux_session} "
                     f"'{self.opencode_bin} {self.default_cwd}'"
                 )
+            elif backend == CliBackend.CLAUDE.value:
+                start_hint = (
+                    "当前没有 canonical Claude tmux。请先启动一个固定窗口，例如：\n"
+                    f"tmux new -s {self.canonical_tmux_session} 'claude --resume'"
+                )
             raise RuntimeError(start_hint)
         if status.backend == "unknown":
             raise RuntimeError(
                 f"`tmux {status.tmux_session}` 已存在，但里面当前不是受支持的 live runtime "
                 f"(pane_current_command={status.pane_command or 'unknown'})。"
-                "\n请先 attach 进去并启动 Codex 或 OpenCode。"
+                "\n请先 attach 进去并启动 Codex、OpenCode 或 Claude。"
             )
         conflict_reason = self.runtime_conflict_reason(status)
         if conflict_reason is not None:
@@ -495,6 +514,11 @@ class LiveCodexSessionManager:
                     else status.pane_cwd or str(self.default_cwd),
                     source=existing.source if existing else "tmux-live-provisional",
                     tmux_session=status.tmux_session,
+                )
+            if status.backend == CliBackend.CLAUDE.value:
+                raise RuntimeError(
+                    f"`tmux {status.tmux_session}` 已打开，但还没有识别到可用的 Claude session。"
+                    "\n请先 attach 进去，确认 Claude Code 已经进入当前项目会话。"
                 )
             raise RuntimeError(
                 f"`tmux {status.tmux_session}` 已打开，但还没有进入任何 Codex thread。"
@@ -608,8 +632,15 @@ class LiveCodexSessionManager:
         return f"tmux attach -t {tmux_session}"
 
     def rollout_size(self, thread_id: str) -> int:
+        if not thread_id:
+            return 0
         if self._is_opencode_runtime_id(thread_id):
             return self._opencode_latest_part_rowid(thread_id)
+        if self._is_claude_runtime_id(thread_id):
+            session_file = self._resolve_rollout_file(thread_id)
+            if session_file and session_file.exists():
+                return int(session_file.stat().st_size)
+            return 0
         rollout_file = self._resolve_rollout_file(thread_id)
         if rollout_file is None or not rollout_file.exists():
             return 0
@@ -620,6 +651,10 @@ class LiveCodexSessionManager:
     ) -> MirrorScan | None:
         if self._is_opencode_runtime_id(thread_id):
             return self._opencode_mirror_since(
+                thread_id=thread_id, start_offset=start_offset
+            )
+        if self._is_claude_runtime_id(thread_id):
+            return self._claude_mirror_since(
                 thread_id=thread_id, start_offset=start_offset
             )
         rollout_file = self._resolve_rollout_file(thread_id)
@@ -1017,6 +1052,16 @@ class LiveCodexSessionManager:
         return candidates[-1] if candidates else None
 
     def _resolve_rollout_file(self, thread_id: str) -> Path | None:
+        if self._is_claude_runtime_id(thread_id):
+            session_id = thread_id[len(CLAUDE_SESSION_PREFIX) :]
+            if not self.claude_projects_root.exists():
+                return None
+            matches = sorted(
+                self.claude_projects_root.rglob(f"{session_id}.jsonl"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            return matches[0] if matches else None
         if not self.session_root.exists():
             return None
         matches = sorted(
@@ -1045,6 +1090,8 @@ class LiveCodexSessionManager:
                 tmux_session=tmux_session,
                 pane_cwd=pane_cwd,
             )
+        if backend == CliBackend.CLAUDE.value:
+            return self._resolve_claude_session_id(tmux_session=tmux_session)
         candidates = self._extract_thread_candidates(screen_text)
         pane_candidate = candidates[-1] if candidates else None
         if backend != "codex" or not self._is_workspace_tmux(pane_cwd):
@@ -1098,11 +1145,92 @@ class LiveCodexSessionManager:
     def _is_opencode_runtime_id(self, runtime_id: str | None) -> bool:
         return bool(runtime_id and runtime_id.startswith(OPENCODE_SESSION_PREFIX))
 
+    def _is_claude_runtime_id(self, runtime_id: str | None) -> bool:
+        return bool(runtime_id and runtime_id.startswith(CLAUDE_SESSION_PREFIX))
+
     def _is_pending_runtime_id(self, runtime_id: str | None) -> bool:
         return bool(runtime_id and runtime_id.startswith(PENDING_RUNTIME_PREFIX))
 
     def _pending_runtime_id(self, tmux_session: str) -> str:
         return f"{PENDING_RUNTIME_PREFIX}{tmux_session}"
+
+    def _claude_runtime_id(self, session_id: str) -> str:
+        return f"{CLAUDE_SESSION_PREFIX}{session_id}"
+
+    def _resolve_claude_session_id(self, *, tmux_session: str) -> str | None:
+        session_file = self._current_claude_session_file(tmux_session)
+        if session_file is not None:
+            session_id = self._extract_claude_session_id_from_path(session_file)
+            if session_id:
+                return self._claude_runtime_id(session_id)
+        hinted = self._get_tmux_runtime_id(tmux_session)
+        if hinted and self._is_claude_runtime_id(hinted):
+            return hinted
+        return None
+
+    def _extract_claude_session_id_from_path(self, path: Path) -> str | None:
+        match = CLAUDE_SESSION_FILE_RE.search(str(path))
+        if not match:
+            return None
+        return str(match.group("session_id"))
+
+    def _current_claude_session_file(self, tmux_session: str) -> Path | None:
+        pane_pid = self._pane_pid(tmux_session)
+        if pane_pid is not None:
+            for pid in [pane_pid, *self._proc_children(pane_pid)]:
+                for raw_path in self._proc_open_paths(pid):
+                    match = CLAUDE_SESSION_FILE_RE.search(raw_path)
+                    if match:
+                        return Path(raw_path.replace(" (deleted)", ""))
+        project_dir = self._claude_project_dir(tmux_session)
+        if project_dir is None or not project_dir.exists():
+            return None
+        matches = sorted(
+            project_dir.glob("*.jsonl"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        return matches[0] if matches else None
+
+    def _claude_project_dir(self, tmux_session: str) -> Path | None:
+        pane_cwd = self._pane_current_path(tmux_session) or str(self.default_cwd)
+        try:
+            resolved = Path(pane_cwd).resolve(strict=False)
+        except OSError:
+            return None
+        slug = "-" + "-".join(part for part in resolved.parts if part and part != "/")
+        return self.claude_projects_root / slug
+
+    def _proc_children(self, pid: int) -> list[int]:
+        children_file = Path(f"/proc/{pid}/task/{pid}/children")
+        if not children_file.exists():
+            return []
+        try:
+            content = children_file.read_text(encoding="utf-8").strip()
+        except OSError:
+            return []
+        if not content:
+            return []
+        children: list[int] = []
+        for token in content.split():
+            try:
+                children.append(int(token))
+            except ValueError:
+                continue
+        return children
+
+    def _proc_open_paths(self, pid: int) -> list[str]:
+        fd_dir = Path(f"/proc/{pid}/fd")
+        if not fd_dir.exists():
+            return []
+        paths: list[str] = []
+        for fd in fd_dir.iterdir():
+            try:
+                target = os.readlink(fd)
+            except OSError:
+                continue
+            paths.append(target)
+        return paths
 
     def _opencode_candidate_directories(self, pane_cwd: str | None) -> list[str]:
         candidates: list[str] = []
@@ -1297,6 +1425,60 @@ class LiveCodexSessionManager:
             progress_texts=progress_texts, final_text=final_text, end_offset=end_offset
         )
 
+    def _claude_mirror_since(
+        self, *, thread_id: str, start_offset: int
+    ) -> MirrorScan | None:
+        session_file = self._resolve_rollout_file(thread_id)
+        if session_file is None or not session_file.exists():
+            return None
+        offset = int(start_offset)
+        size = session_file.stat().st_size
+        if size < offset:
+            offset = 0
+        if size == offset:
+            return MirrorScan(progress_texts=[], final_text="", end_offset=offset)
+        with session_file.open("r", encoding="utf-8") as fh:
+            fh.seek(offset)
+            chunk = fh.read()
+            end_offset = fh.tell()
+        final_text = ""
+        for raw in chunk.splitlines():
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            extracted = self._extract_claude_final_text(event)
+            if extracted:
+                final_text = extracted
+        return MirrorScan(
+            progress_texts=[], final_text=final_text, end_offset=end_offset
+        )
+
+    def _extract_claude_final_text(self, event: dict) -> str:
+        if str(event.get("type", "")).strip() != "assistant":
+            return ""
+        message = event.get("message") or {}
+        if str(message.get("role", "")).strip() != "assistant":
+            return ""
+        parts: list[str] = []
+        has_tool_use = False
+        for item in message.get("content") or []:
+            item_type = str(item.get("type", "")).strip()
+            if item_type == "tool_use":
+                has_tool_use = True
+                continue
+            if item_type != "text":
+                continue
+            text = str(item.get("text", "")).strip()
+            if text:
+                parts.append(text)
+        if not parts:
+            return ""
+        stop_reason = str(message.get("stop_reason", "")).strip()
+        if has_tool_use and stop_reason not in {"end_turn", "stop_sequence"}:
+            return ""
+        return "\n\n".join(parts).strip()
+
     def _extract_opencode_final_text(self, *, part: dict, message: dict) -> str:
         if str(message.get("role", "")).strip() != "assistant":
             return ""
@@ -1466,6 +1648,30 @@ class LiveCodexSessionManager:
             check=False,
         )
         return proc.returncode == 0
+
+    def _pane_pid(self, tmux_session: str) -> int | None:
+        proc = subprocess.run(
+            [
+                "tmux",
+                "display-message",
+                "-p",
+                "-t",
+                f"{tmux_session}:0.0",
+                "#{pane_pid}",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return None
+        raw = proc.stdout.decode(errors="replace").strip()
+        if not raw:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
 
     def _get_tmux_runtime_id(self, tmux_session: str) -> str | None:
         proc = subprocess.run(

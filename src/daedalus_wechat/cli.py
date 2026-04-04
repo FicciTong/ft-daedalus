@@ -11,6 +11,7 @@ from pathlib import Path
 from .config import load_config
 from .daemon import BridgeDaemon
 from .delivery_ledger import append_delivery
+from .ilink_auth import poll_ilink_login, start_ilink_login, write_bridge_account
 from .live_session import LiveCodexSessionManager
 from .security_drill import run_security_drill
 from .state import BridgeState
@@ -41,7 +42,9 @@ def _send_bound_text(
     client: WeChatClient | None = None,
 ) -> int:
     if not state.bound_user_id or not state.bound_context_token:
-        raise RuntimeError("No bound WeChat chat context. Send /status from WeChat first.")
+        raise RuntimeError(
+            "No bound WeChat chat context. Send /status from WeChat first."
+        )
     chunks = _chunk_text(text, config.text_chunk_limit)
     if not chunks:
         raise RuntimeError("No text to send.")
@@ -125,8 +128,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read text from stdin",
     )
     sub.add_parser(
+        "auth-ilink",
+        help="Run direct official iLink QR login without OpenClaw, then write bridge account.json",
+    )
+    sub.add_parser(
         "auth-openclaw",
-        help="Run official openclaw-weixin login under the dedicated bridge profile, then import the account",
+        help="Run legacy official openclaw-weixin login under the dedicated bridge profile, then import the account",
     )
     sub.add_parser(
         "import-openclaw-account",
@@ -146,7 +153,7 @@ def _import_latest_openclaw_account(config, state: BridgeState) -> int:
         ),
         key=lambda p: p.stat().st_mtime,
         reverse=True,
-        )
+    )
     if not candidates:
         raise RuntimeError(
             "No OpenClaw Weixin account found. Run `daedalus-wechat auth-openclaw` first."
@@ -178,9 +185,13 @@ def _resolve_openclaw_module_dir() -> Path:
     openclaw_bin = shutil.which("openclaw")
     if not openclaw_bin:
         raise RuntimeError("openclaw CLI not found in PATH")
-    candidate = Path(openclaw_bin).resolve().parent.parent / "lib" / "node_modules" / "openclaw"
+    candidate = (
+        Path(openclaw_bin).resolve().parent.parent / "lib" / "node_modules" / "openclaw"
+    )
     if not candidate.exists():
-        raise RuntimeError(f"Cannot resolve global openclaw module dir from {openclaw_bin}")
+        raise RuntimeError(
+            f"Cannot resolve global openclaw module dir from {openclaw_bin}"
+        )
     return candidate
 
 
@@ -192,9 +203,7 @@ def _ensure_openclaw_profile_bootstrap(config) -> None:
             profile_args + ["plugins", "install", OPENCLAW_WEIXIN_PLUGIN_SPEC],
             check=True,
         )
-    plugin_node_modules = (
-        plugin_root / "node_modules"
-    )
+    plugin_node_modules = plugin_root / "node_modules"
     plugin_node_modules.mkdir(parents=True, exist_ok=True)
     openclaw_link = plugin_node_modules / "openclaw"
     if not openclaw_link.exists():
@@ -240,6 +249,46 @@ def _auth_openclaw(config, state: BridgeState) -> int:
     return _import_latest_openclaw_account(config, state)
 
 
+def _maybe_restart_bridge_service() -> bool:
+    try:
+        active = subprocess.run(
+            ["systemctl", "--user", "is-active", "--quiet", "daedalus-wechat.service"],
+            check=False,
+        )
+    except OSError:
+        return False
+    if active.returncode != 0:
+        return False
+    restarted = subprocess.run(
+        ["systemctl", "--user", "restart", "daedalus-wechat.service"],
+        check=False,
+    )
+    return restarted.returncode == 0
+
+
+def _auth_ilink(config, state: BridgeState) -> int:
+    qr = start_ilink_login()
+    print("使用微信扫描以下二维码链接完成授权：")
+    print(qr.qrcode_url)
+    result = poll_ilink_login(qrcode=qr.qrcode)
+    write_bridge_account(account_file=config.account_file, result=result)
+    state.get_updates_buf = ""
+    state.bound_user_id = None
+    state.bound_context_token = None
+    state.outbox_waiting_for_bind = False
+    state.outbox_waiting_for_bind_since = ""
+    state.pending_outbox = []
+    state.save(config.state_file)
+    print(f"bridge_account_file={config.account_file}")
+    print(f"account_id={result.account_id}")
+    print(f"base_url={result.base_url}")
+    if result.user_id:
+        print(f"user_id={result.user_id}")
+    if _maybe_restart_bridge_service():
+        print("bridge_service_restarted=daedalus-wechat.service")
+    return 0
+
+
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
@@ -257,6 +306,9 @@ def main() -> int:
 
     if args.command == "auth-openclaw":
         return _auth_openclaw(config, state)
+
+    if args.command == "auth-ilink":
+        return _auth_ilink(config, state)
 
     if args.command == "import-openclaw-account":
         return _import_latest_openclaw_account(config, state)

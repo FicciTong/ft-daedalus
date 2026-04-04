@@ -19,9 +19,15 @@ The current canonical tool in this repo is:
 
 [中文说明 / Chinese Guide](./README.zh-CN.md)
 
-Today, `daedalus-wechat` bridges a **local Codex tmux session** into WeChat
-using the **official** OpenClaw Weixin channel
-(`@tencent-weixin/openclaw-weixin`).
+Today, `daedalus-wechat` bridges a **local live tmux session** into WeChat
+using the official Tencent Weixin `iLink bot` route.
+
+Current mainline truth:
+
+- Tencent hosts the upstream `iLink bot` service
+- `ft-daedalus` now talks to that upstream directly
+- OpenClaw is no longer required on the machine
+- the bridge remains owner-facing and repo-native
 
 This is **not** a cloud-task wrapper. It preserves **local session continuity**
 by routing WeChat messages into one active local live tmux shell:
@@ -79,7 +85,8 @@ This bridge:
 - does **not** live inside `ft-cosmos`
 - does **not** use Codex cloud tasks
 - does **not** stream many live shells into one WeChat chat at once
-- **does** use the official `openclaw-weixin` login flow
+- **does** use the official Tencent Weixin iLink upstream
+- **does not** need OpenClaw as the long-term host dependency
 - **does** treat workspace live tmux sessions as switchable runtime targets,
   with `tmux codex` as the canonical default
 - **does** mirror desktop-originated final replies back to WeChat once the chat
@@ -125,7 +132,6 @@ You need these on the machine that owns the local Codex session:
 - `tmux`
 - Python `3.13+`
 - `uv`
-- `openclaw`
 - WeChat on your phone
 
 Quick checks:
@@ -135,22 +141,13 @@ codex --version
 tmux -V
 python3 --version
 uv --version
-openclaw --version
 ```
 
-This means: **yes, OpenClaw is a real prerequisite** for this implementation.
-The bridge uses the official OpenClaw Weixin channel path; it does not replace
-that dependency.
+Current truthful read:
 
-Tencent's official plugin flow currently looks like:
-
-```bash
-npx -y @tencent-weixin/openclaw-weixin-cli install
-openclaw channels login --channel openclaw-weixin
-```
-
-This bridge wraps that official route for you, so you usually do **not** need
-to run those raw commands manually.
+- Tencent's official upstream is the `iLink bot` route
+- `daedalus-wechat` now bootstraps directly against that route
+- no OpenClaw host install is required
 
 ## 🚀 Install
 
@@ -172,7 +169,7 @@ bash scripts/install-user-service.sh
 
 This script:
 
-1. checks required commands (`codex`, `tmux`, `python3`, `uv`, `openclaw`,
+1. checks required commands (`codex`, `tmux`, `python3`, `uv`,
    `systemctl`)
 2. runs `uv sync`
 3. installs the user systemd unit
@@ -190,20 +187,19 @@ bash scripts/doctor.sh
 
 ## 🔐 Official WeChat Login
 
-The canonical login path for this bridge is:
+The canonical login path for this bridge is now:
 
 ```bash
 cd ~/dev/ft-cosmos/ft-daedalus
-uv run daedalus-wechat auth-openclaw
+uv run daedalus-wechat auth-ilink
 ```
 
 What this does:
 
-1. bootstraps the official `@tencent-weixin/openclaw-weixin` plugin into the
-   dedicated OpenClaw profile `daedalus-wechat`
-2. enables the plugin for that profile
-3. runs the official QR-code login flow
-4. imports the resulting account into the bridge state dir
+1. calls Tencent's official iLink QR login endpoints directly
+2. waits for scan confirmation
+3. writes the resulting account into the bridge state dir
+4. reloads the running bridge service so the new token takes effect immediately
 
 By default the bridge stores its imported account at:
 
@@ -211,8 +207,11 @@ By default the bridge stores its imported account at:
 ~/.local/state/daedalus-wechat/account.json
 ```
 
-If `doctor` later reports `errcode=-14` / session timeout, just run
-`uv run daedalus-wechat auth-openclaw` again.
+If `doctor` later reports `errcode=-14` / session timeout, rerun:
+
+```bash
+uv run daedalus-wechat auth-ilink
+```
 
 If outbound sends later fail with `ret=-2`, the bridge now automatically retries
 once **without** `context_token`. This keeps delivery alive even when the old
@@ -226,11 +225,7 @@ send:
 /recent 6
 ```
 
-If you intentionally want a different OpenClaw profile:
-
-```bash
-export DAEDALUS_WECHAT_OPENCLAW_PROFILE=my-profile
-```
+You do not need an OpenClaw profile for the current mainline.
 
 ## 🛡️ Security Boundary
 
@@ -332,6 +327,30 @@ Last-resort operator recovery is still:
 /log 10
 ```
 
+## 🤖 Agent-Friendly Deploy Path
+
+If another coding agent is setting this up for the owner, the shortest truthful path is:
+
+```bash
+cd ~/dev/ft-cosmos/ft-daedalus
+bash scripts/install-user-service.sh
+```
+
+Then verify:
+
+```bash
+cd ~/dev/ft-cosmos/ft-daedalus
+uv run daedalus-wechat doctor
+```
+
+Then from WeChat:
+
+```text
+/status
+/sessions
+/switch codex
+```
+
 ## 🖥️ Canonical Desktop Session
 
 The bridge expects one canonical live tmux owner:
@@ -343,7 +362,7 @@ tmux new -s codex 'codex resume --last -C /home/ft/dev/ft-cosmos --no-alt-screen
 If `tmux codex` already exists:
 
 ```bash
-tmux attach -t codex
+  tmux attach -t codex
 ```
 
 If you do **not** have a prior thread yet, start one in the same canonical tmux:
@@ -506,7 +525,7 @@ tmux attach -t codex
 
 Do **not** expect an arbitrary unrelated shell to live-sync into the bridge.
 
-Only tmux sessions that look like live Codex runtimes **and** belong to the
+Only tmux sessions that look like live supported runtimes **and** belong to the
 configured workspace are listed as switchable targets.
 
 ## 🧩 Optional Environment Variables
@@ -515,9 +534,10 @@ configured workspace are listed as switchable targets.
 - `DAEDALUS_WECHAT_STATE_DIR`
 - `DAEDALUS_WECHAT_ACCOUNT_FILE`
 - `DAEDALUS_WECHAT_CODEX_BIN`
+- `DAEDALUS_WECHAT_OPENCODE_BIN`
 - `DAEDALUS_WECHAT_CODEX_STATE_DB`
+- `DAEDALUS_WECHAT_OPENCODE_STATE_DB`
 - `DAEDALUS_WECHAT_PROGRESS_UPDATES`
-- `DAEDALUS_WECHAT_OPENCLAW_PROFILE`
 - `DAEDALUS_WECHAT_TMUX_SESSION`
 
 If `DAEDALUS_WECHAT_CODEX_STATE_DB` is not set, the bridge now resolves the
@@ -548,7 +568,7 @@ uv run daedalus-wechat doctor
 3. if login expired:
 
 ```bash
-uv run daedalus-wechat auth-openclaw
+uv run daedalus-wechat auth-ilink
 ```
 
 4. if the bridge is healthy but Codex is missing, restore the canonical tmux:
