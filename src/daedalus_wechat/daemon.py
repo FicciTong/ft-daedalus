@@ -10,7 +10,11 @@ from zoneinfo import ZoneInfo
 
 from .config import BridgeConfig
 from .delivery_ledger import append_delivery, read_recent_for_user
-from .incoming_media import IncomingImageRef, SavedIncomingImage, download_incoming_image
+from .incoming_media import (
+    IncomingImageRef,
+    SavedIncomingImage,
+    download_incoming_image,
+)
 from .live_session import PLAN_MARKER, LiveCodexSessionManager
 from .state import BridgeState, now_iso
 from .systemd_notify import notify as systemd_notify
@@ -31,7 +35,7 @@ HELP_TEXT = """FT bridge 命令总览
 /sessions          当前可切换的 live tmux 列表
 /switch <target>   切换到某个 session
 /attach-last       接最近一个 ft-cosmos session
-/new [label]       新建一个本地 Codex session
+/new [label]       新建一个本地 live runtime session
 /stop              清空当前 active session
 
 通知:
@@ -50,8 +54,8 @@ HELP_TEXT = """FT bridge 命令总览
 /menu              同 /help
 
 普通文本消息 = 直接发给当前 active live tmux session。
-如果当前 active tmux 还没打开 Codex，bridge 会明确提示你先启动/恢复。
-/sessions 只显示当前 workspace 下、看起来像 live Codex runtime 的 tmux。
+如果当前 active tmux 还没打开受支持的 live runtime，bridge 会明确提示你先启动/恢复。
+/sessions 只显示当前 workspace 下、看起来像 live runtime 的 tmux。
 同一时刻只会有一个 active live session。
 bridge 会后台定期检查并冲洗 pending backlog，无需 /queue /catchup。
 """
@@ -311,7 +315,7 @@ class BridgeDaemon:
         if command == "/attach-last":
             record = self.runner.ensure_attached_latest(self.state)
             if not record:
-                return "没有找到最近的 ft-cosmos 本地 Codex session。"
+                return "没有找到最近的 ft-cosmos 本地 live runtime session。"
             self.state.active_session_id = record.thread_id
             self.state.active_tmux_session = record.tmux_session
             self._sync_mirror_cursor(record.thread_id)
@@ -716,18 +720,19 @@ class BridgeDaemon:
                 f"tmux={runtime.tmux_session}\n"
                 "hint=先启动 canonical tmux"
             )
-        if runtime.pane_command not in {"node", "codex"}:
+        if runtime.backend == "unknown":
             return (
                 "status=tmux_no_cli\n"
                 f"tmux={runtime.tmux_session}\n"
                 f"pane={runtime.pane_command or 'unknown'}\n"
-                "hint=attach 后启动 Codex"
+                "hint=attach 后启动 Codex 或 OpenCode"
             )
         if not runtime.thread_id:
             return (
                 "status=no_thread\n"
                 f"tmux={runtime.tmux_session}\n"
-                "hint=attach 后 resume --last"
+                f"backend={runtime.backend}\n"
+                "hint=attach 后进入 live session；OpenCode 首条 prompt 后会绑定 session"
             )
         self.state.active_session_id = runtime.thread_id
         self.state.active_tmux_session = runtime.tmux_session
@@ -744,6 +749,7 @@ class BridgeDaemon:
             f"thread={self._short_thread(record.thread_id)}\n"
             f"label={record.label}\n"
             f"tmux={record.tmux_session}\n"
+            f"backend={runtime.backend}\n"
             f"cwd={self._short_cwd(record.cwd)}\n"
             f"notify={self._notify_mode_text()}\n"
             f"attach={self.runner.attach_hint(record)}"
@@ -797,7 +803,7 @@ class BridgeDaemon:
         )
         if not runtime.exists:
             status = "degraded"
-        elif runtime.pane_command not in {"node", "codex"}:
+        elif runtime.backend == "unknown":
             status = "degraded"
         elif not runtime.thread_id:
             status = "degraded"
@@ -813,6 +819,7 @@ class BridgeDaemon:
             f"health={status}",
             f"tmux={runtime.tmux_session}",
             f"pane={runtime.pane_command or 'none'}",
+            f"backend={runtime.backend}",
             f"thread={self._short_thread(runtime.thread_id) if runtime.thread_id else 'none'}",
             f"wechat={wechat_account}",
             f"access={access}",

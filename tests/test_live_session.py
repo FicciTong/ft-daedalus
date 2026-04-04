@@ -20,6 +20,7 @@ class LiveSessionTests(unittest.TestCase):
     def setUp(self) -> None:
         self.runner = LiveCodexSessionManager(
             codex_bin="codex",
+            opencode_bin="opencode",
             default_cwd=Path("/tmp"),
             canonical_tmux_session="codex",
         )
@@ -206,6 +207,125 @@ class LiveSessionTests(unittest.TestCase):
         inject_mock.assert_called_once_with("codex", "hello")
         self.assertEqual(submitted.thread_id, fresh_thread)
         self.assertEqual(submitted.tmux_session, "codex")
+
+    def test_latest_mirror_since_reads_opencode_final_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "opencode.db"
+            conn = sqlite3.connect(db_path)
+            try:
+                conn.executescript(
+                    """
+                    create table session (
+                        id text primary key,
+                        directory text not null,
+                        time_created integer not null,
+                        time_updated integer not null,
+                        time_archived integer
+                    );
+                    create table message (
+                        id text primary key,
+                        session_id text not null,
+                        time_created integer not null,
+                        time_updated integer not null,
+                        data text not null
+                    );
+                    create table part (
+                        id text primary key,
+                        message_id text not null,
+                        session_id text not null,
+                        time_created integer not null,
+                        time_updated integer not null,
+                        data text not null
+                    );
+                    """
+                )
+                conn.execute(
+                    "insert into session (id, directory, time_created, time_updated, time_archived) values (?, ?, ?, ?, null)",
+                    ("ses_test", "/tmp", 10, 20),
+                )
+                conn.execute(
+                    "insert into message (id, session_id, time_created, time_updated, data) values (?, ?, ?, ?, ?)",
+                    (
+                        "msg_assistant",
+                        "ses_test",
+                        10,
+                        20,
+                        json.dumps({"role": "assistant"}, ensure_ascii=False),
+                    ),
+                )
+                conn.execute(
+                    "insert into part (id, message_id, session_id, time_created, time_updated, data) values (?, ?, ?, ?, ?, ?)",
+                    (
+                        "part_final",
+                        "msg_assistant",
+                        "ses_test",
+                        10,
+                        20,
+                        json.dumps(
+                            {
+                                "type": "text",
+                                "text": "OPENCODE_FINAL_OK",
+                                "metadata": {"openai": {"phase": "final_answer"}},
+                            },
+                            ensure_ascii=False,
+                        ),
+                    ),
+                )
+                conn.commit()
+            finally:
+                conn.close()
+            self.runner.opencode_state_db = db_path
+            scan = self.runner.latest_mirror_since(thread_id="ses_test", start_offset=0)
+        self.assertIsNotNone(scan)
+        assert scan is not None
+        self.assertEqual(scan.final_text, "OPENCODE_FINAL_OK")
+        self.assertEqual(scan.progress_texts, [])
+        self.assertGreater(scan.end_offset, 0)
+
+    def test_submit_prompt_resolves_opencode_session_from_db_after_inject(self) -> None:
+        record = SessionRecord(
+            thread_id="pending:opencode",
+            label="opencode",
+            cwd="/tmp",
+            source="tmux-live-provisional",
+            created_at="2026-03-26T00:00:00+00:00",
+            updated_at="2026-03-26T00:00:00+00:00",
+            tmux_session="opencode",
+        )
+        with patch.object(self.runner, "_ensure_running_tmux", return_value="opencode"):
+            with patch.object(self.runner, "_inject_prompt") as inject_mock:
+                with patch.object(
+                    self.runner,
+                    "_runtime_status_for_tmux",
+                    side_effect=[
+                        LiveRuntimeStatus(
+                            tmux_session="opencode",
+                            exists=True,
+                            pane_command="opencode",
+                            thread_id=None,
+                            pane_cwd="/tmp",
+                            backend="opencode",
+                        ),
+                        LiveRuntimeStatus(
+                            tmux_session="opencode",
+                            exists=True,
+                            pane_command="opencode",
+                            thread_id="ses_after",
+                            pane_cwd="/tmp",
+                            backend="opencode",
+                        ),
+                    ],
+                ):
+                    with patch.object(
+                        self.runner,
+                        "_latest_opencode_session_info",
+                        side_effect=[("ses_before", 10), ("ses_after", 25)],
+                    ):
+                        with patch.object(self.runner, "_set_tmux_runtime_id") as set_hint:
+                            submitted = self.runner.submit_prompt(record=record, prompt="hello")
+        inject_mock.assert_called_once_with("opencode", "hello")
+        set_hint.assert_called_with("opencode", "ses_after")
+        self.assertEqual(submitted.thread_id, "ses_after")
 
     def test_list_live_runtime_statuses_filters_to_workspace_codex_sessions(self) -> None:
         with patch.object(

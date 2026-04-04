@@ -15,8 +15,11 @@ class BridgeConfig:
     canonical_tmux_session: str
     allowed_users: frozenset[str]
     progress_updates_default: bool
+    opencode_bin: str = "opencode"
     codex_state_db: Path = field(default_factory=lambda: default_codex_state_db())
     codex_state_db_source: str = "default_resolved"
+    opencode_state_db: Path = field(default_factory=lambda: default_opencode_state_db())
+    opencode_state_db_source: str = "default_resolved"
     poll_timeout_ms: int = 35_000
     text_chunk_limit: int = 3500
     min_send_interval_seconds: float = 0.5
@@ -111,6 +114,10 @@ def default_codex_state_db() -> Path:
     return canonical
 
 
+def default_opencode_state_db() -> Path:
+    return Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+
+
 def load_config() -> BridgeConfig:
     env_file = Path(
         os.environ.get(
@@ -139,6 +146,10 @@ def load_config() -> BridgeConfig:
         "DAEDALUS_WECHAT_CODEX_BIN",
         file_env.get("DAEDALUS_WECHAT_CODEX_BIN", "codex"),
     )
+    opencode_bin = os.environ.get(
+        "DAEDALUS_WECHAT_OPENCODE_BIN",
+        file_env.get("DAEDALUS_WECHAT_OPENCODE_BIN", "opencode"),
+    )
     env_codex_state_db = os.environ.get("DAEDALUS_WECHAT_CODEX_STATE_DB")
     file_codex_state_db = file_env.get("DAEDALUS_WECHAT_CODEX_STATE_DB")
     if env_codex_state_db and env_codex_state_db.strip():
@@ -151,6 +162,18 @@ def load_config() -> BridgeConfig:
         codex_state_db_source = "default_resolved"
         raw_codex_state_db = str(default_codex_state_db())
     codex_state_db = Path(raw_codex_state_db).expanduser()
+    env_opencode_state_db = os.environ.get("DAEDALUS_WECHAT_OPENCODE_STATE_DB")
+    file_opencode_state_db = file_env.get("DAEDALUS_WECHAT_OPENCODE_STATE_DB")
+    if env_opencode_state_db and env_opencode_state_db.strip():
+        opencode_state_db_source = "env_explicit"
+        raw_opencode_state_db = env_opencode_state_db
+    elif file_opencode_state_db and file_opencode_state_db.strip():
+        opencode_state_db_source = "env_file_explicit"
+        raw_opencode_state_db = file_opencode_state_db
+    else:
+        opencode_state_db_source = "default_resolved"
+        raw_opencode_state_db = str(default_opencode_state_db())
+    opencode_state_db = Path(raw_opencode_state_db).expanduser()
     openclaw_profile = os.environ.get(
         "DAEDALUS_WECHAT_OPENCLAW_PROFILE",
         file_env.get("DAEDALUS_WECHAT_OPENCLAW_PROFILE", "daedalus-wechat"),
@@ -191,11 +214,14 @@ def load_config() -> BridgeConfig:
     )
     return BridgeConfig(
         codex_bin=codex_bin,
+        opencode_bin=opencode_bin,
         account_file=account_file,
         state_dir=state_dir,
         default_cwd=default_cwd,
         codex_state_db=codex_state_db,
         codex_state_db_source=codex_state_db_source,
+        opencode_state_db=opencode_state_db,
+        opencode_state_db_source=opencode_state_db_source,
         openclaw_profile=openclaw_profile,
         canonical_tmux_session=canonical_tmux_session,
         allowed_users=allowed_users,

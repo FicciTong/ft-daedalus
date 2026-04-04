@@ -271,6 +271,7 @@ def main() -> int:
             )
         )
         print(f"codex_bin={config.codex_bin}")
+        print(f"opencode_bin={config.opencode_bin}")
         print(f"account_file={config.account_file}")
         print(f"openclaw_profile={config.openclaw_profile}")
         print(f"default_cwd={config.default_cwd}")
@@ -299,11 +300,17 @@ def main() -> int:
         )
         runner = LiveCodexSessionManager(
             codex_bin=config.codex_bin,
+            opencode_bin=config.opencode_bin,
             default_cwd=config.default_cwd,
             canonical_tmux_session=config.canonical_tmux_session,
             codex_state_db=config.codex_state_db,
+            opencode_state_db=config.opencode_state_db,
         )
         print(f"latest_codex_thread={runner.find_latest_thread()}")
+        print(
+            "latest_opencode_session="
+            + str(runner.find_latest_opencode_session(pane_cwd=str(config.default_cwd)))
+        )
         print(f"canonical_tmux_session={config.canonical_tmux_session}")
         return 0
 
@@ -339,9 +346,11 @@ def main() -> int:
         ),
         runner=LiveCodexSessionManager(
             codex_bin=config.codex_bin,
+            opencode_bin=config.opencode_bin,
             default_cwd=config.default_cwd,
             canonical_tmux_session=config.canonical_tmux_session,
             codex_state_db=config.codex_state_db,
+            opencode_state_db=config.opencode_state_db,
         ),
         state=state,
     )

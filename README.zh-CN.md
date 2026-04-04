@@ -13,23 +13,23 @@
   runtime 的 operator surface，并支持在多个本地 live session 之间切换
 
 > 📱 手机微信  
-> 🖥️ 本地 `tmux` 里的 Codex  
+> 🖥️ 本地 `tmux` 里的 live runtime（如 Codex / OpenCode）  
 > 🔁 同一时刻只盯一个 active live session
 
 [English Version](./README.md)
 
-今天，`daedalus-wechat` 这件工具把**本地 Codex tmux 会话**桥接到微信，
+今天，`daedalus-wechat` 这件工具把**本地 live tmux 会话**桥接到微信，
 走的是**官方** OpenClaw Weixin 通道（`@tencent-weixin/openclaw-weixin`）。
 
 它**不是**云端任务转发器，也**不是**“换个平台聊同一个机器人”的空壳。  
 它的核心目标只有一个：
 
-> **让微信成为你本机 Codex live session 的远程操作入口。**
+> **让微信成为你本机 live session 的远程操作入口。**
 
 默认约定：
 
 - 默认 canonical tmux 名：`codex`
-- tmux 里跑的 agent：本地 `codex`
+- tmux 里跑的 agent/runtime：本地 live CLI（当前支持 Codex / OpenCode）
 - 微信是远程 operator surface，不是另一个独立 bot
 - 如果你有意识地维护多个同 workspace 下的 live tmux session，微信可以
   list / switch，但仍然一次只对准一个 active session
@@ -42,7 +42,7 @@ surface 落在这里。
 
 | 表面 | 你会看到什么 | 它的用途 |
 |---|---|---|
-| 桌面 `tmux codex` | 完整 live terminal stream | 全量输出、工具过程、真正的实时工作界面 |
+| 桌面 `tmux` live runtime | 完整 live terminal stream | 全量输出、工具过程、真正的实时工作界面 |
 | 微信 | 默认只收 system / plan / final；progress 可选开启 | 外出时下任务、收结果 |
 
 如果你想让微信也收 progress：
@@ -67,20 +67,20 @@ surface 落在这里。
   - `image_item.media.encrypt_query_param` + 可用 AES key 的加密图片
   - 如果只有加密 query、没有 AES key，也会先按 plain CDN 路径尝试一次
   - bridge 会把图片落到 `~/.local/state/daedalus-wechat/incoming_media/`
-  - 再把绝对本地路径注入当前 active Codex session
+  - 再把绝对本地路径注入当前 active live session
   - 仍然无法被 truthfully 重建的图片继续 fail-closed
 
 ## 🧭 这套东西的真实边界
 
 它：
 
-- **不会**修改 Codex 本体
+- **不会**修改底层模型 CLI 本体
 - **不会**放进 `ft-cosmos`
-- **不会**走 Codex cloud tasks
+- **不会**接管 repo 治理
 - **不会**把多个 live shell 同时混流到一个聊天窗口
 - **会**使用官方 `openclaw-weixin` 登录链路
 - **会**把 workspace 下的 live tmux session 当成可切换 runtime target，
-  同时保留 `tmux codex` 作为 canonical default
+  同时保留一个 canonical default tmux
 - **会**在当前微信会话绑定后，把桌面侧产生的 final reply 镜像回微信
 
 ## 🧠 正确理解方式
@@ -104,7 +104,7 @@ tmux attach -t codex
 
 这里不是终端镜像，而是：
 
-- 消息进同一个本地 Codex session
+- 消息进同一个本地 live session
 - 微信收到的是：
   - 默认 `system / plan / final`
   - `progress` 需要 `/notify on` 才开启
@@ -120,9 +120,9 @@ tmux attach -t codex
 
 ## 🧰 前置依赖
 
-装在那台拥有本地 Codex session 的机器上：
+装在那台拥有本地 live session 的机器上：
 
-- `codex`
+- `codex` 或 `opencode`
 - `tmux`
 - Python `3.13+`
 - `uv`
@@ -133,6 +133,7 @@ tmux attach -t codex
 
 ```bash
 codex --version
+opencode --version
 tmux -V
 python3 --version
 uv --version

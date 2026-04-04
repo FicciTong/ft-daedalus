@@ -2,7 +2,15 @@
 
 Canonical record of the next bounded improvement lane for `daedalus-wechat`.
 
-This is a **future lane**, not an active implementation lane.
+This is a **future lane**, not the current implementation lane.
+
+Update as of `2026-04-04`:
+
+- the bridge now has a first bounded runtime-adapter cut for both `Codex` and
+  `OpenCode`
+- owner-facing command shape stays the same
+- this document still tracks the **next** reliability/drain semantics lane,
+  not the already-landed runtime-adapter cut
 
 The purpose of this document is to preserve:
 
@@ -14,11 +22,11 @@ The purpose of this document is to preserve:
 
 ## Current truth
 
-As of `2026-03-28`, the current `daedalus-wechat` bridge already has:
+As of `2026-04-04`, the current `daedalus-wechat` bridge already has:
 
-- one canonical local `tmux codex` runtime
+- one canonical local live tmux runtime
 - WeChat inbound polling through the official OpenClaw Weixin route
-- prompt injection into the live Codex terminal
+- prompt injection into the live terminal
 - desktop mirror of `progress / plan / final`
 - a persisted `pending_outbox`
 - a `delivery_ledger`
@@ -199,12 +207,13 @@ Current canonical decision:
 
 ## Adjacent lane decision update
 
-The previously recorded **multi-CLI / multi-tmux WeChat bridge** idea is now
-retired.
+The previously recorded **multi-CLI / multi-tmux WeChat bridge** idea is no
+longer purely future-theory.
 
 Current canonical posture:
 
-- `daedalus-wechat` is a **Codex-only** owner/operator bridge
+- `daedalus-wechat` now supports bounded `Codex` + `OpenCode` live runtime
+  detection under the same owner-facing bridge
 - `tmux claude` may still exist as an internal worker session under the
   orchestrator model
 - that worker-session posture does **not** imply WeChat bridge support
@@ -212,8 +221,8 @@ Current canonical posture:
 
 Keep the separation explicit:
 
-- this document = current WeChat channel reliability / drain semantics for the
-  Codex bridge only
+- this document = current WeChat channel reliability / drain semantics, not the
+  runtime-adapter implementation record
 - internal multi-agent orchestration = separate control-plane policy outside
   the WeChat bridge
 
