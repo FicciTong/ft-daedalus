@@ -29,7 +29,7 @@ OWNER_VISIBLE_RECENT_CLUSTER_SECONDS = 1800.0
 STALE_DESKTOP_MIRROR_DROP_SECONDS = 600.0
 
 
-HELP_TEXT = """FT bridge 命令总览
+HELP_TEXT = """FT bridge 命令总览（支持 `/command` 和 `\\command`）
 
 会话:
 /status            当前 active session / tmux / cwd
@@ -37,7 +37,7 @@ HELP_TEXT = """FT bridge 命令总览
 /sessions          当前可切换的 live tmux 列表
 /switch <target>   切换到某个 session
 /attach-last       接最近一个 ft-cosmos session
-/new [label]       新建一个本地 live runtime session
+/new [label]       绑定 canonical live runtime（不会自动新建 tmux）
 /stop              清空当前 active session
 
 通知:

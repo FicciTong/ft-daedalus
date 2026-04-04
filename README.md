@@ -286,9 +286,11 @@ The bridge now has four built-in reliability layers:
      has gone stale
    - immediate command replies (for example `/status`) still use the live
      inbound context when available
-4. **final-reply fallback + pending outbox**
-   - if rollout JSONL misses a `final_answer`, the bridge falls back to the
-     visible answer in the live `tmux codex` pane
+4. **runtime-native final capture + pending outbox**
+   - final replies are captured from runtime-native state sources:
+     - Codex JSONL rollout
+     - OpenCode sqlite/db
+     - Claude project JSONL
    - if delivery still fails, the message is queued locally
    - queue entries are deduplicated by message identity instead of multiplying
      on repeated retry failures
@@ -417,9 +419,11 @@ That is the canonical place for both foreground CLI and background service:
 - `DAEDALUS_WECHAT_TMUX_SESSION`
 - `DAEDALUS_WECHAT_CODEX_BIN`
 - `DAEDALUS_WECHAT_CODEX_STATE_DB`
+- `DAEDALUS_WECHAT_OPENCODE_BIN`
+- `DAEDALUS_WECHAT_OPENCODE_STATE_DB`
 - `DAEDALUS_WECHAT_ALLOWED_USERS`
 - `DAEDALUS_WECHAT_PROGRESS_UPDATES`
-- optional OpenClaw profile overrides
+- `DAEDALUS_WECHAT_TMUX_SESSION`
 
 Useful commands:
 
@@ -445,7 +449,7 @@ Commands:
 - `/recent all [n]`
 - `/recent all after <seq>`
 - `/sessions`
-- `/new [label]`
+- `/new [label]`  (bind canonical live runtime; does not create tmux)
 - `/switch <index|thread_id-prefix|label|tmux>`
 - `/attach-last`
 - `/stop`
@@ -458,7 +462,7 @@ cd ~/dev/ft-cosmos/ft-daedalus
 uv run daedalus-wechat send-bound "hello from desktop"
 ```
 
-Plain text messages are sent to whatever Codex thread is **currently active
+Plain text messages are sent to whatever supported live runtime is **currently active
 inside the active live tmux session**.
 
 If you send a WeChat image, the bridge now tries the shortest truthful path in

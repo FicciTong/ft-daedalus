@@ -300,8 +300,11 @@ systemctl --user restart daedalus-wechat
    - 桌面镜像出来的 `progress / plan / final` 现在会优先使用最新绑定的入站 `context_token`
    - 如果这个 token 已经过期，微信客户端层仍会按重试逻辑继续兜底
    - 即时命令回复（例如 `/status`）也仍然优先使用当前入站 context
-4. **final reply 兜底 + pending outbox**
-   - 如果 rollout JSONL 没抓到 `final_answer`，bridge 会退回 live `tmux codex` pane 里的可见答复
+4. **runtime 原生 final 捕获 + pending outbox**
+   - final 现在优先从 runtime 原生状态里取：
+     - Codex JSONL rollout
+     - OpenCode sqlite/db
+     - Claude project JSONL
    - 如果这样还是发不出去，消息会先落到本地 outbox
    - 相同消息不会因为重复重试而无限堆叠进 outbox
    - 现在 backlog 会按 owner-facing 的 `tmux session` 分区，不再只是挂一个 `thread_id` 标签
@@ -415,7 +418,7 @@ journalctl --user -u daedalus-wechat -n 100 --no-pager
 - `/recent all [n]`
 - `/recent all after <seq>`
 - `/sessions`
-- `/new [label]`
+- `/new [label]`（绑定 canonical live runtime；不会自动新建 tmux）
 - `/switch <index|thread_id-prefix|label|tmux>`
 - `/attach-last`
 - `/stop`
@@ -428,7 +431,7 @@ cd ~/dev/ft-cosmos/ft-daedalus
 uv run daedalus-wechat send-bound "hello from desktop"
 ```
 
-普通文本消息会送进**当前 active live tmux session** 里正在活着的 Codex thread。
+普通文本消息会送进**当前 active live tmux session** 里正在活着的受支持 runtime。
 
 示例：
 
