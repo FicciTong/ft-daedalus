@@ -1095,8 +1095,8 @@ class DaemonTests(unittest.TestCase):
                 ("user@im.wechat", None, "[claude] ✅ HELLO"),
             )
 
-    def test_group_mode_voice_fuzzy_match_routes(self) -> None:
-        """Voice transcript starting with agent name should auto-route."""
+    def test_group_mode_voice_fuzzy_match_session_name(self) -> None:
+        """Voice transcript 'oc kimi 零 你好' should match tmux session 'ockimi0'."""
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_claude = "ses_claude"
             thread_kimi = "ses_ockimi0"
@@ -1131,20 +1131,19 @@ class DaemonTests(unittest.TestCase):
                 config=self._make_config(Path(tmpdir), frozenset()),
                 wechat=fake_wechat, runner=runner, state=state,
             )
-            # "kimi零 你好" → should match ockimi0
+            # "oc kimi 零 你好" → normalize → "ockimi0" → match ockimi0
             incoming = daemon._parse_incoming({
                 "message_type": 1, "from_user_id": "user@im.wechat",
                 "context_token": "ctx-1", "message_id": "m-1",
-                "item_list": [{"type": 1, "text_item": {"text": "kimi零 你好"}}],
+                "item_list": [{"type": 1, "text_item": {"text": "oc kimi 零 你好"}}],
             })
             assert incoming is not None
             daemon._handle_incoming(incoming)
-            # Should have submitted to ockimi0
             self.assertEqual(len(runner.submitted), 1)
             self.assertEqual(runner.submitted[0][0], thread_kimi)
 
-    def test_group_mode_voice_fuzzy_cloud_routes_to_claude(self) -> None:
-        """'cloud 你好' should fuzzy-match to claude session."""
+    def test_group_mode_voice_direct_session_name(self) -> None:
+        """'claude 你好' should match tmux session 'claude' directly."""
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_claude = "ses_claude"
             state = BridgeState(
@@ -1171,7 +1170,7 @@ class DaemonTests(unittest.TestCase):
             incoming = daemon._parse_incoming({
                 "message_type": 1, "from_user_id": "user@im.wechat",
                 "context_token": "ctx-1", "message_id": "m-1",
-                "item_list": [{"type": 1, "text_item": {"text": "cloud 你好"}}],
+                "item_list": [{"type": 1, "text_item": {"text": "claude 你好"}}],
             })
             assert incoming is not None
             daemon._handle_incoming(incoming)
