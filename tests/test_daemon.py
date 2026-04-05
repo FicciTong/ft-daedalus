@@ -1142,6 +1142,76 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(len(runner.submitted), 1)
             self.assertEqual(runner.submitted[0][0], thread_kimi)
 
+    def test_group_mode_voice_correction_cloud_to_claude(self) -> None:
+        """'cloud 你好' (WeChat STT of 'claude') should match 'claude'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_claude = "ses_claude"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_claude: SessionRecord(
+                        thread_id=thread_claude, label="claude", cwd="/tmp",
+                        source="tmux-live", created_at="2026-04-06T00:00:00+00:00",
+                        updated_at="2026-04-06T00:00:00+00:00", tmux_session="claude",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(tmux_session="claude", exists=True,
+                    pane_command="node", thread_id=thread_claude,
+                    pane_cwd="/tmp", backend="claude-code"),
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat, runner=runner, state=state,
+            )
+            incoming = daemon._parse_incoming({
+                "message_type": 1, "from_user_id": "user@im.wechat",
+                "context_token": "ctx-1", "message_id": "m-1",
+                "item_list": [{"type": 1, "text_item": {"text": "cloud 你好"}}],
+            })
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            self.assertEqual(len(runner.submitted), 1)
+            self.assertEqual(runner.submitted[0][0], thread_claude)
+
+    def test_group_mode_voice_correction_killing_to_kimi(self) -> None:
+        """'oc killing 零' (WeChat STT of 'oc kimi 零') should match 'ockimi0'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_kimi = "ses_ockimi0"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_kimi: SessionRecord(
+                        thread_id=thread_kimi, label="ockimi0", cwd="/tmp",
+                        source="tmux-live", created_at="2026-04-06T00:00:00+00:00",
+                        updated_at="2026-04-06T00:00:00+00:00", tmux_session="ockimi0",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(tmux_session="ockimi0", exists=True,
+                    pane_command="node", thread_id=thread_kimi,
+                    pane_cwd="/tmp", backend="opencode"),
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat, runner=runner, state=state,
+            )
+            incoming = daemon._parse_incoming({
+                "message_type": 1, "from_user_id": "user@im.wechat",
+                "context_token": "ctx-1", "message_id": "m-1",
+                "item_list": [{"type": 1, "text_item": {"text": "oc killing 零 你好"}}],
+            })
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            self.assertEqual(len(runner.submitted), 1)
+            self.assertEqual(runner.submitted[0][0], thread_kimi)
+
     def test_group_mode_voice_direct_session_name(self) -> None:
         """'claude 你好' should match tmux session 'claude' directly."""
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -50,6 +50,27 @@ def _normalize_voice(text: str) -> str:
     return out
 
 
+# Voice transcription corrections: WeChat STT commonly garbles these.
+# These are NOT shortcut aliases — they correct STT errors when the user
+# is actually trying to say the session name.
+_VOICE_CORRECTIONS: dict[str, str] = {
+    "cloud": "claude", "克劳德": "claude", "克洛德": "claude",
+    "killing": "kimi", "kimmy": "kimi", "keemy": "kimi",
+    "奇米": "kimi", "可米": "kimi",
+}
+
+
+def _apply_voice_corrections(text: str) -> str:
+    """Apply known voice transcription corrections before normalization."""
+    out = text
+    for wrong, right in _VOICE_CORRECTIONS.items():
+        # Case-insensitive replacement
+        idx = out.lower().find(wrong.lower())
+        if idx != -1:
+            out = out[:idx] + right + out[idx + len(wrong):]
+    return out
+
+
 HELP_TEXT = """FT bridge 命令总览（支持 `/command` 和 `\\command`）
 
 会话:
@@ -241,6 +262,21 @@ class BridgeDaemon:
             if self._route_room_message(incoming, target=room_target):
                 return
         if self._room_mode_enabled() and not room_target:
+            # Images without @agent: accept silently (will be picked up by next @agent message)
+            if incoming.images and not body:
+                saved_images, _ = self._materialize_incoming_images(incoming)
+                if saved_images:
+                    self._reply(
+                        incoming.from_user_id,
+                        incoming.context_token,
+                        f"收到 {len(saved_images)} 张图片。用 @agent 指定谁来看。",
+                        kind="progress",
+                        origin="wechat-room-target",
+                        thread_id=None,
+                        tmux_session=None,
+                    )
+                self._flush_bound_outbox_if_any()
+                return
             # Try voice/text fuzzy match before rejecting
             voice_match, voice_body = self._voice_fuzzy_match_agent(body)
             if voice_match:
@@ -1750,7 +1786,9 @@ class BridgeDaemon:
         if not text:
             return None, body
 
-        normalized = _normalize_voice(text)
+        # Apply voice transcription corrections first, then normalize
+        corrected = _apply_voice_corrections(text)
+        normalized = _normalize_voice(corrected)
         if not normalized:
             return None, body
 
@@ -1777,12 +1815,12 @@ class BridgeDaemon:
         if best_match is None:
             return None, body
 
-        # Find where the session name ends in the ORIGINAL text
-        # Walk original text consuming chars that contribute to the normalized match
+        # Find where the session name ends in the CORRECTED text
+        # Walk corrected text consuming chars that contribute to the normalized match
         consumed = 0
         matched_norm = 0
-        while consumed < len(text) and matched_norm < best_len:
-            ch = text[consumed]
+        while consumed < len(corrected) and matched_norm < best_len:
+            ch = corrected[consumed]
             # Check if this char is a Chinese digit
             if ch in _CN_DIGITS:
                 matched_norm += 1
@@ -1793,7 +1831,7 @@ class BridgeDaemon:
                 matched_norm += 1
                 consumed += 1
 
-        remainder = text[consumed:].lstrip(" ,，。:：、")
+        remainder = corrected[consumed:].lstrip(" ,，。:：、")
         return best_match, remainder
 
     def _extract_room_target(self, body: str) -> tuple[str | None, str]:
