@@ -1797,40 +1797,17 @@ class BridgeDaemon:
         self._save_state()
         live_names = [r.tmux_session for r in live_records if r.tmux_session]
 
-        # Try each session name (longest first to prefer longer matches)
+        # Try each session name (longest first to avoid partial matches)
+        # Wide matching: if the normalized text starts with a session name,
+        # match it. The owner always tries to say a session name first.
         best_match: str | None = None
         best_len: int = 0
         for name in sorted(live_names, key=len, reverse=True):
             key = name.lower()
-            if not normalized.startswith(key):
-                continue
-            rest_start = len(key)
-            if rest_start >= len(normalized):
-                # Exact match, nothing after
+            if normalized.startswith(key):
                 best_match = name
                 best_len = len(key)
                 break
-            next_ch = normalized[rest_start]
-            # Non-ASCII (CJK etc) is always a valid boundary
-            if not next_ch.isascii():
-                best_match = name
-                best_len = len(key)
-                break
-            # If session name ends with a digit (e.g. ockimi0), require
-            # non-alnum boundary to avoid ockimi0 matching ockimi01
-            if key[-1].isdigit():
-                if not next_ch.isalnum():
-                    best_match = name
-                    best_len = len(key)
-                    break
-            else:
-                # Session name ends with letter (e.g. ocgpt, claude):
-                # digits and non-alnum are both valid boundaries
-                # so "ocgpt1+2" matches "ocgpt" with remainder "1+2"
-                if not next_ch.isalpha():
-                    best_match = name
-                    best_len = len(key)
-                    break
 
         if best_match is None:
             return None, body
