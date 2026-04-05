@@ -1095,6 +1095,55 @@ class DaemonTests(unittest.TestCase):
                 ("user@im.wechat", None, "[claude] ✅ HELLO"),
             )
 
+    def test_group_mode_plain_text_not_delivered(self) -> None:
+        """In group mode, plain text without @agent should NOT be delivered."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "ses_claude"
+            state = BridgeState(
+                active_session_id=thread_id,
+                active_tmux_session="claude",
+                room_mode_enabled=True,
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="claude",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-06T00:00:00+00:00",
+                        updated_at="2026-04-06T00:00:00+00:00",
+                        tmux_session="claude",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-1",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "hello without at"}}
+                    ],
+                }
+            )
+            assert incoming is not None
+
+            daemon._handle_incoming(incoming)
+
+            # Should NOT have submitted any prompt
+            self.assertEqual(runner.submitted, [])
+            # Should have replied with a hint
+            last_text = fake_wechat.sent[-1][2]
+            self.assertIn("@agent", last_text)
+
     def test_current_mirror_thread_id_does_not_overwrite_newer_switch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_old = "ses_old_active"

@@ -220,13 +220,23 @@ class BridgeDaemon:
         if self._room_mode_enabled() and room_target:
             if self._route_room_message(incoming, target=room_target):
                 return
+        if self._room_mode_enabled() and not room_target:
+            self._reply(
+                incoming.from_user_id,
+                incoming.context_token,
+                "group 模式下请用 @agent 指定对象。\n例: @claude 你好",
+                kind="progress",
+                origin="wechat-prompt-error",
+                thread_id=None,
+                tmux_session=None,
+            )
+            self._flush_bound_outbox_if_any()
+            return
         with self._lock:
             if not self.state.active_session_id and not self.state.active_tmux_session:
                 hint = (
                     "没有 active session；请先用 /switch <tmux> 选择一个 live session。"
                 )
-                if self._room_mode_enabled():
-                    hint = "group 模式下请先用 @agent 定向消息，或 /switch <tmux> 选择默认 live session。"
                 self._reply(
                     incoming.from_user_id,
                     incoming.context_token,
