@@ -27,6 +27,7 @@ STALE_AUTO_FLUSH_SECONDS = 300.0
 WAIT_FOR_BIND_TIMEOUT_SECONDS = 60.0
 OWNER_VISIBLE_RECENT_CLUSTER_SECONDS = 1800.0
 STALE_DESKTOP_MIRROR_DROP_SECONDS = 600.0
+ROOM_ROUTE_RE = re.compile(r"^[＠@](?P<target>[A-Za-z0-9_.:-]+)\s*(?P<body>[\s\S]*)$")
 
 
 HELP_TEXT = """FT bridge 命令总览（支持 `/command` 和 `\\command`）
@@ -35,7 +36,9 @@ HELP_TEXT = """FT bridge 命令总览（支持 `/command` 和 `\\command`）
 /status            当前 active session / tmux / cwd
 /health            bridge / tmux / thread 健康检查
 /sessions          当前可切换的 live tmux 列表
+/members           当前 room 可见参与者
 /switch <target>   切换到某个 session
+/switch group      进入 room 模式（个人 switch 保留）
 /attach-last       接最近一个 ft-cosmos session
 /new [label]       绑定 canonical live runtime（不会自动新建 tmux）
 /stop              清空当前 active session
@@ -56,9 +59,10 @@ HELP_TEXT = """FT bridge 命令总览（支持 `/command` 和 `\\command`）
 /menu              同 /help
 
 普通文本消息 = 直接发给当前 active live tmux session。
+group 模式下可用 `@agent 消息` 定向发给某个参与者，所有桌面 final 会带说话人标签回到同一个聊天。
 如果当前 active tmux 还没打开受支持的 live runtime，bridge 会明确提示你先启动/恢复。
 /sessions 只显示当前 workspace 下、看起来像 live runtime 的 tmux。
-同一时刻只会有一个 active live session。
+个人模式下同一时刻只会有一个 active live session；group 模式是 additive，不替代个人 /switch。
 bridge 会后台定期检查并冲洗 pending backlog，无需 /queue /catchup。
 """
 
@@ -182,6 +186,7 @@ class BridgeDaemon:
     def _handle_incoming(self, incoming: IncomingMessage) -> None:
         self._bind_peer(incoming.from_user_id, incoming.context_token)
         body = incoming.body.strip()
+        room_target, _ = self._extract_room_target(body)
         if incoming.is_voice and not incoming.has_transcript:
             self._reply(
                 incoming.from_user_id,
@@ -212,12 +217,20 @@ class BridgeDaemon:
             )
             self._flush_bound_outbox_if_any()
             return
+        if self._room_mode_enabled() and room_target:
+            if self._route_room_message(incoming, target=room_target):
+                return
         with self._lock:
             if not self.state.active_session_id and not self.state.active_tmux_session:
+                hint = (
+                    "没有 active session；请先用 /switch <tmux> 选择一个 live session。"
+                )
+                if self._room_mode_enabled():
+                    hint = "group 模式下请先用 @agent 定向消息，或 /switch <tmux> 选择默认 live session。"
                 self._reply(
                     incoming.from_user_id,
                     incoming.context_token,
-                    "没有 active session；请先用 /switch <tmux> 选择一个 live session。",
+                    hint,
                     kind="progress",
                     origin="wechat-prompt-error",
                     thread_id=None,
@@ -314,6 +327,8 @@ class BridgeDaemon:
             return self._status_text()
         if command == "/health":
             return self._health_text()
+        if command == "/members":
+            return self._members_text()
         if command == "/notify":
             return self._notify_text(arg)
         if command == "/recent":
@@ -337,6 +352,7 @@ class BridgeDaemon:
         if command == "/stop":
             self.state.active_session_id = None
             self.state.active_tmux_session = None
+            self.state.room_mode_enabled = False
             self._save_state()
             return "已清空 active session。"
         if command == "/attach-last":
@@ -356,6 +372,7 @@ class BridgeDaemon:
         if command == "/new":
             label = arg or f"session-{datetime.now(UTC).strftime('%m%d-%H%M%S')}"
             record = self.runner.create_new_session(state=self.state, label=label)
+            self.state.room_mode_enabled = False
             self.state.active_session_id = record.thread_id
             self.state.active_tmux_session = record.tmux_session
             self._sync_mirror_cursor(record.thread_id)
@@ -369,6 +386,11 @@ class BridgeDaemon:
         if command == "/switch":
             if not arg:
                 return "用法: /switch <编号|thread_id前缀|label|tmux>"
+            if arg.strip().lower() == "group":
+                self.state.room_mode_enabled = True
+                self._save_state()
+                active = self.state.active_tmux_session or "none"
+                return f"已切换到 group 模式。\nactive_direct={active}\n{self._members_text()}"
             with self._lock:
                 live_records = self.runner.sync_live_sessions(self.state)
                 self._save_state()
@@ -384,6 +406,7 @@ class BridgeDaemon:
             )
             refreshed.updated_at = datetime.now(UTC).isoformat()
             with self._lock:
+                self.state.room_mode_enabled = False
                 self.state.active_session_id = refreshed.thread_id
                 self.state.active_tmux_session = refreshed.tmux_session
                 self._sync_mirror_cursor(refreshed.thread_id)
@@ -857,7 +880,15 @@ class BridgeDaemon:
     def _status_text(self) -> str:
         self.runner.sync_live_sessions(self.state)
         if not self.state.active_session_id and not self.state.active_tmux_session:
-            return "status=no_active\nhint=先用 /switch <tmux> 选择一个 live session"
+            lines = ["status=no_active"]
+            if self._room_mode_enabled():
+                lines.append("mode=group")
+                lines.append(
+                    "hint=先用 @agent 定向消息，或 /switch <tmux> 选择默认 live session"
+                )
+            else:
+                lines.append("hint=先用 /switch <tmux> 选择一个 live session")
+            return "\n".join(lines)
         runtime = self.runner.current_runtime_status(
             active_session_id=self.state.active_session_id,
             active_tmux_session=self.state.active_tmux_session,
@@ -916,6 +947,8 @@ class BridgeDaemon:
             f"notify={self._notify_mode_text()}",
             f"attach={self.runner.attach_hint(record)}",
         ]
+        if self._room_mode_enabled():
+            lines.insert(1, "mode=group")
         return "\n".join(lines)
 
     def _sessions_text(self, live_records: list | None = None) -> str:
@@ -943,6 +976,8 @@ class BridgeDaemon:
             return "sessions=0"
         live_thread_ids = {record.thread_id for record in (live_records or [])}
         lines = [f"sessions={len(listed)}"]
+        if self._room_mode_enabled():
+            lines.append("mode=group")
         for idx, record in enumerate(listed[:20], start=1):
             marker = "*" if self._is_active_record(record) else " "
             live_marker = " live" if record.thread_id in live_thread_ids else ""
@@ -992,6 +1027,8 @@ class BridgeDaemon:
             f"access={access}",
             f"notify={self._notify_mode_text()}",
         ]
+        if self._room_mode_enabled():
+            lines.append("mode=group")
         if conflict_reason is not None:
             lines.append(f"conflict={conflict_reason}")
         return "\n".join(lines)
@@ -1014,6 +1051,12 @@ class BridgeDaemon:
             origin=origin,
         )
         rendered = self._render_reply_text(text, kind=kind, origin=origin)
+        if self._room_mode_enabled() and str(origin or "").strip() == "desktop-mirror":
+            rendered = self._tag_room_text(
+                rendered,
+                thread_id=thread_id,
+                tmux_session=tmux_session,
+            )
         chunks = self._chunk_text(rendered)
         for idx, chunk in enumerate(chunks):
             try:
@@ -1099,6 +1142,7 @@ class BridgeDaemon:
         return origin in {
             "bridge",
             "wechat-command",
+            "wechat-room-target",
             "wechat-voice",
             "wechat-prompt-submitted",
             "wechat-prompt-error",
@@ -1298,6 +1342,7 @@ class BridgeDaemon:
             to_user_id = self.state.bound_user_id
             active_thread_id = str(self.state.active_session_id or "").strip()
             active_tmux_session = str(self.state.active_tmux_session or "").strip()
+            room_mode_enabled = self.state.room_mode_enabled
         if not to_user_id:
             return
         for status in self.runner.list_live_runtime_statuses():
@@ -1319,18 +1364,31 @@ class BridgeDaemon:
                 if self._is_active_thread(thread_id, tmux_session):
                     continue
                 if scan.final_text:
-                    self.state.enqueue_pending_with_meta(
-                        to_user_id=to_user_id,
-                        text=self._render_reply_text(
+                    if room_mode_enabled:
+                        sent = self._reply(
+                            to_user_id,
+                            self.state.bound_context_token,
                             scan.final_text,
                             kind="final",
                             origin="desktop-mirror",
-                        ),
-                        kind="final",
-                        origin="desktop-mirror",
-                        thread_id=thread_id,
-                        tmux_session=tmux_session,
-                    )
+                            thread_id=thread_id,
+                            tmux_session=tmux_session,
+                        )
+                        if not sent:
+                            continue
+                    else:
+                        self.state.enqueue_pending_with_meta(
+                            to_user_id=to_user_id,
+                            text=self._render_reply_text(
+                                scan.final_text,
+                                kind="final",
+                                origin="desktop-mirror",
+                            ),
+                            kind="final",
+                            origin="desktop-mirror",
+                            thread_id=thread_id,
+                            tmux_session=tmux_session,
+                        )
                 self.state.set_mirror_offset(
                     thread_id,
                     self._next_mirror_offset_without_final(
@@ -1344,7 +1402,9 @@ class BridgeDaemon:
                 self._save_state()
             if scan.final_text:
                 self._log_event(
-                    "queued_inactive_mirrored_final",
+                    "mirrored_final"
+                    if room_mode_enabled
+                    else "queued_inactive_mirrored_final",
                     {
                         "thread": self._short_thread(thread_id),
                         "to": to_user_id,
@@ -1631,11 +1691,151 @@ class BridgeDaemon:
                 self._sync_mirror_cursor(self.state.active_session_id)
             self._save_state()
 
+    def _room_mode_enabled(self) -> bool:
+        return bool(self.state.room_mode_enabled)
+
+    def _extract_room_target(self, body: str) -> tuple[str | None, str]:
+        match = ROOM_ROUTE_RE.match(str(body or "").strip())
+        if not match:
+            return None, str(body or "").strip()
+        target = str(match.group("target") or "").strip()
+        remainder = str(match.group("body") or "").strip()
+        return (target or None), remainder
+
+    def _room_speaker_label(
+        self, *, thread_id: str | None, tmux_session: str | None
+    ) -> str | None:
+        speaker = str(tmux_session or "").strip()
+        if speaker:
+            return speaker
+        normalized_thread = str(thread_id or "").strip()
+        if not normalized_thread:
+            return None
+        record = self.state.sessions.get(normalized_thread)
+        if record and record.label:
+            return record.label
+        return self._short_thread(normalized_thread)
+
+    def _tag_room_text(
+        self, text: str, *, thread_id: str | None, tmux_session: str | None
+    ) -> str:
+        speaker = self._room_speaker_label(
+            thread_id=thread_id, tmux_session=tmux_session
+        )
+        if not speaker:
+            return text
+        return f"[{speaker}] {text}"
+
+    def _members_text(self) -> str:
+        live_records = self.runner.sync_live_sessions(self.state)
+        self._save_state()
+        lines = [
+            f"mode={'group' if self._room_mode_enabled() else 'single'}",
+            f"members={len(live_records)}",
+        ]
+        for idx, record in enumerate(live_records[:20], start=1):
+            marker = "*" if self._is_active_record(record) else " "
+            lines.append(
+                f"{marker}{idx} {record.tmux_session or record.label} | {record.label} | {self._short_thread(record.thread_id)}"
+            )
+        lines.append("use=@agent 消息")
+        return "\n".join(lines)
+
+    def _route_room_message(self, incoming: IncomingMessage, *, target: str) -> bool:
+        with self._lock:
+            live_records = self.runner.sync_live_sessions(self.state)
+            self._save_state()
+            match = self._resolve_session(target, live_records=live_records)
+            if not match:
+                self._reply(
+                    incoming.from_user_id,
+                    incoming.context_token,
+                    f"没有找到参与者: {target}",
+                    kind="progress",
+                    origin="wechat-prompt-error",
+                    thread_id=self.state.active_session_id,
+                    tmux_session=self.state.active_tmux_session,
+                )
+                self._flush_bound_outbox_if_any()
+                return True
+            record = self.state.sessions[match]
+        refreshed = self.runner.ensure_resumed_session(
+            thread_id=record.thread_id,
+            state=self.state,
+            label=record.label,
+            source=record.source,
+        )
+        refreshed.updated_at = datetime.now(UTC).isoformat()
+        with self._lock:
+            self.state.touch_session(
+                refreshed.thread_id,
+                label=refreshed.label,
+                cwd=refreshed.cwd,
+                source=refreshed.source,
+                tmux_session=refreshed.tmux_session,
+            )
+            self._save_state()
+        saved_images, image_failures = self._materialize_incoming_images(incoming)
+        if incoming.images and not saved_images:
+            self._reply(
+                incoming.from_user_id,
+                incoming.context_token,
+                "收到图片，但当前无法取回可用本地文件。",
+                kind="progress",
+                origin="wechat-prompt-error",
+                thread_id=refreshed.thread_id,
+                tmux_session=refreshed.tmux_session,
+            )
+            self._flush_bound_outbox_if_any()
+            return True
+        prompt = self._compose_prompt(
+            incoming=incoming,
+            saved_images=saved_images,
+            image_failures=image_failures,
+        )
+        target_name, stripped_body = self._extract_room_target(incoming.body)
+        if target_name:
+            prompt = self._compose_prompt(
+                incoming=IncomingMessage(
+                    from_user_id=incoming.from_user_id,
+                    context_token=incoming.context_token,
+                    body=stripped_body,
+                    message_id=incoming.message_id,
+                    is_voice=incoming.is_voice,
+                    has_transcript=incoming.has_transcript,
+                    images=incoming.images,
+                ),
+                saved_images=saved_images,
+                image_failures=image_failures,
+            )
+        self.runner.submit_prompt(record=refreshed, prompt=prompt)
+        self._log_event(
+            "prompt_submitted",
+            {
+                "thread": self._short_thread(refreshed.thread_id),
+                "from": incoming.from_user_id,
+                "body": prompt[:400],
+                "room_target": target,
+            },
+        )
+        self._reply(
+            incoming.from_user_id,
+            incoming.context_token,
+            f"已注入 @{target} terminal。",
+            kind="progress",
+            origin="wechat-room-target",
+            thread_id=refreshed.thread_id,
+            tmux_session=refreshed.tmux_session,
+        )
+        self._flush_bound_outbox_if_any()
+        return True
+
     def _flush_bound_outbox_if_any(self) -> None:
         with self._lock:
             to_user_id = self.state.bound_user_id
             context_token = self.state.bound_context_token
             active_tmux_session = self.state.active_tmux_session
+            room_mode_enabled = self.state.room_mode_enabled
             # Auto-clear wait_for_bind after timeout so backlog doesn't
             # accumulate indefinitely waiting for an inbound message.
             if self.state.outbox_waiting_for_bind:
@@ -1660,15 +1860,26 @@ class BridgeDaemon:
                 to_user_id=to_user_id,
                 tmux_session=active_tmux_session,
             )
-        has_pending = delivery_stats["visible_count"] > 0
-        deliverable_now = delivery_stats["deliverable_now_count"] > 0
+        has_pending = (
+            self.state.has_pending_for_user(to_user_id=to_user_id)
+            if room_mode_enabled and to_user_id
+            else delivery_stats["visible_count"] > 0
+        )
+        deliverable_now = (
+            has_pending
+            if room_mode_enabled
+            else delivery_stats["deliverable_now_count"] > 0
+        )
         if not to_user_id or not has_pending or not deliverable_now:
             return
-        self._flush_pending_outbox(
-            to_user_id,
-            context_token,
-            tmux_session=active_tmux_session,
-        )
+        if room_mode_enabled:
+            self._flush_pending_outbox_all(to_user_id, context_token)
+        else:
+            self._flush_pending_outbox(
+                to_user_id,
+                context_token,
+                tmux_session=active_tmux_session,
+            )
 
     def _prune_stale_desktop_mirror_backlog(self) -> None:
         with self._lock:
@@ -1882,6 +2093,89 @@ class BridgeDaemon:
                         origin=origin,
                         thread_id=thread_id,
                         tmux_session=self._tmux_for_thread(thread_id) or tmux_session,
+                        error=str(exc),
+                    )
+                break
+        with self._lock:
+            self.state.pending_outbox = kept + self.state.pending_outbox
+            self._save_state()
+
+    def _flush_pending_outbox_all(
+        self,
+        to_user_id: str,
+        context_token: str | None,
+    ) -> None:
+        with self._lock:
+            pending = self.state.pop_pending_for_user(to_user_id=to_user_id)
+            self._save_state()
+        if not pending:
+            return
+        kept: list[dict[str, str]] = []
+        for idx, item in enumerate(pending):
+            text = item.get("text", "").strip()
+            if not text:
+                continue
+            kind = str(item.get("kind", "message"))
+            origin = str(item.get("origin", "bridge"))
+            thread_id = str(item.get("thread_id", "")).strip() or None
+            resolved_tmux_session = (
+                self._tmux_for_thread(thread_id)
+                or str(item.get("tmux_session", "")).strip()
+                or None
+            )
+            if self._should_suppress_pending_item(kind=kind, origin=origin):
+                continue
+            effective_context = self._effective_send_context(
+                context_token=context_token,
+                use_context_token=True,
+                origin=origin,
+            )
+            try:
+                self.wechat.send_text(
+                    to_user_id=to_user_id,
+                    context_token=effective_context,
+                    text=text,
+                )
+                with self._lock:
+                    self._log_event("outgoing", {"to": to_user_id, "text": text[:400]})
+                    self._log_event(
+                        "flushed_outgoing",
+                        {"to": to_user_id, "text": text[:400]},
+                    )
+                    append_delivery(
+                        state=self.state,
+                        state_file=self.config.state_file,
+                        ledger_file=self.config.delivery_ledger_file,
+                        to_user_id=to_user_id,
+                        text=text,
+                        status="flushed",
+                        kind=kind,
+                        origin=origin,
+                        thread_id=thread_id,
+                        tmux_session=resolved_tmux_session,
+                    )
+            except Exception as exc:  # noqa: BLE001
+                item["last_attempt_at"] = now_iso()
+                item["attempt_count"] = int(item.get("attempt_count", 1) or 1) + 1
+                item["last_error"] = str(exc)
+                kept.append(item)
+                kept.extend(pending[idx + 1 :])
+                with self._lock:
+                    self._log_event(
+                        "queued_outgoing",
+                        {"to": to_user_id, "text": text[:400], "error": str(exc)},
+                    )
+                    append_delivery(
+                        state=self.state,
+                        state_file=self.config.state_file,
+                        ledger_file=self.config.delivery_ledger_file,
+                        to_user_id=to_user_id,
+                        text=text,
+                        status="queued",
+                        kind=kind,
+                        origin=origin,
+                        thread_id=thread_id,
+                        tmux_session=resolved_tmux_session,
                         error=str(exc),
                     )
                 break
@@ -2123,6 +2417,8 @@ class BridgeDaemon:
                 self.state.active_session_id = external.active_session_id
             if not self.state.active_tmux_session and external.active_tmux_session:
                 self.state.active_tmux_session = external.active_tmux_session
+            if external.room_mode_enabled and not self.state.room_mode_enabled:
+                self.state.room_mode_enabled = True
             if (
                 external.outbox_waiting_for_bind
                 and not self.state.outbox_waiting_for_bind

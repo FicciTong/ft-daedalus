@@ -934,6 +934,167 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(state.active_tmux_session, "ockimi1")
             self.assertIn("tmux=ockimi1", text)
 
+    def test_switch_group_enables_room_mode_without_replacing_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "ses_ocgpt"
+            state = BridgeState(
+                active_session_id=thread_id,
+                active_tmux_session="ocgpt",
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="ocgpt",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="ocgpt",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="ocgpt",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+
+            text = daemon._handle_command("/switch group")
+
+            self.assertTrue(state.room_mode_enabled)
+            self.assertEqual(state.active_tmux_session, "ocgpt")
+            self.assertIn("已切换到 group 模式", text)
+            self.assertIn("mode=group", text)
+
+    def test_group_targeted_message_routes_without_replacing_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_active = "ses_ocgpt"
+            thread_target = "ses_ockimi1"
+            state = BridgeState(
+                active_session_id=thread_active,
+                active_tmux_session="ocgpt",
+                room_mode_enabled=True,
+                sessions={
+                    thread_active: SessionRecord(
+                        thread_id=thread_active,
+                        label="ocgpt",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="ocgpt",
+                    ),
+                    thread_target: SessionRecord(
+                        thread_id=thread_target,
+                        label="ockimi1",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="ockimi1",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="ocgpt",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_active,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="ockimi1",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_target,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                ),
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-1",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "@ockimi1 say hi"}}
+                    ],
+                }
+            )
+            assert incoming is not None
+
+            daemon._handle_incoming(incoming)
+
+            self.assertEqual(runner.submitted, [(thread_target, "say hi")])
+            self.assertEqual(state.active_session_id, thread_active)
+            self.assertEqual(state.active_tmux_session, "ocgpt")
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                ("user@im.wechat", "ctx-1", "⚙️ 已注入 @ockimi1 terminal。"),
+            )
+
+    def test_room_mode_tags_desktop_final_with_speaker(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "claude:abc"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="claude",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="claude",
+                    )
+                },
+            )
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+
+            daemon._reply(
+                "user@im.wechat",
+                None,
+                "HELLO",
+                kind="final",
+                origin="desktop-mirror",
+                thread_id=thread_id,
+                tmux_session="claude",
+            )
+
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                ("user@im.wechat", None, "[claude] ✅ HELLO"),
+            )
+
     def test_current_mirror_thread_id_does_not_overwrite_newer_switch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_old = "ses_old_active"

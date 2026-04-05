@@ -25,6 +25,7 @@ class SessionRecord:
 class BridgeState:
     active_session_id: str | None = None
     active_tmux_session: str | None = None
+    room_mode_enabled: bool = False
     get_updates_buf: str = ""
     bound_user_id: str | None = None
     bound_context_token: str | None = None
@@ -62,13 +63,16 @@ class BridgeState:
         return cls(
             active_session_id=raw.get("active_session_id"),
             active_tmux_session=raw.get("active_tmux_session"),
+            room_mode_enabled=bool(raw.get("room_mode_enabled", False)),
             get_updates_buf=raw.get("get_updates_buf", ""),
             bound_user_id=raw.get("bound_user_id"),
             bound_context_token=raw.get("bound_context_token"),
             progress_updates_enabled=raw.get("progress_updates_enabled"),
             delivery_seq=int(raw.get("delivery_seq", 0) or 0),
             outbox_waiting_for_bind=bool(raw.get("outbox_waiting_for_bind", False)),
-            outbox_waiting_for_bind_since=str(raw.get("outbox_waiting_for_bind_since", "")),
+            outbox_waiting_for_bind_since=str(
+                raw.get("outbox_waiting_for_bind_since", "")
+            ),
             mirror_offsets={
                 str(key): int(value)
                 for key, value in (raw.get("mirror_offsets", {}) or {}).items()
@@ -97,7 +101,8 @@ class BridgeState:
                         str(item.get("tmux_session")).strip()
                         if item.get("tmux_session")
                         else (
-                            sessions[str(item.get("thread_id")).strip()].tmux_session or ""
+                            sessions[str(item.get("thread_id")).strip()].tmux_session
+                            or ""
                             if str(item.get("thread_id", "")).strip() in sessions
                             else ""
                         )
@@ -124,6 +129,7 @@ class BridgeState:
                 {
                     "active_session_id": self.active_session_id,
                     "active_tmux_session": self.active_tmux_session,
+                    "room_mode_enabled": self.room_mode_enabled,
                     "get_updates_buf": self.get_updates_buf,
                     "bound_user_id": self.bound_user_id,
                     "bound_context_token": self.bound_context_token,
@@ -276,6 +282,12 @@ class BridgeState:
                 return True
         return False
 
+    def has_pending_for_user(self, *, to_user_id: str) -> bool:
+        for item in self.pending_outbox:
+            if item.get("to") == to_user_id:
+                return True
+        return False
+
     def pop_pending_for_scope(
         self, *, to_user_id: str, tmux_session: str | None
     ) -> list[dict[str, str]]:
@@ -287,6 +299,17 @@ class BridgeState:
             if item.get("to") == to_user_id and (
                 not item_scope or item_scope == active_scope
             ):
+                matched.append(item)
+            else:
+                kept.append(item)
+        self.pending_outbox = kept
+        return matched
+
+    def pop_pending_for_user(self, *, to_user_id: str) -> list[dict[str, str]]:
+        matched: list[dict[str, str]] = []
+        kept: list[dict[str, str]] = []
+        for item in self.pending_outbox:
+            if item.get("to") == to_user_id:
                 matched.append(item)
             else:
                 kept.append(item)
