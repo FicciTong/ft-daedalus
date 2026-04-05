@@ -5,6 +5,7 @@ import mimetypes
 import re
 import subprocess
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
@@ -174,8 +175,9 @@ def download_incoming_image(
     if suffix == ".img":
         suffix = _sniff_image_suffix(payload)
     stem = _safe_token(message_id, fallback="message")
+    ts = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
     target_dir.mkdir(parents=True, exist_ok=True)
-    path = target_dir / f"{stem}_{image.index + 1}{suffix}"
+    path = target_dir / f"{ts}_{stem}_{image.index + 1}{suffix}"
     with path.open("wb") as fh:
         fh.write(payload)
     return SavedIncomingImage(
