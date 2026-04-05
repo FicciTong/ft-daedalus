@@ -51,20 +51,20 @@ def _normalize_voice(text: str) -> str:
 
 
 # Voice transcription corrections: WeChat STT commonly garbles these.
-# These are NOT shortcut aliases — they correct STT errors when the user
-# is actually trying to say the session name.
+# Maps misheard fragments → correct fragment (applied before normalization).
 _VOICE_CORRECTIONS: dict[str, str] = {
     "cloud": "claude", "克劳德": "claude", "克洛德": "claude",
+    "claode": "claude", "claud": "claude",
     "killing": "kimi", "kimmy": "kimi", "keemy": "kimi",
     "奇米": "kimi", "可米": "kimi",
+    "吉皮提": "gpt", "杰皮提": "gpt",
 }
 
 
 def _apply_voice_corrections(text: str) -> str:
     """Apply known voice transcription corrections before normalization."""
     out = text
-    for wrong, right in _VOICE_CORRECTIONS.items():
-        # Case-insensitive replacement
+    for wrong, right in sorted(_VOICE_CORRECTIONS.items(), key=lambda x: -len(x[0])):
         idx = out.lower().find(wrong.lower())
         if idx != -1:
             out = out[:idx] + right + out[idx + len(wrong):]
@@ -1797,16 +1797,35 @@ class BridgeDaemon:
         self._save_state()
         live_names = [r.tmux_session for r in live_records if r.tmux_session]
 
-        # Try each session name (longest first to avoid partial matches)
-        # Wide matching: if the normalized text starts with a session name,
-        # match it. The owner always tries to say a session name first.
+        # Wide matching: owner is always trying to say a session name first.
+        # Build all matchable forms for each session (longest first).
+        # e.g. "ockimi0" → ["ockimi0", "kimi0", "ockimi", "kimi"]
+        candidates: list[tuple[str, str]] = []  # (matchable_form, tmux_name)
+        for name in live_names:
+            key = name.lower()
+            forms = [key]
+            # Without common prefixes
+            for prefix in ("oc",):
+                if key.startswith(prefix) and len(key) > len(prefix):
+                    forms.append(key[len(prefix):])
+            # Without trailing digits
+            stripped = key.rstrip("0123456789")
+            if stripped and stripped != key:
+                forms.append(stripped)
+                for prefix in ("oc",):
+                    if stripped.startswith(prefix) and len(stripped) > len(prefix):
+                        forms.append(stripped[len(prefix):])
+            for form in forms:
+                candidates.append((form, name))
+        # Sort by form length descending (longest match first)
+        candidates.sort(key=lambda x: -len(x[0]))
+
         best_match: str | None = None
         best_len: int = 0
-        for name in sorted(live_names, key=len, reverse=True):
-            key = name.lower()
-            if normalized.startswith(key):
-                best_match = name
-                best_len = len(key)
+        for form, tmux_name in candidates:
+            if normalized.startswith(form):
+                best_match = tmux_name
+                best_len = len(form)
                 break
 
         if best_match is None:
