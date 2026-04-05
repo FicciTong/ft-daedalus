@@ -1797,35 +1797,25 @@ class BridgeDaemon:
         self._save_state()
         live_names = [r.tmux_session for r in live_records if r.tmux_session]
 
-        # Wide matching: owner is always trying to say a session name first.
-        # Build all matchable forms for each session (longest first).
-        # e.g. "ockimi0" → ["ockimi0", "kimi0", "ockimi", "kimi"]
-        candidates: list[tuple[str, str]] = []  # (matchable_form, tmux_name)
-        for name in live_names:
-            key = name.lower()
-            forms = [key]
-            # Without common prefixes
-            for prefix in ("oc",):
-                if key.startswith(prefix) and len(key) > len(prefix):
-                    forms.append(key[len(prefix):])
-            # Without trailing digits
-            stripped = key.rstrip("0123456789")
-            if stripped and stripped != key:
-                forms.append(stripped)
-                for prefix in ("oc",):
-                    if stripped.startswith(prefix) and len(stripped) > len(prefix):
-                        forms.append(stripped[len(prefix):])
-            for form in forms:
-                candidates.append((form, name))
-        # Sort by form length descending (longest match first)
-        candidates.sort(key=lambda x: -len(x[0]))
-
+        # Wide matching: owner always tries to say a session name first.
+        # Dynamically check if a prefix of the normalized input is a
+        # substring of any live session name. Fully dynamic, no hardcoded
+        # prefix/suffix stripping.
         best_match: str | None = None
         best_len: int = 0
-        for form, tmux_name in candidates:
-            if normalized.startswith(form):
-                best_match = tmux_name
-                best_len = len(form)
+        min_match = 3  # minimum prefix length to avoid spurious matches
+        # Try longest prefixes first
+        for prefix_len in range(min(len(normalized), 20), min_match - 1, -1):
+            prefix = normalized[:prefix_len]
+            # Skip if prefix contains non-ASCII-alnum (likely message body)
+            if not all(c.isascii() and c.isalnum() for c in prefix):
+                continue
+            for name in sorted(live_names, key=len, reverse=True):
+                if prefix in name.lower():
+                    best_match = name
+                    best_len = prefix_len
+                    break
+            if best_match:
                 break
 
         if best_match is None:
