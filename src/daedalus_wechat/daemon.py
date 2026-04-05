@@ -1835,13 +1835,27 @@ class BridgeDaemon:
             # Skip if prefix contains non-ASCII-alnum (likely message body)
             if not all(c.isascii() and c.isalnum() for c in prefix):
                 continue
-            for name in sorted(live_names, key=len, reverse=True):
-                if prefix in name.lower():
-                    best_match = name
-                    best_len = prefix_len
-                    break
-            if best_match:
+            matches = [n for n in live_names if prefix in n.lower()]
+            if not matches:
+                continue
+            if len(matches) == 1:
+                best_match = matches[0]
+                best_len = prefix_len
                 break
+            # Multiple matches: if input has a digit right after the matched
+            # prefix, use it to disambiguate (e.g. "ocki1" → prefer ockimi1)
+            rest = normalized[prefix_len:]
+            if rest and rest[0].isdigit():
+                digit = rest[0]
+                digit_matches = [n for n in matches if n.lower().endswith(digit)]
+                if len(digit_matches) == 1:
+                    best_match = digit_matches[0]
+                    best_len = prefix_len + 1  # consume the digit too
+                    break
+            # Fall back to longest session name among matches
+            best_match = sorted(matches, key=len, reverse=True)[0]
+            best_len = prefix_len
+            break
 
         if best_match is None:
             return None, body
