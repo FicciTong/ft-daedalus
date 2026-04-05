@@ -29,6 +29,20 @@ OWNER_VISIBLE_RECENT_CLUSTER_SECONDS = 1800.0
 STALE_DESKTOP_MIRROR_DROP_SECONDS = 600.0
 ROOM_ROUTE_RE = re.compile(r"^[＠@](?P<target>[A-Za-z0-9_.:-]+)\s*(?P<body>[\s\S]*)$")
 
+# Chinese digit words → ASCII digits for voice transcript matching
+_CN_DIGITS: dict[str, str] = {
+    "零": "0", "一": "1", "二": "2", "三": "3", "四": "4",
+    "五": "5", "六": "6", "七": "7", "八": "8", "九": "9",
+    "〇": "0",
+}
+# Static aliases: voice transcription variants → canonical prefix to match against tmux sessions
+_VOICE_ALIASES: dict[str, str] = {
+    "cloud": "claude", "克劳德": "claude", "克洛德": "claude",
+    "kimi": "kimi", "奇米": "kimi",
+    "gpt": "gpt", "吉皮提": "gpt", "杰皮提": "gpt",
+    "codex": "codex", "glm": "glm",
+}
+
 
 HELP_TEXT = """FT bridge 命令总览（支持 `/command` 和 `\\command`）
 
@@ -221,6 +235,20 @@ class BridgeDaemon:
             if self._route_room_message(incoming, target=room_target):
                 return
         if self._room_mode_enabled() and not room_target:
+            # Try voice/text fuzzy match before rejecting
+            voice_match, voice_body = self._voice_fuzzy_match_agent(body)
+            if voice_match:
+                rewritten = IncomingMessage(
+                    from_user_id=incoming.from_user_id,
+                    context_token=incoming.context_token,
+                    body=voice_body,
+                    message_id=incoming.message_id,
+                    is_voice=incoming.is_voice,
+                    has_transcript=incoming.has_transcript,
+                    images=incoming.images,
+                )
+                if self._route_room_message(rewritten, target=voice_match):
+                    return
             self._reply(
                 incoming.from_user_id,
                 incoming.context_token,
@@ -1703,6 +1731,83 @@ class BridgeDaemon:
 
     def _room_mode_enabled(self) -> bool:
         return bool(self.state.room_mode_enabled)
+
+    def _voice_fuzzy_match_agent(self, body: str) -> tuple[str | None, str]:
+        """Try to extract an agent target from the beginning of a voice transcript.
+
+        Returns (matched_tmux_session, remaining_body) or (None, body).
+        Matching is dynamic: builds from current live tmux sessions.
+        """
+        text = body.strip()
+        if not text:
+            return None, body
+
+        # Normalize: replace Chinese digits with ASCII
+        normalized = text
+        for cn, digit in _CN_DIGITS.items():
+            normalized = normalized.replace(cn, digit)
+        normalized_lower = normalized.lower()
+
+        # Get current live session names
+        live_records = self.runner.sync_live_sessions(self.state)
+        self._save_state()
+        live_names = [
+            r.tmux_session for r in live_records if r.tmux_session
+        ]
+
+        # Build candidate set: {alias_prefix: tmux_session_name}
+        candidates: dict[str, str] = {}
+        for name in live_names:
+            # Direct name match
+            candidates[name.lower()] = name
+            # Strip common prefixes for shorter aliases (oc → "")
+            for prefix in ("oc",):
+                if name.lower().startswith(prefix):
+                    short = name[len(prefix):]
+                    if short:
+                        candidates[short.lower()] = name
+        # Add static voice aliases mapped to live sessions
+        for alias, canonical in _VOICE_ALIASES.items():
+            for name in live_names:
+                if canonical.lower() in name.lower():
+                    candidates[alias.lower()] = name
+                    break
+
+        # Try to match the beginning of the transcript (longest match first)
+        best_match: str | None = None
+        best_key: str = ""
+        for key, tmux_name in sorted(candidates.items(), key=lambda x: -len(x[0])):
+            if normalized_lower.startswith(key):
+                # Check word boundary: next char should be space, punctuation, or end
+                rest_start = len(key)
+                if rest_start >= len(normalized_lower):
+                    best_match = tmux_name
+                    best_key = key
+                    break
+                next_char = normalized_lower[rest_start]
+                if next_char in " ,，。.!！?？:：、\t\n":
+                    best_match = tmux_name
+                    best_key = key
+                    break
+                # Also allow digits right after name (e.g. "kimi0")
+                if next_char.isdigit() and not key[-1].isdigit():
+                    # Try extended match with digit(s)
+                    extended = key
+                    while rest_start < len(normalized_lower) and normalized_lower[rest_start].isdigit():
+                        extended += normalized_lower[rest_start]
+                        rest_start += 1
+                    if extended.lower() in candidates:
+                        best_match = candidates[extended.lower()]
+                        best_key = extended
+                        break
+
+        if best_match is None:
+            return None, body
+
+        # Extract remaining body after the matched agent name
+        remainder_start = len(best_key)
+        remainder = normalized[remainder_start:].lstrip(" ,，。:：")
+        return best_match, remainder
 
     def _extract_room_target(self, body: str) -> tuple[str | None, str]:
         match = ROOM_ROUTE_RE.match(str(body or "").strip())

@@ -1095,6 +1095,113 @@ class DaemonTests(unittest.TestCase):
                 ("user@im.wechat", None, "[claude] ✅ HELLO"),
             )
 
+    def test_group_mode_voice_fuzzy_match_routes(self) -> None:
+        """Voice transcript starting with agent name should auto-route."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_claude = "ses_claude"
+            thread_kimi = "ses_ockimi0"
+            state = BridgeState(
+                active_session_id=thread_claude,
+                active_tmux_session="claude",
+                room_mode_enabled=True,
+                sessions={
+                    thread_claude: SessionRecord(
+                        thread_id=thread_claude, label="claude", cwd="/tmp",
+                        source="tmux-live", created_at="2026-04-06T00:00:00+00:00",
+                        updated_at="2026-04-06T00:00:00+00:00", tmux_session="claude",
+                    ),
+                    thread_kimi: SessionRecord(
+                        thread_id=thread_kimi, label="ockimi0", cwd="/tmp",
+                        source="tmux-live", created_at="2026-04-06T00:00:00+00:00",
+                        updated_at="2026-04-06T00:00:00+00:00", tmux_session="ockimi0",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(tmux_session="claude", exists=True,
+                    pane_command="node", thread_id=thread_claude,
+                    pane_cwd="/tmp", backend="claude-code"),
+                LiveRuntimeStatus(tmux_session="ockimi0", exists=True,
+                    pane_command="node", thread_id=thread_kimi,
+                    pane_cwd="/tmp", backend="opencode"),
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat, runner=runner, state=state,
+            )
+            # "kimi零 你好" → should match ockimi0
+            incoming = daemon._parse_incoming({
+                "message_type": 1, "from_user_id": "user@im.wechat",
+                "context_token": "ctx-1", "message_id": "m-1",
+                "item_list": [{"type": 1, "text_item": {"text": "kimi零 你好"}}],
+            })
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            # Should have submitted to ockimi0
+            self.assertEqual(len(runner.submitted), 1)
+            self.assertEqual(runner.submitted[0][0], thread_kimi)
+
+    def test_group_mode_voice_fuzzy_cloud_routes_to_claude(self) -> None:
+        """'cloud 你好' should fuzzy-match to claude session."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_claude = "ses_claude"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_claude: SessionRecord(
+                        thread_id=thread_claude, label="claude", cwd="/tmp",
+                        source="tmux-live", created_at="2026-04-06T00:00:00+00:00",
+                        updated_at="2026-04-06T00:00:00+00:00", tmux_session="claude",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(tmux_session="claude", exists=True,
+                    pane_command="node", thread_id=thread_claude,
+                    pane_cwd="/tmp", backend="claude-code"),
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat, runner=runner, state=state,
+            )
+            incoming = daemon._parse_incoming({
+                "message_type": 1, "from_user_id": "user@im.wechat",
+                "context_token": "ctx-1", "message_id": "m-1",
+                "item_list": [{"type": 1, "text_item": {"text": "cloud 你好"}}],
+            })
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            self.assertEqual(len(runner.submitted), 1)
+            self.assertEqual(runner.submitted[0][0], thread_claude)
+
+    def test_group_mode_voice_no_match_falls_through(self) -> None:
+        """Unrecognized voice text should still prompt for @agent."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={},
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = []
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat, runner=runner, state=state,
+            )
+            incoming = daemon._parse_incoming({
+                "message_type": 1, "from_user_id": "user@im.wechat",
+                "context_token": "ctx-1", "message_id": "m-1",
+                "item_list": [{"type": 1, "text_item": {"text": "你好世界"}}],
+            })
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            self.assertEqual(runner.submitted, [])
+            self.assertIn("@agent", fake_wechat.sent[-1][2])
+
     def test_group_mode_plain_text_not_delivered(self) -> None:
         """In group mode, plain text without @agent should NOT be delivered."""
         with tempfile.TemporaryDirectory() as tmpdir:
