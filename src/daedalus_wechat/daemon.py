@@ -29,11 +29,15 @@ OWNER_VISIBLE_RECENT_CLUSTER_SECONDS = 1800.0
 STALE_DESKTOP_MIRROR_DROP_SECONDS = 600.0
 ROOM_ROUTE_RE = re.compile(r"^[＠@](?P<target>[A-Za-z0-9_.:-]+)\s*(?P<body>[\s\S]*)$")
 
-# Chinese digit words → ASCII digits for voice transcript normalization
+# Digit words → ASCII digits for voice transcript normalization
 _CN_DIGITS: dict[str, str] = {
+    # Chinese
     "零": "0", "一": "1", "二": "2", "三": "3", "四": "4",
     "五": "5", "六": "6", "七": "7", "八": "8", "九": "9",
     "〇": "0",
+    # English (voice may produce these)
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
 }
 
 
