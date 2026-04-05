@@ -1756,6 +1756,27 @@ class BridgeDaemon:
             return False
         return from_user_id in self.config.allowed_users
 
+    def _recent_incoming_images(self, *, limit: int = 5) -> list[SavedIncomingImage]:
+        """Return the most recent incoming images by filename (timestamp-sorted)."""
+        media_dir = self.config.incoming_media_dir
+        if not media_dir.is_dir():
+            return []
+        image_files = sorted(
+            (f for f in media_dir.iterdir() if f.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif"}),
+            key=lambda p: p.name,
+            reverse=True,
+        )
+        return [
+            SavedIncomingImage(
+                index=i,
+                path=f,
+                source_url="",
+                content_type="",
+                size_bytes=f.stat().st_size,
+            )
+            for i, f in enumerate(image_files[:limit])
+        ]
+
     def _bind_peer(self, from_user_id: str, context_token: str | None) -> None:
         with self._lock:
             previous_user_id = self.state.bound_user_id
@@ -1934,26 +1955,25 @@ class BridgeDaemon:
             )
             self._flush_bound_outbox_if_any()
             return True
+        # In room mode, if no images attached to this message, auto-attach
+        # recent incoming images so agent can see them without guessing paths.
+        if self._room_mode_enabled() and not saved_images:
+            saved_images = self._recent_incoming_images(limit=5)
+        target_name, stripped_body = self._extract_room_target(incoming.body)
+        effective_body = stripped_body if target_name else incoming.body
         prompt = self._compose_prompt(
-            incoming=incoming,
+            incoming=IncomingMessage(
+                from_user_id=incoming.from_user_id,
+                context_token=incoming.context_token,
+                body=effective_body,
+                message_id=incoming.message_id,
+                is_voice=incoming.is_voice,
+                has_transcript=incoming.has_transcript,
+                images=incoming.images,
+            ),
             saved_images=saved_images,
             image_failures=image_failures,
         )
-        target_name, stripped_body = self._extract_room_target(incoming.body)
-        if target_name:
-            prompt = self._compose_prompt(
-                incoming=IncomingMessage(
-                    from_user_id=incoming.from_user_id,
-                    context_token=incoming.context_token,
-                    body=stripped_body,
-                    message_id=incoming.message_id,
-                    is_voice=incoming.is_voice,
-                    has_transcript=incoming.has_transcript,
-                    images=incoming.images,
-                ),
-                saved_images=saved_images,
-                image_failures=image_failures,
-            )
         self.runner.submit_prompt(record=refreshed, prompt=prompt)
         self._log_event(
             "prompt_submitted",
