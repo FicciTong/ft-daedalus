@@ -1804,13 +1804,33 @@ class BridgeDaemon:
             key = name.lower()
             if not normalized.startswith(key):
                 continue
-            # Must be at end or followed by non-ASCII-alnum (word boundary)
-            # CJK chars are valid boundaries (isalnum() is True for CJK)
             rest_start = len(key)
-            if rest_start >= len(normalized) or not normalized[rest_start].isascii() or not normalized[rest_start].isalnum():
+            if rest_start >= len(normalized):
+                # Exact match, nothing after
                 best_match = name
                 best_len = len(key)
                 break
+            next_ch = normalized[rest_start]
+            # Non-ASCII (CJK etc) is always a valid boundary
+            if not next_ch.isascii():
+                best_match = name
+                best_len = len(key)
+                break
+            # If session name ends with a digit (e.g. ockimi0), require
+            # non-alnum boundary to avoid ockimi0 matching ockimi01
+            if key[-1].isdigit():
+                if not next_ch.isalnum():
+                    best_match = name
+                    best_len = len(key)
+                    break
+            else:
+                # Session name ends with letter (e.g. ocgpt, claude):
+                # digits and non-alnum are both valid boundaries
+                # so "ocgpt1+2" matches "ocgpt" with remainder "1+2"
+                if not next_ch.isalpha():
+                    best_match = name
+                    best_len = len(key)
+                    break
 
         if best_match is None:
             return None, body
