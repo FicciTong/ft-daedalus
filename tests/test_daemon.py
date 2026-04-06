@@ -409,7 +409,7 @@ class DaemonTests(unittest.TestCase):
             runner = _FakeRunner()
             runner.runtime_statuses = [
                 LiveRuntimeStatus(
-                    tmux_session="ockimi2",
+                    tmux_session="kimi2",
                     exists=True,
                     pane_command="node",
                     thread_id="ses_live",
@@ -613,19 +613,19 @@ class DaemonTests(unittest.TestCase):
                 sessions={
                     thread_id: SessionRecord(
                         thread_id=thread_id,
-                        label="ockimi2",
+                        label="kimi2",
                         cwd="/tmp",
                         source="tmux-live",
                         created_at="2026-04-04T00:00:00+00:00",
                         updated_at="2026-04-04T00:00:00+00:00",
-                        tmux_session="ockimi2",
+                        tmux_session="kimi2",
                     )
                 }
             )
             runner = _FakeRunner()
             runner.runtime_statuses = [
                 LiveRuntimeStatus(
-                    tmux_session="ockimi2",
+                    tmux_session="kimi2",
                     exists=True,
                     pane_command="node",
                     thread_id=thread_id,
@@ -657,7 +657,7 @@ class DaemonTests(unittest.TestCase):
             runner = _FakeRunner()
             runner.runtime_statuses = [
                 LiveRuntimeStatus(
-                    tmux_session="ockimi2",
+                    tmux_session="kimi2",
                     exists=True,
                     pane_command="node",
                     thread_id=thread_id,
@@ -682,7 +682,7 @@ class DaemonTests(unittest.TestCase):
             runner = _FakeRunner()
             runner.runtime_statuses = [
                 LiveRuntimeStatus(
-                    tmux_session="ockimi2",
+                    tmux_session="kimi2",
                     exists=True,
                     pane_command="node",
                     thread_id=thread_id,
@@ -861,25 +861,25 @@ class DaemonTests(unittest.TestCase):
             thread_new = "ses_new_target"
             state = BridgeState(
                 active_session_id=thread_old,
-                active_tmux_session="ockimi2",
+                active_tmux_session="kimi2",
                 sessions={
                     thread_old: SessionRecord(
                         thread_id=thread_old,
-                        label="ockimi2",
+                        label="kimi2",
                         cwd="/tmp",
                         source="tmux-live",
                         created_at="2026-04-04T00:00:00+00:00",
                         updated_at="2026-04-04T00:00:00+00:00",
-                        tmux_session="ockimi2",
+                        tmux_session="kimi2",
                     ),
                     thread_new: SessionRecord(
                         thread_id=thread_new,
-                        label="ockimi1",
+                        label="kimi1",
                         cwd="/tmp",
                         source="tmux-live",
                         created_at="2026-04-04T00:00:00+00:00",
                         updated_at="2026-04-04T00:00:00+00:00",
-                        tmux_session="ockimi1",
+                        tmux_session="kimi1",
                     ),
                 },
             )
@@ -890,7 +890,7 @@ class DaemonTests(unittest.TestCase):
                     self.observed_active: tuple[str | None, str | None] | None = None
                     self.runtime_statuses = [
                         LiveRuntimeStatus(
-                            tmux_session="ockimi2",
+                            tmux_session="kimi2",
                             exists=True,
                             pane_command="node",
                             thread_id=thread_old,
@@ -898,7 +898,7 @@ class DaemonTests(unittest.TestCase):
                             backend="opencode",
                         ),
                         LiveRuntimeStatus(
-                            tmux_session="ockimi1",
+                            tmux_session="kimi1",
                             exists=True,
                             pane_command="node",
                             thread_id=thread_new,
@@ -927,35 +927,35 @@ class DaemonTests(unittest.TestCase):
                 state=state,
             )
 
-            text = daemon._handle_command("/switch ockimi1")
+            text = daemon._handle_command("/switch kimi1")
 
-            self.assertEqual(runner.observed_active, (thread_old, "ockimi2"))
+            self.assertEqual(runner.observed_active, (thread_old, "kimi2"))
             self.assertEqual(state.active_session_id, thread_new)
-            self.assertEqual(state.active_tmux_session, "ockimi1")
-            self.assertIn("tmux=ockimi1", text)
+            self.assertEqual(state.active_tmux_session, "kimi1")
+            self.assertIn("tmux=kimi1", text)
 
     def test_switch_group_enables_room_mode_without_replacing_active(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            thread_id = "ses_ocgpt"
+            thread_id = "ses_gpt"
             state = BridgeState(
                 active_session_id=thread_id,
-                active_tmux_session="ocgpt",
+                active_tmux_session="gpt",
                 sessions={
                     thread_id: SessionRecord(
                         thread_id=thread_id,
-                        label="ocgpt",
+                        label="gpt",
                         cwd="/tmp",
                         source="tmux-live",
                         created_at="2026-04-04T00:00:00+00:00",
                         updated_at="2026-04-04T00:00:00+00:00",
-                        tmux_session="ocgpt",
+                        tmux_session="gpt",
                     )
                 },
             )
             runner = _FakeRunner()
             runner.runtime_statuses = [
                 LiveRuntimeStatus(
-                    tmux_session="ocgpt",
+                    tmux_session="gpt",
                     exists=True,
                     pane_command="node",
                     thread_id=thread_id,
@@ -973,43 +973,43 @@ class DaemonTests(unittest.TestCase):
             text = daemon._handle_command("/switch group")
 
             self.assertTrue(state.room_mode_enabled)
-            self.assertEqual(state.active_tmux_session, "ocgpt")
+            self.assertEqual(state.active_tmux_session, "gpt")
             self.assertIn("已切换到 group 模式", text)
             self.assertIn("mode=group", text)
 
     def test_group_targeted_message_routes_without_replacing_active(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            thread_active = "ses_ocgpt"
-            thread_target = "ses_ockimi1"
+            thread_active = "ses_gpt"
+            thread_target = "ses_kimi1"
             state = BridgeState(
                 active_session_id=thread_active,
-                active_tmux_session="ocgpt",
+                active_tmux_session="gpt",
                 room_mode_enabled=True,
                 sessions={
                     thread_active: SessionRecord(
                         thread_id=thread_active,
-                        label="ocgpt",
+                        label="gpt",
                         cwd="/tmp",
                         source="tmux-live",
                         created_at="2026-04-04T00:00:00+00:00",
                         updated_at="2026-04-04T00:00:00+00:00",
-                        tmux_session="ocgpt",
+                        tmux_session="gpt",
                     ),
                     thread_target: SessionRecord(
                         thread_id=thread_target,
-                        label="ockimi1",
+                        label="kimi1",
                         cwd="/tmp",
                         source="tmux-live",
                         created_at="2026-04-04T00:00:00+00:00",
                         updated_at="2026-04-04T00:00:00+00:00",
-                        tmux_session="ockimi1",
+                        tmux_session="kimi1",
                     ),
                 },
             )
             runner = _FakeRunner()
             runner.runtime_statuses = [
                 LiveRuntimeStatus(
-                    tmux_session="ocgpt",
+                    tmux_session="gpt",
                     exists=True,
                     pane_command="node",
                     thread_id=thread_active,
@@ -1017,7 +1017,7 @@ class DaemonTests(unittest.TestCase):
                     backend="opencode",
                 ),
                 LiveRuntimeStatus(
-                    tmux_session="ockimi1",
+                    tmux_session="kimi1",
                     exists=True,
                     pane_command="node",
                     thread_id=thread_target,
@@ -1039,7 +1039,7 @@ class DaemonTests(unittest.TestCase):
                     "context_token": "ctx-1",
                     "message_id": "m-1",
                     "item_list": [
-                        {"type": 1, "text_item": {"text": "@ockimi1 say hi"}}
+                        {"type": 1, "text_item": {"text": "@kimi1 say hi"}}
                     ],
                 }
             )
@@ -1051,10 +1051,10 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(runner.submitted[0][0], thread_target)
             self.assertIn("say hi", runner.submitted[0][1])
             self.assertEqual(state.active_session_id, thread_active)
-            self.assertEqual(state.active_tmux_session, "ocgpt")
+            self.assertEqual(state.active_tmux_session, "gpt")
             self.assertEqual(
                 fake_wechat.sent[-1],
-                ("user@im.wechat", "ctx-1", "⚙️ 已注入 @ockimi1 terminal。"),
+                ("user@im.wechat", "ctx-1", "⚙️ 已注入 @kimi1 terminal。"),
             )
 
     def test_room_mode_tags_desktop_final_with_speaker(self) -> None:
@@ -1098,10 +1098,10 @@ class DaemonTests(unittest.TestCase):
             )
 
     def test_group_mode_voice_fuzzy_match_session_name(self) -> None:
-        """Voice transcript 'oc kimi 零 你好' should match tmux session 'ockimi0'."""
+        """Voice transcript 'kimi 零 你好' should match tmux session 'kimi0'."""
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_claude = "ses_claude"
-            thread_kimi = "ses_ockimi0"
+            thread_kimi = "ses_kimi0"
             state = BridgeState(
                 active_session_id=thread_claude,
                 active_tmux_session="claude",
@@ -1113,9 +1113,9 @@ class DaemonTests(unittest.TestCase):
                         updated_at="2026-04-06T00:00:00+00:00", tmux_session="claude",
                     ),
                     thread_kimi: SessionRecord(
-                        thread_id=thread_kimi, label="ockimi0", cwd="/tmp",
+                        thread_id=thread_kimi, label="kimi0", cwd="/tmp",
                         source="tmux-live", created_at="2026-04-06T00:00:00+00:00",
-                        updated_at="2026-04-06T00:00:00+00:00", tmux_session="ockimi0",
+                        updated_at="2026-04-06T00:00:00+00:00", tmux_session="kimi0",
                     ),
                 },
             )
@@ -1124,7 +1124,7 @@ class DaemonTests(unittest.TestCase):
                 LiveRuntimeStatus(tmux_session="claude", exists=True,
                     pane_command="node", thread_id=thread_claude,
                     pane_cwd="/tmp", backend="claude-code"),
-                LiveRuntimeStatus(tmux_session="ockimi0", exists=True,
+                LiveRuntimeStatus(tmux_session="kimi0", exists=True,
                     pane_command="node", thread_id=thread_kimi,
                     pane_cwd="/tmp", backend="opencode"),
             ]
@@ -1133,11 +1133,11 @@ class DaemonTests(unittest.TestCase):
                 config=self._make_config(Path(tmpdir), frozenset()),
                 wechat=fake_wechat, runner=runner, state=state,
             )
-            # "oc kimi 零 你好" → normalize → "ockimi0" → match ockimi0
+            # "kimi 零 你好" → normalize → "kimi0" → match kimi0
             incoming = daemon._parse_incoming({
                 "message_type": 1, "from_user_id": "user@im.wechat",
                 "context_token": "ctx-1", "message_id": "m-1",
-                "item_list": [{"type": 1, "text_item": {"text": "oc kimi 零 你好"}}],
+                "item_list": [{"type": 1, "text_item": {"text": "kimi 零 你好"}}],
             })
             assert incoming is not None
             daemon._handle_incoming(incoming)
@@ -1180,22 +1180,22 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(runner.submitted[0][0], thread_claude)
 
     def test_group_mode_voice_correction_killing_to_kimi(self) -> None:
-        """'oc killing 零' (WeChat STT of 'oc kimi 零') should match 'ockimi0'."""
+        """'killing 零' (WeChat STT of 'kimi 零') should match 'kimi0'."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            thread_kimi = "ses_ockimi0"
+            thread_kimi = "ses_kimi0"
             state = BridgeState(
                 room_mode_enabled=True,
                 sessions={
                     thread_kimi: SessionRecord(
-                        thread_id=thread_kimi, label="ockimi0", cwd="/tmp",
+                        thread_id=thread_kimi, label="kimi0", cwd="/tmp",
                         source="tmux-live", created_at="2026-04-06T00:00:00+00:00",
-                        updated_at="2026-04-06T00:00:00+00:00", tmux_session="ockimi0",
+                        updated_at="2026-04-06T00:00:00+00:00", tmux_session="kimi0",
                     ),
                 },
             )
             runner = _FakeRunner()
             runner.runtime_statuses = [
-                LiveRuntimeStatus(tmux_session="ockimi0", exists=True,
+                LiveRuntimeStatus(tmux_session="kimi0", exists=True,
                     pane_command="node", thread_id=thread_kimi,
                     pane_cwd="/tmp", backend="opencode"),
             ]
@@ -1207,7 +1207,7 @@ class DaemonTests(unittest.TestCase):
             incoming = daemon._parse_incoming({
                 "message_type": 1, "from_user_id": "user@im.wechat",
                 "context_token": "ctx-1", "message_id": "m-1",
-                "item_list": [{"type": 1, "text_item": {"text": "oc killing 零 你好"}}],
+                "item_list": [{"type": 1, "text_item": {"text": "killing 零 你好"}}],
             })
             assert incoming is not None
             daemon._handle_incoming(incoming)
@@ -1328,25 +1328,25 @@ class DaemonTests(unittest.TestCase):
             thread_new = "ses_new_target"
             state = BridgeState(
                 active_session_id=thread_old,
-                active_tmux_session="ocgpt",
+                active_tmux_session="gpt",
                 sessions={
                     thread_old: SessionRecord(
                         thread_id=thread_old,
-                        label="ocgpt",
+                        label="gpt",
                         cwd="/tmp",
                         source="tmux-live",
                         created_at="2026-04-04T00:00:00+00:00",
                         updated_at="2026-04-04T00:00:00+00:00",
-                        tmux_session="ocgpt",
+                        tmux_session="gpt",
                     ),
                     thread_new: SessionRecord(
                         thread_id=thread_new,
-                        label="ockimi2",
+                        label="kimi2",
                         cwd="/tmp",
                         source="tmux-live",
                         created_at="2026-04-04T00:00:00+00:00",
                         updated_at="2026-04-04T00:00:00+00:00",
-                        tmux_session="ockimi2",
+                        tmux_session="kimi2",
                     ),
                 },
             )
@@ -1370,9 +1370,9 @@ class DaemonTests(unittest.TestCase):
                     self.calls += 1
                     if self.calls == 1:
                         self._state_ref.active_session_id = thread_new
-                        self._state_ref.active_tmux_session = "ockimi2"
+                        self._state_ref.active_tmux_session = "kimi2"
                         return LiveRuntimeStatus(
-                            tmux_session="ocgpt",
+                            tmux_session="gpt",
                             exists=True,
                             pane_command="node",
                             thread_id=thread_old,
@@ -1380,7 +1380,7 @@ class DaemonTests(unittest.TestCase):
                             backend="opencode",
                         )
                     return LiveRuntimeStatus(
-                        tmux_session="ockimi2",
+                        tmux_session="kimi2",
                         exists=True,
                         pane_command="node",
                         thread_id=thread_new,
@@ -1400,7 +1400,7 @@ class DaemonTests(unittest.TestCase):
 
             self.assertEqual(thread_id, thread_new)
             self.assertEqual(state.active_session_id, thread_new)
-            self.assertEqual(state.active_tmux_session, "ockimi2")
+            self.assertEqual(state.active_tmux_session, "kimi2")
 
     def test_switch_text_marks_pending_runtime_id_as_provisional(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1570,7 +1570,7 @@ class DaemonTests(unittest.TestCase):
                 sessions={
                     thread_id: SessionRecord(
                         thread_id=thread_id,
-                        label="ocgpt",
+                        label="gpt",
                         cwd="/tmp",
                         source="tmux-live",
                         created_at="2026-04-04T00:00:00+00:00",
@@ -1589,17 +1589,17 @@ class DaemonTests(unittest.TestCase):
             record = daemon._promote_runtime_record(
                 old_thread_id=thread_id,
                 new_thread_id=thread_id,
-                tmux_session="ocgpt",
-                fallback_label="ocgpt",
+                tmux_session="gpt",
+                fallback_label="gpt",
                 fallback_cwd="/tmp",
                 fallback_source="tmux-live",
             )
 
             assert record is not None
-            self.assertEqual(record.tmux_session, "ocgpt")
-            self.assertEqual(state.sessions[thread_id].tmux_session, "ocgpt")
-            self.assertEqual(state.active_tmux_session, "ocgpt")
-            self.assertEqual(state.pending_outbox[0]["tmux_session"], "ocgpt")
+            self.assertEqual(record.tmux_session, "gpt")
+            self.assertEqual(state.sessions[thread_id].tmux_session, "gpt")
+            self.assertEqual(state.active_tmux_session, "gpt")
+            self.assertEqual(state.pending_outbox[0]["tmux_session"], "gpt")
 
     def test_current_mirror_thread_promotes_pending_active_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -48,7 +48,7 @@ def _normalize_voice(text: str) -> str:
     """Normalize voice transcript for tmux session name matching.
 
     Strips spaces, lowercases, replaces Chinese digits with ASCII.
-    'oc kimi 零' → 'ockimi0', 'OC GPT' → 'ocgpt', 'claude' → 'claude'
+    'kimi 零' → 'kimi0', 'GPT' → 'gpt', 'claude' → 'claude'
     """
     out = text.lower()
     for cn, digit in _CN_DIGITS.items():
@@ -1860,7 +1860,7 @@ class BridgeDaemon:
                 best_len = prefix_len
                 break
             # Multiple matches: if input has a digit right after the matched
-            # prefix, use it to disambiguate (e.g. "ocki1" → prefer ockimi1)
+            # prefix, use it to disambiguate (e.g. "kimi1" → prefer kimi1)
             rest = normalized[prefix_len:]
             if rest and rest[0].isdigit():
                 digit = rest[0]

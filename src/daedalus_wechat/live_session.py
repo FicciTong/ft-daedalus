@@ -216,6 +216,15 @@ class LiveCodexSessionManager:
             return default_label
         current_lower = current.lower()
         tmux_lower = (status.tmux_session or "").strip().lower()
+        # If the tmux session was renamed since last sync, refresh the label.
+        old_tmux = (existing.tmux_session or "").strip().lower()
+        if tmux_lower and old_tmux and tmux_lower != old_tmux:
+            return default_label
+        # Auto-derived labels (purely alphanumeric) that drifted from the
+        # current tmux name get refreshed; user-set labels with dashes/spaces
+        # (e.g. "main-live") are preserved.
+        if tmux_lower and current_lower != tmux_lower and current.isalnum():
+            return default_label
         if (
             current_lower == status.backend
             and tmux_lower
@@ -1585,10 +1594,12 @@ class LiveCodexSessionManager:
             if hinted_runtime_id
             else None
         )
+        pane_pid = self._pane_pid(tmux_session)
         backend = detect_backend(
             pane_command=pane_command,
             pane_start_command=pane_start_command,
             screen_text=screen_text,
+            pane_pid=pane_pid,
         )
         if backend == CliBackend.UNKNOWN:
             if hinted_backend:

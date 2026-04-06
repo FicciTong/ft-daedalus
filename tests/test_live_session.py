@@ -721,7 +721,7 @@ class LiveSessionTests(unittest.TestCase):
                 )
                 conn.execute(
                     "insert into session (id, directory, title, time_created, time_updated, time_archived) values (?, ?, ?, ?, ?, ?)",
-                    ("ses_match", "/tmp", "ockimi1", 10, 100, None),
+                    ("ses_match", "/tmp", "kimi1", 10, 100, None),
                 )
                 conn.commit()
             finally:
@@ -730,7 +730,7 @@ class LiveSessionTests(unittest.TestCase):
 
             with patch.object(self.runner, "_get_tmux_runtime_id", return_value=None):
                 resolved = self.runner._resolve_opencode_session_id(
-                    tmux_session="ockimi1",
+                    tmux_session="kimi1",
                     pane_cwd="/tmp",
                 )
 
@@ -757,7 +757,7 @@ class LiveSessionTests(unittest.TestCase):
                 )
                 conn.execute(
                     "insert into session (id, directory, title, time_created, time_updated, time_archived) values (?, ?, ?, ?, ?, ?)",
-                    ("ses_match", "/tmp", "ockimi2", 10, 100, None),
+                    ("ses_match", "/tmp", "kimi2", 10, 100, None),
                 )
                 conn.commit()
             finally:
@@ -770,7 +770,7 @@ class LiveSessionTests(unittest.TestCase):
                 return_value="ses_stale_hint",
             ):
                 resolved = self.runner._resolve_opencode_session_id(
-                    tmux_session="ockimi2",
+                    tmux_session="kimi2",
                     pane_cwd="/tmp",
                 )
 

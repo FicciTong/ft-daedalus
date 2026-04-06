@@ -532,7 +532,7 @@ Shows all currently live tmux sessions with supported runtimes.
 
 ```text
 @claude help me review this code
-@ockimi0 算一下 1+5
+@kimi0 算一下 1+5
 ```
 
 Messages without `@agent` are **not delivered** in group mode. The bridge
@@ -544,8 +544,8 @@ In group mode, voice messages are automatically matched to agents. Say the
 tmux session name at the beginning of your voice message:
 
 - "claude 帮我看看" → routes to `claude`
-- "oc kimi 零 算一下" → routes to `ockimi0`
-- "oc kimi 二 做个任务" → routes to `ockimi2`
+- "kimi 零 算一下" → routes to `kimi0`
+- "kimi 二 做个任务" → routes to `kimi2`
 
 The matching is **fully dynamic** — it scans the actual live tmux session
 names, normalizes spaces and Chinese/English digit words, and applies
@@ -562,7 +562,7 @@ Send images first, then tell an agent to look at them:
 
 ```text
 (send photo)
-@ockimi2 看一下最近的照片
+@kimi2 看一下最近的照片
 ```
 
 Images are saved with timestamp prefixes for chronological ordering. When
@@ -575,7 +575,7 @@ All agent replies in group mode are tagged with the speaker name:
 
 ```
 [claude] ✅ The code looks good.
-[ockimi0] ✅ 1+5=6
+[kimi0] ✅ 1+5=6
 ```
 
 ### Exit group mode
