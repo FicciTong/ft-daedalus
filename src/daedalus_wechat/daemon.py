@@ -1445,7 +1445,7 @@ class BridgeDaemon:
             if scan is None or scan.end_offset == start_offset:
                 continue
             with self._lock:
-                if self._is_active_thread(thread_id, tmux_session):
+                if self._is_active_thread(thread_id, tmux_session) and not room_mode_enabled:
                     continue
                 if scan.final_text:
                     if room_mode_enabled:
