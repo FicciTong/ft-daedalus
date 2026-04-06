@@ -20,8 +20,6 @@ from .incoming_media import (
 from .live_session import OPENCODE_SESSION_PREFIX, PLAN_MARKER, LiveCodexSessionManager
 from .room_transcript import (
     append_room_message,
-    format_room_context,
-    read_recent_room_messages,
 )
 from .state import BridgeState, SessionRecord, now_iso
 from .systemd_notify import notify as systemd_notify
@@ -1405,10 +1403,18 @@ class BridgeDaemon:
             return
         if not self._is_active_thread(thread_id, mirror_tmux_session):
             return
-        # Always update offset first to prevent duplicate delivery on retry
+        # Dedup: skip if this final text was already sent recently
+        final_hash = hash(scan.final_text)
         with self._lock:
             if not self._is_active_thread(thread_id, mirror_tmux_session):
                 return
+            last_hash = getattr(self, "_last_mirrored_final_hash", None)
+            if last_hash == final_hash:
+                # Same final text as last time — just advance offset, don't re-send
+                self.state.set_mirror_offset(thread_id, scan.end_offset)
+                self._save_state()
+                return
+            self._last_mirrored_final_hash = final_hash
             self.state.set_mirror_offset(thread_id, scan.end_offset)
             self._save_state()
         self._reply(
@@ -2015,7 +2021,7 @@ class BridgeDaemon:
             saved_images=saved_images,
             image_failures=image_failures,
         )
-        # Record owner message to room transcript
+        # Record owner message to room transcript (agents read it on demand)
         if self._room_mode_enabled():
             append_room_message(
                 transcript_file=self.config.room_transcript_file,
@@ -2024,13 +2030,6 @@ class BridgeDaemon:
                 body=f"@{target} {effective_body}".strip(),
                 images=[str(img.path) for img in saved_images] if saved_images else None,
             )
-            # Inject room context into prompt
-            recent = read_recent_room_messages(
-                transcript_file=self.config.room_transcript_file, limit=20,
-            )
-            room_ctx = format_room_context(recent)
-            if room_ctx:
-                prompt = room_ctx + "\n\n" + prompt
         self.runner.submit_prompt(record=refreshed, prompt=prompt)
         self._log_event(
             "prompt_submitted",
