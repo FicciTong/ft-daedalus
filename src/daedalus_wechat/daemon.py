@@ -1421,6 +1421,14 @@ class BridgeDaemon:
                 return
             self.state.set_mirror_offset(thread_id, scan.end_offset)
             self._save_state()
+        if self._room_mode_enabled():
+            speaker = mirror_tmux_session or self._short_thread(thread_id)
+            append_room_message(
+                transcript_file=self.config.room_transcript_file,
+                speaker=speaker,
+                direction="outbound",
+                body=scan.final_text[:2000],
+            )
         self._log_event(
             "mirrored_final",
             {"thread": self._short_thread(thread_id), "to": to_user_id},
@@ -1450,7 +1458,7 @@ class BridgeDaemon:
             if scan is None or scan.end_offset == start_offset:
                 continue
             with self._lock:
-                if self._is_active_thread(thread_id, tmux_session) and not room_mode_enabled:
+                if self._is_active_thread(thread_id, tmux_session):
                     continue
                 if scan.final_text:
                     if room_mode_enabled:
