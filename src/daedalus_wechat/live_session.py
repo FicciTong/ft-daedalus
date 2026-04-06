@@ -365,7 +365,7 @@ class LiveCodexSessionManager:
                 )
                 continue
             conflict_reason = self.runtime_conflict_reason(status)
-            if conflict_reason is not None:
+            if conflict_reason is not None and conflict_reason != "duplicate-runtime-id":
                 reason = conflict_reason
                 switchable = False
             elif status.backend == "unknown":

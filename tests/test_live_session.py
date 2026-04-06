@@ -690,10 +690,11 @@ class LiveSessionTests(unittest.TestCase):
                 ],
             ):
                 items = self.runner.list_tmux_runtime_inventory()
-        self.assertEqual(items[0].reason, "duplicate-runtime-id")
-        self.assertFalse(items[0].switchable)
-        self.assertEqual(items[1].reason, "duplicate-runtime-id")
-        self.assertFalse(items[1].switchable)
+        # duplicate-runtime-id sessions are now switchable (needed for group mode)
+        self.assertEqual(items[0].reason, "live")
+        self.assertTrue(items[0].switchable)
+        self.assertEqual(items[1].reason, "live")
+        self.assertTrue(items[1].switchable)
 
     def test_resolve_opencode_session_prefers_tmux_title_before_latest_cwd(
         self,

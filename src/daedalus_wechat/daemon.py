@@ -1973,12 +1973,15 @@ class BridgeDaemon:
             )
             self._flush_bound_outbox_if_any()
             return True
-        # In room mode, if no images attached to this message, auto-attach
-        # recent incoming images so agent can see them without guessing paths.
-        if self._room_mode_enabled() and not saved_images:
-            saved_images = self._recent_incoming_images(limit=5)
         target_name, stripped_body = self._extract_room_target(incoming.body)
         effective_body = stripped_body if target_name else incoming.body
+        # In room mode, if no images attached but message mentions images/photos,
+        # auto-attach recent incoming images so agent can find them.
+        if self._room_mode_enabled() and not saved_images:
+            image_keywords = ("图", "照片", "photo", "image", "截图", "screenshot", "看图", "看一下图", "看看图")
+            body_lower = (effective_body or "").lower()
+            if any(kw in body_lower for kw in image_keywords):
+                saved_images = self._recent_incoming_images(limit=5)
         prompt = self._compose_prompt(
             incoming=IncomingMessage(
                 from_user_id=incoming.from_user_id,
