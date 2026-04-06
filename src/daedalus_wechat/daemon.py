@@ -1464,12 +1464,10 @@ class BridgeDaemon:
             with self._lock:
                 if self._is_active_thread(thread_id, tmux_session):
                     continue
-                # Always advance offset FIRST to prevent re-scanning
-                self.state.set_mirror_offset(thread_id, scan.end_offset)
-                self._save_state()
             if scan.final_text:
+                sent_ok = False
                 if room_mode_enabled:
-                    self._reply(
+                    sent_ok = self._reply(
                         to_user_id,
                         self.state.bound_context_token,
                         scan.final_text,
@@ -1492,7 +1490,13 @@ class BridgeDaemon:
                             thread_id=thread_id,
                             tmux_session=tmux_session,
                         )
-                        self._save_state()
+                        sent_ok = True
+                if not sent_ok:
+                    continue  # Don't advance offset; retry next cycle
+            # Advance offset only after successful delivery (or no final)
+            with self._lock:
+                self.state.set_mirror_offset(thread_id, scan.end_offset)
+                self._save_state()
             if scan.final_text:
                 if room_mode_enabled:
                     speaker = tmux_session or self._short_thread(thread_id)
