@@ -28,6 +28,7 @@ from .wechat_api import DEFAULT_CDN_BASE_URL, WeChatClient
 DISPLAY_TZ = ZoneInfo("Asia/Shanghai")
 STALE_AUTO_FLUSH_SECONDS = 300.0
 WAIT_FOR_BIND_TIMEOUT_SECONDS = 60.0
+_SEND_DEDUP_WINDOW_SECONDS = 30.0
 OWNER_VISIBLE_RECENT_CLUSTER_SECONDS = 1800.0
 STALE_DESKTOP_MIRROR_DROP_SECONDS = 600.0
 ROOM_ROUTE_RE = re.compile(r"^[＠@](?P<target>[A-Za-z0-9_.:-]+)\s*(?P<body>[\s\S]*)$")
@@ -142,6 +143,7 @@ class BridgeDaemon:
         self._lock = threading.RLock()
         self._last_outbox_watchdog_signature = ""
         self._last_external_state_mtime_ns = 0
+        self._send_dedup_cache: dict[int, float] = {}  # hash(text) -> monotonic time
         self.config.state_dir.mkdir(parents=True, exist_ok=True)
         if self.state.progress_updates_enabled is None:
             self.state.progress_updates_enabled = self.config.progress_updates_default
@@ -1146,6 +1148,20 @@ class BridgeDaemon:
             )
         chunks = self._chunk_text(rendered)
         for idx, chunk in enumerate(chunks):
+            # Dedup: suppress re-sending identical text within a short window.
+            # WeChat iLink API can return ret=-2 even when the message was
+            # actually delivered, causing the retry loop to re-send the same
+            # content multiple times.
+            chunk_hash = hash((to_user_id, chunk))
+            now_mono = time.monotonic()
+            with self._lock:
+                last_sent_at = self._send_dedup_cache.get(chunk_hash)
+                if last_sent_at is not None and (now_mono - last_sent_at) < _SEND_DEDUP_WINDOW_SECONDS:
+                    self._log_event(
+                        "send_dedup_suppressed",
+                        {"to": to_user_id, "text": chunk[:200], "age_s": round(now_mono - last_sent_at, 1)},
+                    )
+                    continue
             try:
                 self.wechat.send_text(
                     to_user_id=to_user_id,
@@ -1153,6 +1169,13 @@ class BridgeDaemon:
                     text=chunk,
                 )
                 with self._lock:
+                    self._send_dedup_cache[chunk_hash] = now_mono
+                    # Prune old entries to prevent unbounded growth.
+                    if len(self._send_dedup_cache) > 500:
+                        cutoff = now_mono - _SEND_DEDUP_WINDOW_SECONDS * 2
+                        self._send_dedup_cache = {
+                            k: v for k, v in self._send_dedup_cache.items() if v > cutoff
+                        }
                     self._log_event("outgoing", {"to": to_user_id, "text": chunk[:400]})
                     append_delivery(
                         state=self.state,
@@ -1169,6 +1192,9 @@ class BridgeDaemon:
             except Exception as exc:  # noqa: BLE001
                 remaining = chunks[idx:]
                 with self._lock:
+                    # Record in dedup cache even on failure — the API may have
+                    # delivered despite returning an error (ret=-2).
+                    self._send_dedup_cache[chunk_hash] = now_mono
                     if self._should_wait_for_bind(exc):
                         self.state.outbox_waiting_for_bind = True
                         self.state.outbox_waiting_for_bind_since = now_iso()
@@ -2256,6 +2282,21 @@ class BridgeDaemon:
             ):
                 kept.append(item)
                 continue
+            # Dedup: if this exact text was already sent (or attempted)
+            # within the dedup window, skip the send but keep in pending
+            # so it doesn't vanish from state.
+            flush_hash = hash((to_user_id, text))
+            now_mono = time.monotonic()
+            with self._lock:
+                last_sent_at = self._send_dedup_cache.get(flush_hash)
+            if last_sent_at is not None and (now_mono - last_sent_at) < _SEND_DEDUP_WINDOW_SECONDS:
+                with self._lock:
+                    self._log_event(
+                        "flush_dedup_suppressed",
+                        {"to": to_user_id, "text": text[:200], "age_s": round(now_mono - last_sent_at, 1)},
+                    )
+                kept.append(item)
+                continue
             effective_context = self._effective_send_context(
                 context_token=context_token,
                 use_context_token=True,
@@ -2268,6 +2309,7 @@ class BridgeDaemon:
                     text=text,
                 )
                 with self._lock:
+                    self._send_dedup_cache[flush_hash] = now_mono
                     self._log_event("outgoing", {"to": to_user_id, "text": text[:400]})
                     self._log_event(
                         "flushed_outgoing",
@@ -2286,6 +2328,8 @@ class BridgeDaemon:
                         tmux_session=self._tmux_for_thread(thread_id) or tmux_session,
                     )
             except Exception as exc:  # noqa: BLE001
+                with self._lock:
+                    self._send_dedup_cache[flush_hash] = now_mono
                 item["last_attempt_at"] = now_iso()
                 item["attempt_count"] = int(item.get("attempt_count", 1) or 1) + 1
                 item["last_error"] = str(exc)
@@ -2342,6 +2386,18 @@ class BridgeDaemon:
             )
             if self._should_suppress_pending_item(kind=kind, origin=origin):
                 continue
+            flush_hash = hash((to_user_id, text))
+            now_mono = time.monotonic()
+            with self._lock:
+                last_sent_at = self._send_dedup_cache.get(flush_hash)
+            if last_sent_at is not None and (now_mono - last_sent_at) < _SEND_DEDUP_WINDOW_SECONDS:
+                with self._lock:
+                    self._log_event(
+                        "flush_all_dedup_suppressed",
+                        {"to": to_user_id, "text": text[:200], "age_s": round(now_mono - last_sent_at, 1)},
+                    )
+                kept.append(item)
+                continue
             effective_context = self._effective_send_context(
                 context_token=context_token,
                 use_context_token=True,
@@ -2354,6 +2410,7 @@ class BridgeDaemon:
                     text=text,
                 )
                 with self._lock:
+                    self._send_dedup_cache[flush_hash] = now_mono
                     self._log_event("outgoing", {"to": to_user_id, "text": text[:400]})
                     self._log_event(
                         "flushed_outgoing",
@@ -2372,6 +2429,8 @@ class BridgeDaemon:
                         tmux_session=resolved_tmux_session,
                     )
             except Exception as exc:  # noqa: BLE001
+                with self._lock:
+                    self._send_dedup_cache[flush_hash] = now_mono
                 item["last_attempt_at"] = now_iso()
                 item["attempt_count"] = int(item.get("attempt_count", 1) or 1) + 1
                 item["last_error"] = str(exc)
