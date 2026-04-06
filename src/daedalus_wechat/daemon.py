@@ -1464,20 +1464,22 @@ class BridgeDaemon:
             with self._lock:
                 if self._is_active_thread(thread_id, tmux_session):
                     continue
-                if scan.final_text:
-                    if room_mode_enabled:
-                        sent = self._reply(
-                            to_user_id,
-                            self.state.bound_context_token,
-                            scan.final_text,
-                            kind="final",
-                            origin="desktop-mirror",
-                            thread_id=thread_id,
-                            tmux_session=tmux_session,
-                        )
-                        if not sent:
-                            continue
-                    else:
+                # Always advance offset FIRST to prevent re-scanning
+                self.state.set_mirror_offset(thread_id, scan.end_offset)
+                self._save_state()
+            if scan.final_text:
+                if room_mode_enabled:
+                    self._reply(
+                        to_user_id,
+                        self.state.bound_context_token,
+                        scan.final_text,
+                        kind="final",
+                        origin="desktop-mirror",
+                        thread_id=thread_id,
+                        tmux_session=tmux_session,
+                    )
+                else:
+                    with self._lock:
                         self.state.enqueue_pending_with_meta(
                             to_user_id=to_user_id,
                             text=self._render_reply_text(
@@ -1490,17 +1492,7 @@ class BridgeDaemon:
                             thread_id=thread_id,
                             tmux_session=tmux_session,
                         )
-                self.state.set_mirror_offset(
-                    thread_id,
-                    self._next_mirror_offset_without_final(
-                        thread_id=thread_id,
-                        start_offset=start_offset,
-                        scan_end_offset=scan.end_offset,
-                    )
-                    if not scan.final_text
-                    else scan.end_offset,
-                )
-                self._save_state()
+                        self._save_state()
             if scan.final_text:
                 if room_mode_enabled:
                     speaker = tmux_session or self._short_thread(thread_id)
