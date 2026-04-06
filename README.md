@@ -84,7 +84,8 @@ This bridge:
 - does **not** modify Codex
 - does **not** live inside `ft-cosmos`
 - does **not** use Codex cloud tasks
-- does **not** stream many live shells into one WeChat chat at once
+- does **not** stream many live shells into one WeChat chat at once (unless
+  group mode is explicitly enabled)
 - **does** use the official Tencent Weixin iLink upstream
 - **does not** need OpenClaw as the long-term host dependency
 - **does** treat workspace live tmux sessions as switchable runtime targets,
@@ -451,6 +452,8 @@ Commands:
 - `/sessions`
 - `/new [label]`  (bind canonical live runtime; does not create tmux)
 - `/switch <index|thread_id-prefix|label|tmux>`
+- `/switch group`  (enter group mode — see below)
+- `/members`  (list live participants in group mode)
 - `/attach-last`
 - `/stop`
 
@@ -502,6 +505,85 @@ Phone-friendly semantics:
 - `/sessions` = short switchable list of currently live workspace tmux sessions
 - `send-bound` = explicit desktop/session-side push into the current bound
   WeChat chat
+
+## 👥 Group Mode (Virtual Room Chat)
+
+Group mode turns a single WeChat private chat into a virtual multi-agent room.
+It is **additive** — personal `/switch <tmux>` mode stays intact and is not
+replaced.
+
+### Enter group mode
+
+```text
+/switch group
+```
+
+This enables room mode. Your current personal active session is preserved.
+
+### List participants
+
+```text
+/members
+```
+
+Shows all currently live tmux sessions with supported runtimes.
+
+### Send to a specific agent
+
+```text
+@claude help me review this code
+@ockimi0 算一下 1+5
+```
+
+Messages without `@agent` are **not delivered** in group mode. The bridge
+prompts you to specify a target.
+
+### Voice routing
+
+In group mode, voice messages are automatically matched to agents. Say the
+tmux session name at the beginning of your voice message:
+
+- "claude 帮我看看" → routes to `claude`
+- "oc kimi 零 算一下" → routes to `ockimi0`
+- "oc kimi 二 做个任务" → routes to `ockimi2`
+
+The matching is **fully dynamic** — it scans the actual live tmux session
+names, normalizes spaces and Chinese/English digit words, and applies
+common voice transcription corrections (e.g. "cloud" → "claude").
+
+Tips for better voice matching:
+- Use Chinese digits (零一二三) instead of English (zero one two three)
+- Say the full session name when possible
+- If matching fails, use `@agent` text input as fallback
+
+### Images in group mode
+
+Send images first, then tell an agent to look at them:
+
+```text
+(send photo)
+@ockimi2 看一下最近的照片
+```
+
+Images are saved with timestamp prefixes for chronological ordering. When
+routing a message to an agent, the 5 most recent images are automatically
+attached to the prompt with their file paths.
+
+### Tagged replies
+
+All agent replies in group mode are tagged with the speaker name:
+
+```
+[claude] ✅ The code looks good.
+[ockimi0] ✅ 1+5=6
+```
+
+### Exit group mode
+
+```text
+/switch <tmux>   (switch to personal mode with a specific session)
+/stop            (clear everything)
+```
 
 ## 🗓️ Daily Operating Guide
 

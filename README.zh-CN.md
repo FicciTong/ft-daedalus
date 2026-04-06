@@ -84,7 +84,7 @@ surface 落在这里。
 - **不会**修改底层模型 CLI 本体
 - **不会**放进 `ft-cosmos`
 - **不会**接管 repo 治理
-- **不会**把多个 live shell 同时混流到一个聊天窗口
+- **不会**把多个 live shell 同时混流到一个聊天窗口（除非显式开启 group 模式）
 - **会**使用腾讯官方 iLink 上游
 - **不会**把 OpenClaw 继续当长期必需宿主依赖
 - **会**把 workspace 下的 live tmux session 当成可切换 runtime target，
@@ -466,6 +466,80 @@ session，让 live agent 直接从磁盘读图。
 - `/status` = 当前接的是哪个 live session
 - `/sessions` = 手机可读的 live workspace tmux 列表，用来快速 `/switch 1`
 - `send-bound` = 桌面/脚本侧显式把一段消息推到当前绑定微信会话
+
+## 👥 Group 模式（虚拟群聊）
+
+Group 模式把一个微信私聊窗口变成虚拟的多 agent 群聊。它是**纯加法**——
+个人模式 `/switch <tmux>` 完整保留，不会被替换。
+
+### 进入 group 模式
+
+```text
+/switch group
+```
+
+当前个人 active session 不受影响。
+
+### 查看参与者
+
+```text
+/members
+```
+
+列出所有当前 live tmux session 里运行着受支持 runtime 的参与者。
+
+### 发消息给指定 agent
+
+```text
+@claude 帮我看看代码
+@ockimi0 算一下 1+5
+```
+
+Group 模式下**不带 @agent 的消息不会投递**，bridge 会提示你指定对象。
+
+### 语音路由
+
+Group 模式下，语音转文字会自动匹配 agent。在语音开头说 tmux session 名：
+
+- "claude 帮我看看" → 路由到 `claude`
+- "oc kimi 零 算一下" → 路由到 `ockimi0`
+- "oc kimi 二 做个任务" → 路由到 `ockimi2`
+
+匹配是**完全动态**的——扫描当前 live tmux session 名，归一化空格和
+中英文数字词，并纠正常见语音转写错误（如 "cloud" → "claude"）。
+
+语音匹配建议：
+- 用中文数字（零一二三）比英文（zero one two three）识别准确率高
+- 尽量说完整的 session 名
+- 匹配失败时用 `@agent` 文字输入兜底
+
+### Group 模式图片
+
+先发图片，再告诉 agent 看图：
+
+```text
+（发送照片）
+@ockimi2 看一下最近的照片
+```
+
+图片按时间戳排序保存。路由消息给 agent 时，最近 5 张图片的路径会自动
+附加到 prompt 里。
+
+### 带标签的回复
+
+Group 模式下所有 agent 回复都带说话人标签：
+
+```
+[claude] ✅ 代码没问题。
+[ockimi0] ✅ 1+5=6
+```
+
+### 退出 group 模式
+
+```text
+/switch <tmux>   （切到个人模式绑定某个 session）
+/stop            （清空所有）
+```
 
 ## 🗓️ 日常使用建议
 
