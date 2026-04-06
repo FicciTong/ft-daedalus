@@ -1403,20 +1403,19 @@ class BridgeDaemon:
             return
         if not self._is_active_thread(thread_id, mirror_tmux_session):
             return
-        # Dedup: skip if this final text was already sent recently
-        final_hash = hash(scan.final_text)
+        # Always advance offset first — never re-scan the same range
         with self._lock:
             if not self._is_active_thread(thread_id, mirror_tmux_session):
                 return
-            last_hash = getattr(self, "_last_mirrored_final_hash", None)
-            if last_hash == final_hash:
-                # Same final text as last time — just advance offset, don't re-send
-                self.state.set_mirror_offset(thread_id, scan.end_offset)
-                self._save_state()
-                return
-            self._last_mirrored_final_hash = final_hash
             self.state.set_mirror_offset(thread_id, scan.end_offset)
             self._save_state()
+        # Dedup: same final text within 10s window → skip
+        now = time.monotonic()
+        final_key = hash(scan.final_text)
+        last = getattr(self, "_last_mirrored_final", None)
+        if last and last[0] == final_key and (now - last[1]) < 10.0:
+            return
+        self._last_mirrored_final = (final_key, now)
         self._reply(
             to_user_id,
             bound_context_token,
