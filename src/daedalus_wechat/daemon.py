@@ -1405,7 +1405,13 @@ class BridgeDaemon:
             return
         if not self._is_active_thread(thread_id, mirror_tmux_session):
             return
-        sent = self._reply(
+        # Always update offset first to prevent duplicate delivery on retry
+        with self._lock:
+            if not self._is_active_thread(thread_id, mirror_tmux_session):
+                return
+            self.state.set_mirror_offset(thread_id, scan.end_offset)
+            self._save_state()
+        self._reply(
             to_user_id,
             bound_context_token,
             scan.final_text,
@@ -1414,13 +1420,6 @@ class BridgeDaemon:
             thread_id=thread_id,
             tmux_session=mirror_tmux_session,
         )
-        if not sent:
-            return
-        with self._lock:
-            if not self._is_active_thread(thread_id, mirror_tmux_session):
-                return
-            self.state.set_mirror_offset(thread_id, scan.end_offset)
-            self._save_state()
         if self._room_mode_enabled():
             speaker = mirror_tmux_session or self._short_thread(thread_id)
             append_room_message(

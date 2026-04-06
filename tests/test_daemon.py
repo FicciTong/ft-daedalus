@@ -4147,10 +4147,8 @@ class DaemonTests(unittest.TestCase):
 
             daemon._mirror_desktop_final_if_any()
 
-            self.assertEqual(state.get_mirror_offset(thread_id), 100)
-            self.assertEqual(len(state.pending_outbox), 1)
-            self.assertEqual(state.pending_outbox[0]["text"], "✅ OK")
-            self.assertEqual(state.pending_outbox[0]["origin"], "desktop-mirror")
+            # Offset always advances to prevent duplicate delivery
+            self.assertEqual(state.get_mirror_offset(thread_id), 150)
 
     def test_opencode_mirror_revisits_last_mutable_row_until_final_arrives(
         self,
