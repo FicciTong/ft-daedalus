@@ -42,6 +42,10 @@ class BridgeConfig:
         return self.state_dir / "incoming_media"
 
     @property
+    def room_transcript_file(self) -> Path:
+        return self.state_dir / "room_transcript.jsonl"
+
+    @property
     def openclaw_state_dir(self) -> Path:
         if self.openclaw_profile == "default":
             return Path.home() / ".openclaw"

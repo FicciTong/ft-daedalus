@@ -1047,7 +1047,9 @@ class DaemonTests(unittest.TestCase):
 
             daemon._handle_incoming(incoming)
 
-            self.assertEqual(runner.submitted, [(thread_target, "say hi")])
+            self.assertEqual(len(runner.submitted), 1)
+            self.assertEqual(runner.submitted[0][0], thread_target)
+            self.assertIn("say hi", runner.submitted[0][1])
             self.assertEqual(state.active_session_id, thread_active)
             self.assertEqual(state.active_tmux_session, "ocgpt")
             self.assertEqual(

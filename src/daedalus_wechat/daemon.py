@@ -18,6 +18,11 @@ from .incoming_media import (
     download_incoming_image,
 )
 from .live_session import OPENCODE_SESSION_PREFIX, PLAN_MARKER, LiveCodexSessionManager
+from .room_transcript import (
+    append_room_message,
+    format_room_context,
+    read_recent_room_messages,
+)
 from .state import BridgeState, SessionRecord, now_iso
 from .systemd_notify import notify as systemd_notify
 from .wechat_api import DEFAULT_CDN_BASE_URL, WeChatClient
@@ -1485,6 +1490,14 @@ class BridgeDaemon:
                 )
                 self._save_state()
             if scan.final_text:
+                if room_mode_enabled:
+                    speaker = tmux_session or self._short_thread(thread_id)
+                    append_room_message(
+                        transcript_file=self.config.room_transcript_file,
+                        speaker=speaker,
+                        direction="outbound",
+                        body=scan.final_text[:2000],
+                    )
                 self._log_event(
                     "mirrored_final"
                     if room_mode_enabled
@@ -1995,6 +2008,22 @@ class BridgeDaemon:
             saved_images=saved_images,
             image_failures=image_failures,
         )
+        # Record owner message to room transcript
+        if self._room_mode_enabled():
+            append_room_message(
+                transcript_file=self.config.room_transcript_file,
+                speaker="owner",
+                direction="inbound",
+                body=f"@{target} {effective_body}".strip(),
+                images=[str(img.path) for img in saved_images] if saved_images else None,
+            )
+            # Inject room context into prompt
+            recent = read_recent_room_messages(
+                transcript_file=self.config.room_transcript_file, limit=20,
+            )
+            room_ctx = format_room_context(recent)
+            if room_ctx:
+                prompt = room_ctx + "\n\n" + prompt
         self.runner.submit_prompt(record=refreshed, prompt=prompt)
         self._log_event(
             "prompt_submitted",
