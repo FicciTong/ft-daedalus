@@ -55,6 +55,7 @@ needed:
 - `opencode-harness/template/.opencode/tools/affected_tests.js`
 - `opencode-harness/template/.opencode/tools/verify_changed.js`
 - `opencode-harness/template/docs/OPENCODE_HARNESS_OVERLAY.md`
+- `opencode-harness/template/scripts/opencode-local.sh`
 
 Do **not** treat the template script path as the target repo's final live
 helper contract. The target repo's live shared helper should use the final
@@ -97,6 +98,7 @@ it actually uses.
 - `.opencode/tools/affected_tests.js`
 - `.opencode/tools/verify_changed.js`
 - `docs/OPENCODE_HARNESS_OVERLAY.md`
+- `scripts/opencode-local.sh`
 
 ### Claude
 
@@ -131,6 +133,17 @@ Keep the target repo's existing:
 Add or merge only the harness-required pieces:
 
 - ensure `docs/OPENCODE_HARNESS_OVERLAY.md` is included in `instructions`
+- ensure `permission` allows:
+  - `todowrite`
+  - `lsp`
+- ensure `harness-orchestrator` task permissions allow only:
+  - `harness-planner`
+  - `harness-reviewer`
+  - `harness-verifier`
+  while denying `*` by default
+- ensure `harness-worker` task permission denies `*`
+- ensure repo-local `lsp` points at `.opencode/node_modules/.bin/` language
+  servers
 - ensure watcher ignore includes:
   - `**/.git/**`
   - `**/.venv/**`
@@ -157,6 +170,9 @@ Ensure:
 
 - `"type": "module"`
 - dependency `"@opencode-ai/plugin": "1.4.0"`
+- dependency `"pyright": "^1.1.408"`
+- dependency `"typescript": "^6.0.2"`
+- dependency `"typescript-language-server": "^5.1.3"`
 
 ### `.opencode/.gitignore`
 
@@ -232,9 +248,12 @@ From the target repo root, run:
 
 ```bash
 python3 -m json.tool opencode.json >/dev/null
+python3 -m json.tool .opencode/package.json >/dev/null
+python3 -m json.tool .opencode/harness.json >/dev/null
 python3 -m py_compile scripts/repo_harness.py
 node --check .opencode/plugins/repo_harness.js
 node --check .opencode/tools/verify_changed.js
+bash -n scripts/opencode-local.sh
 uv run pytest -q tests/test_repo_harness.py
 ```
 
@@ -259,6 +278,8 @@ repo root.
 2. start or resume OpenCode from that repo root
 3. confirm OpenCode is now loading the repo-local `opencode.json` and
    `.opencode/`
+4. if direct experimental `lsp` tool use is desired, launch through:
+   - `scripts/opencode-local.sh`
 
 ### Claude
 

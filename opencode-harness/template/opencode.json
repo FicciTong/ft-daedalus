@@ -5,6 +5,29 @@
     "docs/OPENCODE_HARNESS_OVERLAY.md"
   ],
   "default_agent": "harness-orchestrator",
+  "permission": {
+    "todowrite": "allow",
+    "lsp": "allow"
+  },
+  "agent": {
+    "harness-orchestrator": {
+      "permission": {
+        "task": {
+          "*": "deny",
+          "harness-planner": "allow",
+          "harness-reviewer": "allow",
+          "harness-verifier": "allow"
+        }
+      }
+    },
+    "harness-worker": {
+      "permission": {
+        "task": {
+          "*": "deny"
+        }
+      }
+    }
+  },
   "snapshot": false,
   "compaction": {
     "auto": true,
@@ -28,5 +51,19 @@
       "**/coverage/**",
       "**/*.pyc"
     ]
+  },
+  "lsp": {
+    "pyright": {
+      "command": [
+        "./.opencode/node_modules/.bin/pyright-langserver",
+        "--stdio"
+      ]
+    },
+    "typescript": {
+      "command": [
+        "./.opencode/node_modules/.bin/typescript-language-server",
+        "--stdio"
+      ]
+    }
   }
 }

@@ -16,7 +16,15 @@ You are the general implementation worker seat for this repository.
   - `affected_tests`
   - `verify_changed`
 - In ordinary implementation work:
+  - if the task spans more than one meaningful step, file, or verifier action,
+    create and maintain a todo list until the bounded slice is complete
   - gather the smallest truthful context first
+  - treat `related_context` as a first-hop seed, not the final context limit
+  - if implementation reveals a new authority file, neighboring import, work
+    plan, or runtime dependency, rerun `related_context` with that path before
+    continuing
+  - if repo-local LSP is available, prefer it for symbol navigation and
+    definition/reference work before widening into broad text search
   - make the bounded code/doc change
   - run the smallest truthful verifier path automatically after edits
 - Prefer short, direct, execution-oriented output over broad planning unless

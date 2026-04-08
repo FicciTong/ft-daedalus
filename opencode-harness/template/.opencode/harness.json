@@ -22,21 +22,64 @@
     ".opencode/tools/repo_profile.js",
     ".opencode/tools/verify_changed.js",
     "docs/OPENCODE_HARNESS_OVERLAY.md",
+    "scripts/opencode-local.sh",
     "scripts/repo_harness.py",
     "scripts/opencode_harness.py"
   ],
   "required_opencode_json": {
     "instructions": [
       "docs/OPENCODE_HARNESS_OVERLAY.md"
-    ]
+    ],
+    "permission": {
+      "todowrite": "allow",
+      "lsp": "allow"
+    },
+    "agent": {
+      "harness-orchestrator": {
+        "permission": {
+          "task": {
+            "*": "deny",
+            "harness-planner": "allow",
+            "harness-reviewer": "allow",
+            "harness-verifier": "allow"
+          }
+        }
+      },
+      "harness-worker": {
+        "permission": {
+          "task": {
+            "*": "deny"
+          }
+        }
+      }
+    },
+    "lsp": {
+      "pyright": {
+        "command": [
+          "./.opencode/node_modules/.bin/pyright-langserver",
+          "--stdio"
+        ]
+      },
+      "typescript": {
+        "command": [
+          "./.opencode/node_modules/.bin/typescript-language-server",
+          "--stdio"
+        ]
+      }
+    }
   },
   "required_opencode_package_json": {
     "type": "module",
     "dependencies": {
-      "@opencode-ai/plugin": "1.4.0"
+      "@opencode-ai/plugin": "1.4.0",
+      "pyright": "^1.1.408",
+      "typescript": "^6.0.2",
+      "typescript-language-server": "^5.1.3"
     }
   },
   "required_opencode_gitignore_lines": [
+    "node_modules/",
+    "bun.lock",
     ".state/"
   ],
   "required_opencode_watcher_ignore": [

@@ -58,9 +58,10 @@ function collectFileArgs(args) {
 
 function looksLikeVerifierCommand(command) {
   return [
-    "python3 -m json.tool ",
-    "python3 -m py_compile ",
+    "uv run pytest ",
+    "uv run ruff check ",
     "node --check ",
+    "python3 -m json.tool ",
   ].some((prefix) => command.startsWith(prefix));
 }
 

@@ -1,6 +1,9 @@
 {
   "type": "module",
   "dependencies": {
-    "@opencode-ai/plugin": "1.4.0"
+    "@opencode-ai/plugin": "1.4.0",
+    "pyright": "^1.1.408",
+    "typescript": "^6.0.2",
+    "typescript-language-server": "^5.1.3"
   }
 }

@@ -52,6 +52,10 @@ Current capability note:
 - OpenCode supports selectable repo-local agents directly
 - Claude Code supports project agents directly
 - Codex currently uses profiles/skills instead of the same explicit agent menu
+- OpenCode seed now also carries:
+  - default todo discipline for multi-step work
+  - repo-local LSP diagnostics
+  - an opt-in repo launcher for the experimental direct `lsp` tool
 
 ## What Lives Here
 
@@ -60,6 +64,7 @@ OpenCode adapter seed files live under:
 - `opencode-harness/template/opencode.json`
 - `opencode-harness/template/.opencode/`
 - `opencode-harness/template/docs/OPENCODE_HARNESS_OVERLAY.md`
+- `opencode-harness/template/scripts/opencode-local.sh`
 - `opencode-harness/template/scripts/opencode_harness.py`
 
 These seed files are for **manual reference and bounded reuse**, not for

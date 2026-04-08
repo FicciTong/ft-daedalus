@@ -51,16 +51,37 @@ It adds:
 - one repo-local plugin:
   - `repo_harness`
   - tracks changed files + verifier runs for compaction
+- one repo-local launcher for experimental direct LSP use:
+  - `scripts/opencode-local.sh`
 
 ## Verification Doctrine
 
 - the user should not need to type harness commands for normal use
 - the default agent should automatically gather repo context and run the
   smallest truthful verifier path when needed
+- multi-step work should maintain a live todo list:
+  - `harness-orchestrator` owns the todo list by default
+  - `harness-worker` should also keep todo current when it is opened as a
+    primary implementation seat
+- `related_context` is a first-hop seed, not a hard boundary:
+  - if seed reading reveals a new authority doc, work plan, import neighbor,
+    runtime dependency, or cross-repo runbook, rerun it with that path before
+    continuing
 - `harness-orchestrator` is the owner-facing control seat:
+  - it defaults to completing the bounded task locally
   - it may implement directly when no separate worker is active
-  - it may keep orchestration and use worker seats when they exist
+  - it may use local helper subagents for plan/review/verify assists
+  - it may keep orchestration and use worker seats only when the owner
+    explicitly asks for extra delegated execution
 - `harness-worker` is the implementation seat itself
+- repo-local LSP posture:
+  - `opencode.json` points OpenCode at repo-local `pyright` and
+    `typescript-language-server` binaries under `.opencode/node_modules/`
+  - normal `opencode` startup should now get repo-local LSP diagnostics without
+    editing home-dir config
+  - direct experimental `lsp` tool usage remains opt-in through
+    `scripts/opencode-local.sh`, which sets
+    `OPENCODE_EXPERIMENTAL_LSP_TOOL=true` before launch
 - prefer targeted checks before broad checks
 - do not jump to repo-wide verification if `verify_changed` returns a smaller
   truthful DAG
