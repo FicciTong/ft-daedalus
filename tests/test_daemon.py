@@ -261,17 +261,23 @@ class _FakeRunner:
                 from daedalus_wechat.live_session import MirrorScan
 
                 return MirrorScan(
-                    progress_texts=[], final_text="", end_offset=start_offset
+                    progress_texts=[], final_texts=[], end_offset=start_offset
                 )
             text, end_offset = value
             from daedalus_wechat.live_session import MirrorScan
 
-            return MirrorScan(progress_texts=[], final_text=text, end_offset=end_offset)
+            return MirrorScan(
+                progress_texts=[],
+                final_texts=[text] if text else [],
+                end_offset=end_offset,
+            )
         progress_texts, final_text, end_offset = value
         from daedalus_wechat.live_session import MirrorScan
 
         return MirrorScan(
-            progress_texts=progress_texts, final_text=final_text, end_offset=end_offset
+            progress_texts=progress_texts,
+            final_texts=[final_text] if final_text else [],
+            end_offset=end_offset,
         )
 
     def _label_for(self, state: BridgeState, status: LiveRuntimeStatus) -> str:
@@ -4090,7 +4096,7 @@ class DaemonTests(unittest.TestCase):
 
                 return MirrorScan(
                     progress_texts=[],
-                    final_text="STALE_CODEX_FINAL",
+                    final_texts=["STALE_CODEX_FINAL"],
                     end_offset=150,
                 )
 

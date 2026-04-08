@@ -325,7 +325,7 @@ class LiveSessionTests(unittest.TestCase):
             scan = self.runner.latest_mirror_since(thread_id="ses_test", start_offset=0)
         self.assertIsNotNone(scan)
         assert scan is not None
-        self.assertEqual(scan.final_text, "OPENCODE_FINAL_OK")
+        self.assertEqual(scan.final_texts, ["OPENCODE_FINAL_OK"])
         self.assertEqual(scan.progress_texts, [])
         self.assertGreater(scan.end_offset, 0)
 
@@ -357,7 +357,7 @@ class LiveSessionTests(unittest.TestCase):
             )
         self.assertIsNotNone(scan)
         assert scan is not None
-        self.assertEqual(scan.final_text, "OK")
+        self.assertEqual(scan.final_texts, ["OK"])
         self.assertEqual(scan.progress_texts, [])
         self.assertGreater(scan.end_offset, 0)
 
@@ -461,7 +461,7 @@ class LiveSessionTests(unittest.TestCase):
             scan = self.runner.latest_mirror_since(thread_id="ses_test", start_offset=0)
         self.assertIsNotNone(scan)
         assert scan is not None
-        self.assertEqual(scan.final_text, "OK")
+        self.assertEqual(scan.final_texts, ["OK"])
         self.assertEqual(scan.progress_texts, ["later commentary"])
         self.assertGreater(scan.end_offset, 0)
 
@@ -544,7 +544,7 @@ class LiveSessionTests(unittest.TestCase):
             scan = self.runner.latest_mirror_since(thread_id="ses_test", start_offset=0)
         self.assertIsNotNone(scan)
         assert scan is not None
-        self.assertEqual(scan.final_text, "OK")
+        self.assertEqual(scan.final_texts, ["OK"])
         self.assertEqual(scan.progress_texts, [])
         self.assertGreater(scan.end_offset, 0)
 

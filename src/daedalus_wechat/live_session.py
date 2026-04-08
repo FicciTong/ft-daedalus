@@ -47,7 +47,7 @@ class FinalScan:
 @dataclass(frozen=True)
 class MirrorScan:
     progress_texts: list[str]
-    final_text: str
+    final_texts: list[str]
     end_offset: int
 
 
@@ -674,9 +674,9 @@ class LiveCodexSessionManager:
         if size < offset:
             offset = 0
         if size == offset:
-            return MirrorScan(progress_texts=[], final_text="", end_offset=offset)
+            return MirrorScan(progress_texts=[], final_texts=[], end_offset=offset)
         carry = ""
-        final_text = ""
+        final_texts: list[str] = []
         progress_texts: list[str] = []
         with rollout_file.open("r", encoding="utf-8") as fh:
             fh.seek(offset)
@@ -696,7 +696,7 @@ class LiveCodexSessionManager:
                 progress_texts.append(progress)
             extracted = self._extract_final_text(event)
             if extracted:
-                final_text = extracted
+                final_texts.append(extracted)
         if carry:
             try:
                 event = json.loads(carry)
@@ -708,9 +708,9 @@ class LiveCodexSessionManager:
                     progress_texts.append(progress)
                 extracted = self._extract_final_text(event)
                 if extracted:
-                    final_text = extracted
+                    final_texts.append(extracted)
         return MirrorScan(
-            progress_texts=progress_texts, final_text=final_text, end_offset=end_offset
+            progress_texts=progress_texts, final_texts=final_texts, end_offset=end_offset
         )
 
     def latest_final_since(
@@ -719,7 +719,10 @@ class LiveCodexSessionManager:
         scan = self.latest_mirror_since(thread_id=thread_id, start_offset=start_offset)
         if scan is None:
             return None
-        return FinalScan(final_text=scan.final_text, end_offset=scan.end_offset)
+        return FinalScan(
+            final_text=scan.final_texts[-1] if scan.final_texts else "",
+            end_offset=scan.end_offset,
+        )
 
     def _ensure_running_tmux(self, record: SessionRecord) -> str:
         tmux_session = record.tmux_session or self._tmux_name_for(record.thread_id)
@@ -1371,11 +1374,11 @@ class LiveCodexSessionManager:
             conn.close()
         if not rows:
             return MirrorScan(
-                progress_texts=[], final_text="", end_offset=int(start_offset)
+                progress_texts=[], final_texts=[], end_offset=int(start_offset)
             )
         message_parts: dict[str, dict[str, object]] = {}
         progress_texts: list[str] = []
-        final_text = ""
+        final_texts: list[str] = []
         end_offset = int(start_offset)
         for rowid, message_id, part_raw, message_raw in rows:
             end_offset = max(end_offset, int(rowid))
@@ -1416,7 +1419,7 @@ class LiveCodexSessionManager:
                 if str(chunk).strip()
             ]
             if final_chunks:
-                final_text = "".join(final_chunks).strip()
+                final_texts.append("".join(final_chunks).strip())
                 continue
             progress_chunks = [
                 str(chunk).strip()
@@ -1424,14 +1427,14 @@ class LiveCodexSessionManager:
                 if str(chunk).strip()
             ]
             if bucket.get("saw_stop") and progress_chunks:
-                final_text = "".join(progress_chunks).strip()
+                final_texts.append("".join(progress_chunks).strip())
                 continue
             for chunk in progress_chunks:
                 normalized = self._normalize_progress_text(chunk)
                 if normalized:
                     progress_texts.append(normalized)
         return MirrorScan(
-            progress_texts=progress_texts, final_text=final_text, end_offset=end_offset
+            progress_texts=progress_texts, final_texts=final_texts, end_offset=end_offset
         )
 
     def _claude_mirror_since(
@@ -1445,12 +1448,12 @@ class LiveCodexSessionManager:
         if size < offset:
             offset = 0
         if size == offset:
-            return MirrorScan(progress_texts=[], final_text="", end_offset=offset)
+            return MirrorScan(progress_texts=[], final_texts=[], end_offset=offset)
         with session_file.open("r", encoding="utf-8") as fh:
             fh.seek(offset)
             chunk = fh.read()
             end_offset = fh.tell()
-        final_text = ""
+        final_texts: list[str] = []
         for raw in chunk.splitlines():
             try:
                 event = json.loads(raw)
@@ -1458,9 +1461,9 @@ class LiveCodexSessionManager:
                 continue
             extracted = self._extract_claude_final_text(event)
             if extracted:
-                final_text = extracted
+                final_texts.append(extracted)
         return MirrorScan(
-            progress_texts=[], final_text=final_text, end_offset=end_offset
+            progress_texts=[], final_texts=final_texts, end_offset=end_offset
         )
 
     def _extract_claude_final_text(self, event: dict) -> str:

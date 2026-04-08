@@ -1384,7 +1384,7 @@ class BridgeDaemon:
             return
         if not self._is_active_thread(thread_id, mirror_tmux_session):
             return
-        if not scan.final_text:
+        if not scan.final_texts:
             with self._lock:
                 if not self._is_active_thread(thread_id, mirror_tmux_session):
                     return
@@ -1425,7 +1425,7 @@ class BridgeDaemon:
                 "mirrored_plan" if kind == "plan" else "mirrored_progress",
                 {"thread": self._short_thread(thread_id), "to": to_user_id},
             )
-        if not scan.final_text:
+        if not scan.final_texts:
             return
         if not self._is_active_thread(thread_id, mirror_tmux_session):
             return
@@ -1435,34 +1435,35 @@ class BridgeDaemon:
                 return
             self.state.set_mirror_offset(thread_id, scan.end_offset)
             self._save_state()
-        # Dedup: same final text within 10s window → skip
         now = time.monotonic()
-        final_key = hash(scan.final_text)
-        last = getattr(self, "_last_mirrored_final", None)
-        if last and last[0] == final_key and (now - last[1]) < 10.0:
-            return
-        self._last_mirrored_final = (final_key, now)
-        self._reply(
-            to_user_id,
-            bound_context_token,
-            scan.final_text,
-            kind="final",
-            origin="desktop-mirror",
-            thread_id=thread_id,
-            tmux_session=mirror_tmux_session,
-        )
-        if self._room_mode_enabled():
-            speaker = mirror_tmux_session or self._short_thread(thread_id)
-            append_room_message(
-                transcript_file=self.config.room_transcript_file,
-                speaker=speaker,
-                direction="outbound",
-                body=scan.final_text[:2000],
+        for final_text in scan.final_texts:
+            # Dedup: same final text within 10s window → skip
+            final_key = hash(final_text)
+            last = getattr(self, "_last_mirrored_final", None)
+            if last and last[0] == final_key and (now - last[1]) < 10.0:
+                continue
+            self._last_mirrored_final = (final_key, now)
+            self._reply(
+                to_user_id,
+                bound_context_token,
+                final_text,
+                kind="final",
+                origin="desktop-mirror",
+                thread_id=thread_id,
+                tmux_session=mirror_tmux_session,
             )
-        self._log_event(
-            "mirrored_final",
-            {"thread": self._short_thread(thread_id), "to": to_user_id},
-        )
+            if self._room_mode_enabled():
+                speaker = mirror_tmux_session or self._short_thread(thread_id)
+                append_room_message(
+                    transcript_file=self.config.room_transcript_file,
+                    speaker=speaker,
+                    direction="outbound",
+                    body=final_text[:2000],
+                )
+            self._log_event(
+                "mirrored_final",
+                {"thread": self._short_thread(thread_id), "to": to_user_id},
+            )
 
     def _queue_inactive_desktop_finals_if_any(self) -> None:
         with self._lock:
@@ -1490,13 +1491,21 @@ class BridgeDaemon:
             with self._lock:
                 if self._is_active_thread(thread_id, tmux_session):
                     continue
-            if scan.final_text:
-                sent_ok = False
+            # Always advance offset first — never re-scan the same range.
+            # On send failure, _reply already enqueues to pending outbox;
+            # the outbox retry loop handles re-delivery when binding recovers.
+            # Without this, ret=-2 failures cause a 0.2s retry storm (96k+
+            # wasted attempts) that exhausts the binding before real replies
+            # can be sent.
+            with self._lock:
+                self.state.set_mirror_offset(thread_id, scan.end_offset)
+                self._save_state()
+            for final_text in scan.final_texts:
                 if room_mode_enabled:
-                    sent_ok = self._reply(
+                    self._reply(
                         to_user_id,
                         self.state.bound_context_token,
-                        scan.final_text,
+                        final_text,
                         kind="final",
                         origin="desktop-mirror",
                         thread_id=thread_id,
@@ -1507,7 +1516,7 @@ class BridgeDaemon:
                         self.state.enqueue_pending_with_meta(
                             to_user_id=to_user_id,
                             text=self._render_reply_text(
-                                scan.final_text,
+                                final_text,
                                 kind="final",
                                 origin="desktop-mirror",
                             ),
@@ -1516,21 +1525,13 @@ class BridgeDaemon:
                             thread_id=thread_id,
                             tmux_session=tmux_session,
                         )
-                        sent_ok = True
-                if not sent_ok:
-                    continue  # Don't advance offset; retry next cycle
-            # Advance offset only after successful delivery (or no final)
-            with self._lock:
-                self.state.set_mirror_offset(thread_id, scan.end_offset)
-                self._save_state()
-            if scan.final_text:
                 if room_mode_enabled:
                     speaker = tmux_session or self._short_thread(thread_id)
                     append_room_message(
                         transcript_file=self.config.room_transcript_file,
                         speaker=speaker,
                         direction="outbound",
-                        body=scan.final_text[:2000],
+                        body=final_text[:2000],
                     )
                 self._log_event(
                     "mirrored_final"
@@ -2542,7 +2543,7 @@ class BridgeDaemon:
         )
         if scan is None:
             return
-        if scan.final_text:
+        if scan.final_texts:
             return
         with self._lock:
             current_offset = self.state.get_mirror_offset(thread_id)
