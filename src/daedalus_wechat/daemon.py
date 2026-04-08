@@ -1202,35 +1202,20 @@ class BridgeDaemon:
                     # delivered despite returning an error (ret=-2).
                     self._send_dedup_cache[chunk_hash] = now_mono
                     if self._should_wait_for_bind(exc) and not is_mirror:
-                        # Only block on bind for user-facing origins.
-                        # Desktop-mirror messages are best-effort: drop on
-                        # failure rather than clogging the outbox and blocking
-                        # all subsequent delivery.
+                        # Mirror messages never block on bind — they queue
+                        # normally and retry without clogging the outbox.
                         self.state.outbox_waiting_for_bind = True
                         self.state.outbox_waiting_for_bind_since = now_iso()
-                    if is_mirror:
-                        # Drop mirror messages on send failure — the next
-                        # mirror scan will pick up fresh content.
-                        self._log_event(
-                            "mirror_send_dropped",
-                            {
-                                "to": to_user_id,
-                                "text": chunk[:400],
-                                "dropped_chunks": len(remaining),
-                                "error": str(exc),
-                            },
+                    for pending_chunk in remaining:
+                        self.state.enqueue_pending_with_meta(
+                            to_user_id=to_user_id,
+                            text=pending_chunk,
+                            kind=kind,
+                            origin=origin,
+                            thread_id=thread_id,
+                            tmux_session=tmux_session,
+                            error=str(exc),
                         )
-                    else:
-                        for pending_chunk in remaining:
-                            self.state.enqueue_pending_with_meta(
-                                to_user_id=to_user_id,
-                                text=pending_chunk,
-                                kind=kind,
-                                origin=origin,
-                                thread_id=thread_id,
-                                tmux_session=tmux_session,
-                                error=str(exc),
-                            )
                     self._save_state()
                     self._log_event(
                         "queued_outgoing",

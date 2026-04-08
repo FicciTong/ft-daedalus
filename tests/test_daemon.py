@@ -4488,8 +4488,8 @@ class DaemonTests(unittest.TestCase):
                 ["45678", "90ABC", "DE"],
             )
 
-    def test_mirror_reply_failure_drops_not_queues(self) -> None:
-        """Desktop-mirror messages are dropped on failure, not queued."""
+    def test_mirror_reply_failure_queues_without_blocking_bind(self) -> None:
+        """Desktop-mirror messages queue on failure but don't block on bind."""
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState()
             fake_wechat = _ChunkFailWeChat(fail_on_call=2)
@@ -4510,8 +4510,13 @@ class DaemonTests(unittest.TestCase):
                 thread_id="thread-1",
             )
             self.assertEqual(fake_wechat.sent, [("user@im.wechat", None, "✅ 123")])
-            # Mirror messages are dropped, not queued.
-            self.assertEqual(state.pending_outbox, [])
+            # Mirror messages queue normally for retry.
+            self.assertEqual(
+                [item["text"] for item in state.pending_outbox],
+                ["45678", "90ABC", "DE"],
+            )
+            # But they do NOT trigger waiting_for_bind.
+            self.assertFalse(state.outbox_waiting_for_bind)
 
     def test_flush_bound_outbox_only_releases_active_tmux_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
