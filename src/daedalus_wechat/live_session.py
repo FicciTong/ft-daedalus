@@ -1453,25 +1453,31 @@ class LiveCodexSessionManager:
             fh.seek(offset)
             chunk = fh.read()
             end_offset = fh.tell()
+        progress_texts: list[str] = []
         final_texts: list[str] = []
         for raw in chunk.splitlines():
             try:
                 event = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            extracted = self._extract_claude_final_text(event)
-            if extracted:
-                final_texts.append(extracted)
+            kind, text = self._extract_claude_text(event)
+            if kind == "final":
+                final_texts.append(text)
+            elif kind == "progress":
+                progress_texts.append(text)
         return MirrorScan(
-            progress_texts=[], final_texts=final_texts, end_offset=end_offset
+            progress_texts=progress_texts,
+            final_texts=final_texts,
+            end_offset=end_offset,
         )
 
-    def _extract_claude_final_text(self, event: dict) -> str:
+    def _extract_claude_text(self, event: dict) -> tuple[str, str]:
+        """Return (kind, text) where kind is 'final', 'progress', or ''."""
         if str(event.get("type", "")).strip() != "assistant":
-            return ""
+            return ("", "")
         message = event.get("message") or {}
         if str(message.get("role", "")).strip() != "assistant":
-            return ""
+            return ("", "")
         parts: list[str] = []
         has_tool_use = False
         for item in message.get("content") or []:
@@ -1485,11 +1491,16 @@ class LiveCodexSessionManager:
             if text:
                 parts.append(text)
         if not parts:
-            return ""
+            return ("", "")
+        combined = "\n\n".join(parts).strip()
         stop_reason = str(message.get("stop_reason", "")).strip()
-        if has_tool_use and stop_reason not in {"end_turn", "stop_sequence"}:
-            return ""
-        return "\n\n".join(parts).strip()
+        if stop_reason in {"end_turn", "stop_sequence"}:
+            return ("final", combined)
+        if has_tool_use:
+            # Intermediate message with tool calls — progress text.
+            return ("progress", self._normalize_progress_text(combined))
+        # Text-only message without end_turn — progress.
+        return ("progress", self._normalize_progress_text(combined))
 
     def _extract_opencode_final_text(self, *, part: dict, message: dict) -> str:
         if str(message.get("role", "")).strip() != "assistant":

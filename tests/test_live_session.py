@@ -48,7 +48,7 @@ class LiveSessionTests(unittest.TestCase):
         }
         self.assertEqual(self.runner._extract_final_text(event), "FINAL_OK")
 
-    def test_extract_claude_final_text_reads_end_turn_text(self) -> None:
+    def test_extract_claude_text_end_turn_is_final(self) -> None:
         event = {
             "type": "assistant",
             "message": {
@@ -57,11 +57,9 @@ class LiveSessionTests(unittest.TestCase):
                 "content": [{"type": "text", "text": "OK"}],
             },
         }
-        self.assertEqual(self.runner._extract_claude_final_text(event), "OK")
+        self.assertEqual(self.runner._extract_claude_text(event), ("final", "OK"))
 
-    def test_extract_claude_final_text_accepts_text_only_turn_without_stop_reason(
-        self,
-    ) -> None:
+    def test_extract_claude_text_no_stop_text_only_is_progress(self) -> None:
         event = {
             "type": "assistant",
             "message": {
@@ -70,9 +68,11 @@ class LiveSessionTests(unittest.TestCase):
                 "content": [{"type": "text", "text": "I'm Claude."}],
             },
         }
-        self.assertEqual(self.runner._extract_claude_final_text(event), "I'm Claude.")
+        kind, text = self.runner._extract_claude_text(event)
+        self.assertEqual(kind, "progress")
+        self.assertIn("Claude", text)
 
-    def test_extract_claude_final_text_ignores_tool_use_turn_without_stop(self) -> None:
+    def test_extract_claude_text_tool_use_with_text_is_progress(self) -> None:
         event = {
             "type": "assistant",
             "message": {
@@ -84,7 +84,9 @@ class LiveSessionTests(unittest.TestCase):
                 ],
             },
         }
-        self.assertEqual(self.runner._extract_claude_final_text(event), "")
+        kind, text = self.runner._extract_claude_text(event)
+        self.assertEqual(kind, "progress")
+        self.assertIn("working", text)
 
     def test_extract_progress_text_keeps_full_commentary_block(self) -> None:
         event = {

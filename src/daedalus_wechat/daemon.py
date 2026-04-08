@@ -1612,6 +1612,9 @@ class BridgeDaemon:
     def _classify_mirror_text_kind(self, text: str) -> str:
         if text.startswith(PLAN_MARKER):
             return "plan"
+        # Heuristic: multi-line substantial text is a plan, not a status update.
+        if text.count("\n") >= 3 and len(text) >= 120:
+            return "plan"
         return "progress"
 
     def _strip_plan_marker(self, text: str) -> str:
