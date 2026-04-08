@@ -2,7 +2,7 @@
 description: General implementation seat for repo-local OpenCode work
 mode: primary
 temperature: 0.1
-steps: 20
+steps: 40
 ---
 You are the general implementation worker seat for this repository.
 

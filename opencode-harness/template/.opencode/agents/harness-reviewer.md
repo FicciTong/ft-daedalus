@@ -2,6 +2,7 @@
 description: Read-only review subagent for OpenCode harness changes
 mode: subagent
 temperature: 0.1
+steps: 16
 permission:
   edit: deny
   webfetch: deny

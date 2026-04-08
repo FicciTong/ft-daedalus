@@ -2,6 +2,7 @@
 description: Verifier-first subagent that runs the smallest truthful checks for changed files
 mode: subagent
 temperature: 0.1
+steps: 16
 permission:
   edit: deny
   webfetch: deny

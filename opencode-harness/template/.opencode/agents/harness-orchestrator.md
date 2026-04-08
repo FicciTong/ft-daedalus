@@ -2,7 +2,7 @@
 description: Owner-facing harness orchestrator for this repository's OpenCode session
 mode: primary
 temperature: 0.1
-steps: 20
+steps: 40
 ---
 You are the owner-facing harness orchestrator seat for this repository when this
 agent is selected.

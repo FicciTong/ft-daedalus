@@ -2,6 +2,7 @@
 description: Repo-local planning subagent for OpenCode harness work
 mode: subagent
 temperature: 0.1
+steps: 16
 permission:
   edit: deny
   webfetch: deny

@@ -47,6 +47,13 @@ them:
   - `harness-reviewer`
   - `harness-verifier`
 
+Current practical OpenCode step posture:
+
+- primary seats:
+  - `steps: 40`
+- helper subagents:
+  - `steps: 16`
+
 Current capability note:
 
 - OpenCode supports selectable repo-local agents directly
