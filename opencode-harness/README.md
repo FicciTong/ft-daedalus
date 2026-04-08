@@ -1,13 +1,16 @@
 ## OpenCode Harness
 
-This directory is the canonical `ft-daedalus` home for the **repo-local
-coding-agent harness runbook** and the **OpenCode adapter seed**.
+This directory is the `ft-daedalus` home for the **OpenCode adapter seed** and
+its local adoption note.
+
+Global cross-runtime harness/token governance is canonical in `ft-cosmos`
+(`AGENTS.md` + control docs), not here.
 
 Current final boundary:
 
 - `ft-daedalus` keeps:
   - manual adoption truth
-  - adapter seed files
+  - OpenCode adapter seed files
   - evidence
 - the **target repo** keeps:
   - live repo-local config

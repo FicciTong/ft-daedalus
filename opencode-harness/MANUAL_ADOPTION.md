@@ -1,7 +1,10 @@
 # Manual Coding-Agent Harness Adoption
 
-This document is the canonical runbook for adopting the `ft-daedalus`
-coding-agent harness posture into another repository.
+This document is the `ft-daedalus` runbook for adopting the narrow **OpenCode
+adapter seed** into another repository.
+
+Global cross-runtime harness/token governance is canonical in `ft-cosmos`, not
+in this repo.
 
 The current runbook records:
 
