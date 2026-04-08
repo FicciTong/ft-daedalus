@@ -4462,6 +4462,34 @@ class DaemonTests(unittest.TestCase):
         self.assertEqual(state.pending_outbox[0]["text"], "msg-5")
 
     def test_reply_failure_queues_remaining_chunks(self) -> None:
+        """Non-mirror origins queue remaining chunks on failure."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState()
+            fake_wechat = _ChunkFailWeChat(fail_on_call=2)
+            config = self._make_config(Path(tmpdir), frozenset())
+            object.__setattr__(config, "text_chunk_limit", 5)
+            daemon = _TestDaemon(
+                config=config,
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+            daemon._reply(
+                "user@im.wechat",
+                "ctx-1",
+                "1234567890ABCDE",
+                kind="final",
+                origin="bridge",
+                thread_id="thread-1",
+            )
+            self.assertEqual(fake_wechat.sent, [("user@im.wechat", "ctx-1", "✅ 123")])
+            self.assertEqual(
+                [item["text"] for item in state.pending_outbox],
+                ["45678", "90ABC", "DE"],
+            )
+
+    def test_mirror_reply_failure_drops_not_queues(self) -> None:
+        """Desktop-mirror messages are dropped on failure, not queued."""
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState()
             fake_wechat = _ChunkFailWeChat(fail_on_call=2)
@@ -4482,10 +4510,8 @@ class DaemonTests(unittest.TestCase):
                 thread_id="thread-1",
             )
             self.assertEqual(fake_wechat.sent, [("user@im.wechat", None, "✅ 123")])
-            self.assertEqual(
-                [item["text"] for item in state.pending_outbox],
-                ["45678", "90ABC", "DE"],
-            )
+            # Mirror messages are dropped, not queued.
+            self.assertEqual(state.pending_outbox, [])
 
     def test_flush_bound_outbox_only_releases_active_tmux_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

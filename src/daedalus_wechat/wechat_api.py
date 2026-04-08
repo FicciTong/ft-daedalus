@@ -133,12 +133,17 @@ class WeChatClient:
             # still valid. Retry once without the context token so delivery can continue
             # instead of forcing a manual rebind.
             if ret == -2 and context_token:
+                # Omit context_token entirely (not null) — the official SDK
+                # uses `undefined` which is stripped from JSON.  Sending
+                # `null` may be treated as an invalid token by the server.
+                retry_msg = {
+                    k: v
+                    for k, v in payload["msg"].items()
+                    if k != "context_token"
+                }
+                retry_msg["client_id"] = _generate_client_id()
                 retry_payload = {
-                    "msg": {
-                        **payload["msg"],
-                        "client_id": _generate_client_id(),
-                        "context_token": None,
-                    },
+                    "msg": retry_msg,
                     "base_info": payload["base_info"],
                 }
                 response = self._post("ilink/bot/sendmessage", retry_payload, timeout=20.0)
