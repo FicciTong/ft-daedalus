@@ -19,18 +19,8 @@ CRITICAL_TEST_MAP = {
     "scripts/tmux-worker-deliver.py": "tests/test_tmux_worker_deliver.py",
     "scripts/worker-claim-queue.py": "tests/test_worker_claim_queue.py",
 }
-HARNESS_CONTEXT_ROOTS = (
-    ".claude/",
-    ".codex/",
-    ".opencode/",
+GLOBAL_SEED_FILES = (
     "AGENTS.md",
-    "CLAUDE.md",
-    "opencode.json",
-    "docs/AGENT_TOOL_RUNTIME_NOTES.md",
-    "docs/OPENCODE_HARNESS_OVERLAY.md",
-    "docs/control/STATUS.md",
-    "docs/control/WORK.md",
-    "docs/control/DECISIONS.md",
 )
 HARNESS_TEST_TARGET = "tests/test_repo_harness.py"
 CONTROL_AUTHORITY_FILES = (
@@ -338,7 +328,10 @@ def discovered_candidates_for_paths(
     paths: list[str], seed_context: list[str], tracked: set[str]
 ) -> list[str]:
     discovered: list[str] = []
-    for rel_path in dict.fromkeys([*paths, *seed_context]):
+    discover_sources = dict.fromkeys(
+        [*paths, *(item for item in seed_context if item not in GLOBAL_SEED_FILES)]
+    )
+    for rel_path in discover_sources:
         text = _read_text(rel_path)
         if not text:
             continue
@@ -369,15 +362,15 @@ def discovered_candidates_for_paths(
 
 def related_context_payload(paths: list[str], tracked: set[str]) -> dict[str, object]:
     seed_context: list[str] = []
-    for item in HARNESS_CONTEXT_ROOTS:
+    for item in GLOBAL_SEED_FILES:
         if item in tracked or any(path.startswith(item) for path in tracked):
-            if item.endswith("/"):
-                continue
             seed_context.append(item)
     for rel_path in paths:
         if _path_available(rel_path, tracked):
             seed_context.append(rel_path)
         seed_context.extend(candidate_tests_for_path(rel_path, tracked))
+        if rel_path.startswith("docs/control/work/"):
+            seed_context.append("docs/control/WORK.md")
         if rel_path.startswith(".opencode/"):
             seed_context.extend(
                 [
@@ -385,7 +378,6 @@ def related_context_payload(paths: list[str], tracked: set[str]) -> dict[str, ob
                     ".opencode/package.json",
                     ".opencode/agents/harness-orchestrator.md",
                     "docs/OPENCODE_HARNESS_OVERLAY.md",
-                    "docs/AGENT_TOOL_RUNTIME_NOTES.md",
                     "scripts/opencode-local.sh",
                 ]
             )
@@ -394,7 +386,6 @@ def related_context_payload(paths: list[str], tracked: set[str]) -> dict[str, ob
                 [
                     "CLAUDE.md",
                     ".claude/agents/harness-worker.md",
-                    "docs/AGENT_TOOL_RUNTIME_NOTES.md",
                 ]
             )
         if rel_path.startswith(".codex/"):
@@ -402,7 +393,6 @@ def related_context_payload(paths: list[str], tracked: set[str]) -> dict[str, ob
                 [
                     ".codex/config.toml",
                     ".codex/skills/repo-harness/SKILL.md",
-                    "docs/AGENT_TOOL_RUNTIME_NOTES.md",
                 ]
             )
     seed_context_files = _available_paths(seed_context, tracked)
@@ -416,7 +406,7 @@ def related_context_payload(paths: list[str], tracked: set[str]) -> dict[str, ob
         for item in discovered_candidates_for_paths(paths, seed_context_files, tracked)
         if item not in authority_candidates
     ]
-    context_files = sorted(dict.fromkeys([*seed_context_files, *authority_candidates]))
+    context_files = seed_context_files
     return {
         "paths": paths,
         "context_files": context_files,

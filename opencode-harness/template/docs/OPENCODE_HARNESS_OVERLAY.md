@@ -5,6 +5,9 @@ Repo-local OpenCode harness overlay for this repository.
 This overlay exists to improve OpenCode behavior **without** patching OpenCode
 upstream.
 
+`docs/AGENT_TOOL_RUNTIME_NOTES.md` remains an on-demand reference note, not a
+default startup payload.
+
 This file is meant to be adopted into a target repo by manual review and manual
 patching. `ft-daedalus` keeps the canonical source, but the target repo owns
 its final merged copy.
@@ -59,6 +62,8 @@ It adds:
 - the user should not need to type harness commands for normal use
 - the default agent should automatically gather repo context and run the
   smallest truthful verifier path when needed
+- routine answers should stay concise by default; expand only when the owner
+  explicitly asks for depth
 - multi-step work should maintain a live todo list:
   - `harness-orchestrator` owns the todo list by default
   - `harness-worker` should also keep todo current when it is opened as a
@@ -67,6 +72,7 @@ It adds:
   - if seed reading reveals a new authority doc, work plan, import neighbor,
     runtime dependency, or cross-repo runbook, rerun it with that path before
     continuing
+  - do not treat authority candidates as mandatory reads for every bounded task
 - `harness-orchestrator` is the owner-facing control seat:
   - it defaults to completing the bounded task locally
   - it may implement directly when no separate worker is active
@@ -86,6 +92,9 @@ It adds:
 - do not jump to repo-wide verification if `verify_changed` returns a smaller
   truthful DAG
 - treat verifier output as the fact source, not model explanation
+- token-budget governance is continuous:
+  - periodically re-audit startup payload, context breadth, watcher noise, and
+    compaction summaries
 
 ## Boundary
 

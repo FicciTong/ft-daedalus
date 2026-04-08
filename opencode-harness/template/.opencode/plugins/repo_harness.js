@@ -68,9 +68,30 @@ function looksLikeVerifierCommand(command) {
 function summarizeOutput(text) {
   return String(text || "")
     .split("\n")
-    .slice(0, 12)
+    .slice(0, 4)
     .join("\n")
     .trim();
+}
+
+function summarizeStateForCompaction(state) {
+  const lines = [];
+  if (state.changed_files.length) {
+    const visibleFiles = state.changed_files.slice(-12);
+    lines.push(
+      `changed_files(${visibleFiles.length}/${state.changed_files.length} shown): ${visibleFiles.join(", ")}`,
+    );
+  }
+  if (state.verifier_runs.length) {
+    lines.push("recent_verifiers:");
+    for (const run of state.verifier_runs.slice(-4)) {
+      const summary = String(run.summary || "").replace(/\s+/g, " ").trim();
+      lines.push(`- ${run.command}`);
+      if (summary) {
+        lines.push(`  ${summary.slice(0, 180)}`);
+      }
+    }
+  }
+  return lines;
 }
 
 export const RepoHarnessPlugin = async ({ worktree }) => {
@@ -88,7 +109,7 @@ export const RepoHarnessPlugin = async ({ worktree }) => {
         state.changed_files = uniqueStrings([
           ...state.changed_files,
           ...collectFileArgs(input.args),
-        ]).slice(-64);
+        ]).slice(-24);
       }
 
       if (input.tool === "bash") {
@@ -101,7 +122,7 @@ export const RepoHarnessPlugin = async ({ worktree }) => {
               title: output.title || "",
               summary: summarizeOutput(output.output),
             },
-          ].slice(-8);
+          ].slice(-4);
         }
       }
 
@@ -112,17 +133,11 @@ export const RepoHarnessPlugin = async ({ worktree }) => {
       if (!state.changed_files.length && !state.verifier_runs.length) {
         return;
       }
+      const stateSummary = summarizeStateForCompaction(state);
       output.context.push(
         [
           "Repo-local harness state:",
-          JSON.stringify(
-            {
-              changed_files: state.changed_files,
-              verifier_runs: state.verifier_runs,
-            },
-            null,
-            2,
-          ),
+          ...stateSummary,
           "Keep compaction output explicit about goal, accepted plan, changed files, verifier status, and next step.",
         ].join("\n"),
       );

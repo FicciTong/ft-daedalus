@@ -37,6 +37,7 @@
   "watcher": {
     "ignore": [
       "**/.git/**",
+      "**/.opencode/.state/**",
       "**/.venv/**",
       "**/node_modules/**",
       "**/__pycache__/**",
@@ -49,6 +50,8 @@
       "**/dist/**",
       "**/build/**",
       "**/coverage/**",
+      "**/ops/**",
+      "**/var/reports/organism/_state/**",
       "**/*.pyc"
     ]
   },

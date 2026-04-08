@@ -63,6 +63,16 @@ Current capability note:
   - default todo discipline for multi-step work
   - repo-local LSP diagnostics
   - an opt-in repo launcher for the experimental direct `lsp` tool
+  - tighter token posture:
+    - narrow first-hop context seed
+    - concise compaction summaries
+    - rolling-state watcher ignores
+
+Token-budget governance is continuous, not one-shot:
+
+- keep startup payloads thin
+- keep helper output text-first unless structured fields are truly needed
+- keep watcher/compaction noise under review
 
 ## What Lives Here
 
