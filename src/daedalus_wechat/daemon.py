@@ -61,7 +61,9 @@ def _normalize_voice(text: str) -> str:
 # Voice transcription corrections: WeChat STT commonly garbles these.
 # Maps misheard fragments → correct fragment (applied before normalization).
 _VOICE_CORRECTIONS: dict[str, str] = {
-    "cloud": "claude", "克劳德": "claude", "克洛德": "claude",
+    "eclaudee": "claude", "eclaude": "claude", "claudee": "claude",
+    "克cloud": "claude", "cloud": "claude",
+    "克劳德": "claude", "克洛德": "claude", "克劳": "claude",
     "claode": "claude", "claud": "claude",
     "killing": "kimi", "kimmy": "kimi", "keemy": "kimi",
     "奇米": "kimi", "可米": "kimi",
@@ -1491,14 +1493,20 @@ class BridgeDaemon:
             with self._lock:
                 if self._is_active_thread(thread_id, tmux_session):
                     continue
-            # Always advance offset first — never re-scan the same range.
-            # On send failure, _reply already enqueues to pending outbox;
-            # the outbox retry loop handles re-delivery when binding recovers.
-            # Without this, ret=-2 failures cause a 0.2s retry storm (96k+
-            # wasted attempts) that exhausts the binding before real replies
-            # can be sent.
+            # Advance offset before send — prevents retry storms on
+            # ret=-2 failures.  For scans without finals, keep the tail
+            # row hot so OpenCode in-place phase updates are re-scanned
+            # (same logic as the active mirror path).
             with self._lock:
-                self.state.set_mirror_offset(thread_id, scan.end_offset)
+                if scan.final_texts:
+                    next_offset = scan.end_offset
+                else:
+                    next_offset = self._next_mirror_offset_without_final(
+                        thread_id=thread_id,
+                        start_offset=start_offset,
+                        scan_end_offset=scan.end_offset,
+                    )
+                self.state.set_mirror_offset(thread_id, next_offset)
                 self._save_state()
             for final_text in scan.final_texts:
                 if room_mode_enabled:
