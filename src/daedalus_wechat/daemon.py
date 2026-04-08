@@ -146,6 +146,7 @@ class BridgeDaemon:
         self._last_outbox_watchdog_signature = ""
         self._last_external_state_mtime_ns = 0
         self._send_dedup_cache: dict[int, float] = {}  # hash(text) -> monotonic time
+        self._room_final_dedup: dict[int, float] = {}  # hash((thread,text)) -> mono time
         self.config.state_dir.mkdir(parents=True, exist_ok=True)
         if self.state.progress_updates_enabled is None:
             self.state.progress_updates_enabled = self.config.progress_updates_default
@@ -1358,8 +1359,11 @@ class BridgeDaemon:
         while True:
             time.sleep(0.2)
             try:
-                self._mirror_desktop_final_if_any()
-                self._queue_inactive_desktop_finals_if_any()
+                if self._room_mode_enabled():
+                    self._mirror_room_all_members()
+                else:
+                    self._mirror_desktop_final_if_any()
+                    self._queue_inactive_desktop_finals_if_any()
             except Exception as exc:  # noqa: BLE001
                 self._log_event("mirror_error", {"error": str(exc)})
 
@@ -1472,6 +1476,84 @@ class BridgeDaemon:
                 "mirrored_final",
                 {"thread": self._short_thread(thread_id), "to": to_user_id},
             )
+
+    def _mirror_room_all_members(self) -> None:
+        """Group mode: mirror progress + plan + final for ALL live sessions."""
+        with self._lock:
+            to_user_id = self.state.bound_user_id
+            bound_context_token = self.state.bound_context_token
+        if not to_user_id:
+            return
+        for status in self.runner.list_live_runtime_statuses():
+            thread_id = str(status.thread_id or "").strip()
+            tmux_session = str(status.tmux_session or "").strip()
+            if not thread_id or not tmux_session:
+                continue
+            with self._lock:
+                start_offset = self.state.get_mirror_offset(thread_id)
+            scan = self.runner.latest_mirror_since(
+                thread_id=thread_id, start_offset=start_offset,
+            )
+            if scan is None or scan.end_offset == start_offset:
+                continue
+            # Progress / plan
+            for progress in scan.progress_texts:
+                if not progress:
+                    continue
+                kind = self._classify_mirror_text_kind(progress)
+                body = self._strip_plan_marker(progress)
+                if kind == "progress":
+                    if not self._progress_updates_enabled():
+                        continue
+                    with self._lock:
+                        if body == self.state.get_last_progress_summary(thread_id):
+                            continue
+                        self.state.set_last_progress_summary(thread_id, body)
+                        self._save_state()
+                self._reply(
+                    to_user_id, bound_context_token, body,
+                    kind=kind, origin="desktop-mirror",
+                    thread_id=thread_id, tmux_session=tmux_session,
+                )
+            # Advance offset
+            with self._lock:
+                if scan.final_texts:
+                    self.state.set_mirror_offset(thread_id, scan.end_offset)
+                else:
+                    self.state.set_mirror_offset(
+                        thread_id,
+                        self._next_mirror_offset_without_final(
+                            thread_id=thread_id,
+                            start_offset=start_offset,
+                            scan_end_offset=scan.end_offset,
+                        ),
+                    )
+                self._save_state()
+            # Finals
+            now = time.monotonic()
+            for final_text in scan.final_texts:
+                final_key = hash((thread_id, final_text))
+                last = self._room_final_dedup.get(final_key)
+                if last is not None and (now - last) < 10.0:
+                    continue
+                self._room_final_dedup[final_key] = now
+                self._reply(
+                    to_user_id, bound_context_token, final_text,
+                    kind="final", origin="desktop-mirror",
+                    thread_id=thread_id, tmux_session=tmux_session,
+                )
+                speaker = tmux_session or self._short_thread(thread_id)
+                append_room_message(
+                    transcript_file=self.config.room_transcript_file,
+                    speaker=speaker, direction="outbound",
+                    body=final_text[:2000],
+                )
+            # Prune old dedup entries
+            if len(self._room_final_dedup) > 200:
+                cutoff = now - 30.0
+                self._room_final_dedup = {
+                    k: v for k, v in self._room_final_dedup.items() if v > cutoff
+                }
 
     def _queue_inactive_desktop_finals_if_any(self) -> None:
         with self._lock:
