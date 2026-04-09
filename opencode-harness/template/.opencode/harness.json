@@ -1,16 +1,15 @@
 {
   "overlay_id": "ft-daedalus-opencode-harness",
-  "overlay_version": "2026-04-08",
+  "overlay_version": "2026-04-09",
   "managed_paths": [
     ".opencode/.gitignore",
     ".opencode/harness.json",
     ".opencode/package.json",
     ".opencode/package-lock.json",
-    ".opencode/agents/harness-orchestrator.md",
-    ".opencode/agents/harness-worker.md",
-    ".opencode/agents/harness-planner.md",
-    ".opencode/agents/harness-reviewer.md",
-    ".opencode/agents/harness-verifier.md",
+    ".opencode/agents/main.md",
+    ".opencode/agents/planner.md",
+    ".opencode/agents/reviewer.md",
+    ".opencode/agents/verifier.md",
     ".opencode/commands/h-plan.md",
     ".opencode/commands/h-repair.md",
     ".opencode/commands/h-review.md",
@@ -35,20 +34,13 @@
       "lsp": "allow"
     },
     "agent": {
-      "harness-orchestrator": {
+      "main": {
         "permission": {
           "task": {
             "*": "deny",
-            "harness-planner": "allow",
-            "harness-reviewer": "allow",
-            "harness-verifier": "allow"
-          }
-        }
-      },
-      "harness-worker": {
-        "permission": {
-          "task": {
-            "*": "deny"
+            "planner": "allow",
+            "reviewer": "allow",
+            "verifier": "allow"
           }
         }
       }

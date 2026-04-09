@@ -1,6 +1,6 @@
 ---
 description: Run the repo-local verifier DAG for current changes
-agent: harness-verifier
+agent: verifier
 subtask: true
 ---
 Verify the current changes for `$ARGUMENTS`.

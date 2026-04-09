@@ -1,6 +1,6 @@
 ---
 description: Review the current changes with repo-local context helpers
-agent: harness-reviewer
+agent: reviewer
 subtask: true
 ---
 Review the current changes for `$ARGUMENTS`.

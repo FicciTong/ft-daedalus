@@ -42,11 +42,10 @@ needed:
 - `opencode-harness/template/.opencode/harness.json`
 - `opencode-harness/template/.opencode/package.json`
 - `opencode-harness/template/.opencode/package-lock.json`
-- `opencode-harness/template/.opencode/agents/harness-orchestrator.md`
-- `opencode-harness/template/.opencode/agents/harness-worker.md`
-- `opencode-harness/template/.opencode/agents/harness-planner.md`
-- `opencode-harness/template/.opencode/agents/harness-reviewer.md`
-- `opencode-harness/template/.opencode/agents/harness-verifier.md`
+- `opencode-harness/template/.opencode/agents/main.md`
+- `opencode-harness/template/.opencode/agents/planner.md`
+- `opencode-harness/template/.opencode/agents/reviewer.md`
+- `opencode-harness/template/.opencode/agents/verifier.md`
 - `opencode-harness/template/.opencode/commands/h-plan.md`
 - `opencode-harness/template/.opencode/commands/h-review.md`
 - `opencode-harness/template/.opencode/commands/h-verify.md`
@@ -83,11 +82,10 @@ it actually uses.
 - `.opencode/harness.json`
 - `.opencode/package.json`
 - `.opencode/package-lock.json`
-- `.opencode/agents/harness-orchestrator.md`
-- `.opencode/agents/harness-worker.md`
-- `.opencode/agents/harness-planner.md`
-- `.opencode/agents/harness-reviewer.md`
-- `.opencode/agents/harness-verifier.md`
+- `.opencode/agents/main.md`
+- `.opencode/agents/planner.md`
+- `.opencode/agents/reviewer.md`
+- `.opencode/agents/verifier.md`
 - `.opencode/commands/h-plan.md`
 - `.opencode/commands/h-review.md`
 - `.opencode/commands/h-verify.md`
@@ -107,11 +105,10 @@ it actually uses.
 
 - `CLAUDE.md`
 - `.claude/settings.json`
-- `.claude/agents/harness-orchestrator.md`
-- `.claude/agents/harness-worker.md`
-- `.claude/agents/harness-planner.md`
-- `.claude/agents/harness-reviewer.md`
-- `.claude/agents/harness-verifier.md`
+- `.claude/agents/main.md`
+- `.claude/agents/planner.md`
+- `.claude/agents/reviewer.md`
+- `.claude/agents/verifier.md`
 
 ### Codex
 
@@ -139,12 +136,11 @@ Add or merge only the harness-required pieces:
 - ensure `permission` allows:
   - `todowrite`
   - `lsp`
-- ensure `harness-orchestrator` task permissions allow only:
-  - `harness-planner`
-  - `harness-reviewer`
-  - `harness-verifier`
+- ensure `main` task permissions allow only:
+  - `planner`
+  - `reviewer`
+  - `verifier`
   while denying `*` by default
-- ensure `harness-worker` task permission denies `*`
 - ensure repo-local `lsp` points at `.opencode/node_modules/.bin/` language
   servers
 - ensure watcher ignore includes:
@@ -208,12 +204,11 @@ Keep it Claude-specific and thin:
 
 Keep seat semantics aligned with OpenCode when Claude supports them:
 
-- `harness-orchestrator`
-- `harness-worker`
+- `main`
 - helper modes:
-  - `harness-planner`
-  - `harness-reviewer`
-  - `harness-verifier`
+  - `planner`
+  - `reviewer`
+  - `verifier`
 
 ### `.codex/*`
 
@@ -289,8 +284,11 @@ repo root.
 - start Claude from the target repo root
 - use the repo-local `CLAUDE.md`
 - when needed, explicitly choose:
-  - `harness-orchestrator`
-  - `harness-worker`
+  - `main`
+  - helper modes only when the slice really needs them:
+    - `planner`
+    - `reviewer`
+    - `verifier`
 
 ### Codex
 

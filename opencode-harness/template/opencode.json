@@ -4,26 +4,19 @@
   "instructions": [
     "docs/OPENCODE_HARNESS_OVERLAY.md"
   ],
-  "default_agent": "harness-orchestrator",
+  "default_agent": "main",
   "permission": {
     "todowrite": "allow",
     "lsp": "allow"
   },
   "agent": {
-    "harness-orchestrator": {
+    "main": {
       "permission": {
         "task": {
           "*": "deny",
-          "harness-planner": "allow",
-          "harness-reviewer": "allow",
-          "harness-verifier": "allow"
-        }
-      }
-    },
-    "harness-worker": {
-      "permission": {
-        "task": {
-          "*": "deny"
+          "planner": "allow",
+          "reviewer": "allow",
+          "verifier": "allow"
         }
       }
     }

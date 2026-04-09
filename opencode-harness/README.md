@@ -43,12 +43,11 @@ The current organism posture is:
 Seat semantics should stay aligned across runtimes when the runtime supports
 them:
 
-- `harness-orchestrator`
-- `harness-worker`
+- `main`
 - helper modes:
-  - `harness-planner`
-  - `harness-reviewer`
-  - `harness-verifier`
+  - `planner`
+  - `reviewer`
+  - `verifier`
 
 Current practical OpenCode step posture:
 

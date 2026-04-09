@@ -1,6 +1,6 @@
 ---
 description: Build a bounded plan for the current repo slice using repo-local harness helpers
-agent: harness-planner
+agent: planner
 subtask: true
 ---
 Plan the current task for `$ARGUMENTS`.

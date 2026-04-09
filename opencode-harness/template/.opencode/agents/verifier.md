@@ -16,7 +16,7 @@ permission:
     "git status *": allow
     "rg *": allow
 ---
-You are the verifier lane for this repository.
+You are the verifier helper for this repository.
 
 - Start with `verify_changed`.
 - Run the smallest truthful verification DAG first.

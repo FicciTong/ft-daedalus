@@ -36,9 +36,7 @@ HARNESS_AUTHORITY_FILES = (
     "CLAUDE.md",
     "opencode.json",
     "scripts/repo_harness.py",
-    "docs/AGENT_TOOL_RUNTIME_NOTES.md",
     "docs/OPENCODE_HARNESS_OVERLAY.md",
-    "docs/MULTI_AGENT_ORCHESTRATION_POLICY.md",
     *CONTROL_AUTHORITY_FILES,
 )
 DISCOVERABLE_TEXT_SUFFIXES = {
@@ -95,9 +93,7 @@ def _is_harness_related(rel_path: str) -> bool:
             "scripts/repo_harness.py",
             "scripts/opencode_harness.py",
             "scripts/opencode-local.sh",
-            "docs/AGENT_TOOL_RUNTIME_NOTES.md",
             "docs/OPENCODE_HARNESS_OVERLAY.md",
-            "docs/MULTI_AGENT_ORCHESTRATION_POLICY.md",
         }
     )
 
@@ -107,7 +103,7 @@ def _allow_generic_discovery(source_rel_path: str, candidate: str) -> bool:
         return (
             candidate.startswith("docs/control/")
             or candidate.startswith("docs/consultants/")
-            or candidate in {"docs/REVIEW_LOG.md", "docs/MULTI_AGENT_ORCHESTRATION_POLICY.md"}
+            or candidate == "docs/REVIEW_LOG.md"
             or candidate.startswith("ft-daedalus/opencode-harness/")
         )
     if _is_harness_related(source_rel_path):
@@ -115,7 +111,7 @@ def _allow_generic_discovery(source_rel_path: str, candidate: str) -> bool:
             _is_harness_related(candidate)
             or candidate.startswith("docs/control/")
             or candidate.startswith("docs/consultants/")
-            or candidate in {"docs/REVIEW_LOG.md", "docs/MULTI_AGENT_ORCHESTRATION_POLICY.md"}
+            or candidate == "docs/REVIEW_LOG.md"
             or candidate.startswith("ft-daedalus/opencode-harness/")
         )
     parent = Path(source_rel_path).parent.as_posix()
@@ -376,7 +372,7 @@ def related_context_payload(paths: list[str], tracked: set[str]) -> dict[str, ob
                 [
                     "opencode.json",
                     ".opencode/package.json",
-                    ".opencode/agents/harness-orchestrator.md",
+                    ".opencode/agents/main.md",
                     "docs/OPENCODE_HARNESS_OVERLAY.md",
                     "scripts/opencode-local.sh",
                 ]
@@ -385,7 +381,7 @@ def related_context_payload(paths: list[str], tracked: set[str]) -> dict[str, ob
             seed_context.extend(
                 [
                     "CLAUDE.md",
-                    ".claude/agents/harness-worker.md",
+                    ".claude/agents/main.md",
                 ]
             )
         if rel_path.startswith(".codex/"):

@@ -32,13 +32,11 @@ take over common repo-local names such as `planner` or `/verify`.
 It adds:
 
 - one default automatic harness seat:
-  - `harness-orchestrator`
-- one additional selectable implementation seat:
-  - `harness-worker`
+  - `main`
 - repo-local subagents:
-  - `harness-planner`
-  - `harness-reviewer`
-  - `harness-verifier`
+  - `planner`
+  - `reviewer`
+  - `verifier`
 - repo-local commands:
   - `/h-plan`
   - `/h-review`
@@ -65,21 +63,19 @@ It adds:
 - routine answers should stay concise by default; expand only when the owner
   explicitly asks for depth
 - multi-step work should maintain a live todo list:
-  - `harness-orchestrator` owns the todo list by default
-  - `harness-worker` should also keep todo current when it is opened as a
-    primary implementation seat
+  - `main` owns the todo list by default
 - `related_context` is a first-hop seed, not a hard boundary:
   - if seed reading reveals a new authority doc, work plan, import neighbor,
     runtime dependency, or cross-repo runbook, rerun it with that path before
     continuing
   - do not treat authority candidates as mandatory reads for every bounded task
-- `harness-orchestrator` is the owner-facing control seat:
+- `main` is the single all-purpose seat:
   - it defaults to completing the bounded task locally
-  - it may implement directly when no separate worker is active
+  - it is expected to implement directly
   - it may use local helper subagents for plan/review/verify assists
-  - it may keep orchestration and use worker seats only when the owner
-    explicitly asks for extra delegated execution
-- `harness-worker` is the implementation seat itself
+  - if the owner explicitly asks for parallel execution, use another `main`
+    session for one large bounded lane rather than introducing a dedicated
+    second persona
 - repo-local LSP posture:
   - `opencode.json` points OpenCode at repo-local `pyright` and
     `typescript-language-server` binaries under `.opencode/node_modules/`
