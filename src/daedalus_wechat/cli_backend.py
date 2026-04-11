@@ -17,7 +17,7 @@ OPENCODE_HINT_RE = re.compile(
 CLAUDE_HINT_RE = re.compile(r"\bClaude Code\b|\bclaude-(opus|sonnet)\b", re.IGNORECASE)
 
 # /proc/*/comm values that identify each backend.
-_COMM_TO_BACKEND: dict[str, "CliBackend"] = {}  # populated after CliBackend defined
+_COMM_TO_BACKEND: dict[str, CliBackend] = {}  # populated after CliBackend defined
 
 
 class CliBackend(Enum):
@@ -92,6 +92,9 @@ def detect_backend(
         return CliBackend.CLAUDE
 
     if cmd == "node":
+        child_backend = _detect_backend_from_proc(pane_pid)
+        if child_backend != CliBackend.UNKNOWN:
+            return child_backend
         if screen_text and OPENCODE_HINT_RE.search(screen_text):
             return CliBackend.OPENCODE
         if screen_text and CODEX_STATUS_RE.search(screen_text):
@@ -104,11 +107,6 @@ def detect_backend(
             return CliBackend.CODEX
         if "claude" in start_cmd:
             return CliBackend.CLAUDE
-        # Fallback: inspect child process tree via /proc (robust after
-        # tmux-resurrect where start_command and screen text may be lost).
-        child_backend = _detect_backend_from_proc(pane_pid)
-        if child_backend != CliBackend.UNKNOWN:
-            return child_backend
         return CliBackend.UNKNOWN
 
     if not cmd or cmd in {"bash", "zsh", "sh", "fish"}:
@@ -124,6 +122,9 @@ def detect_backend(
             return CliBackend.CODEX
         if "claude" in start_cmd:
             return CliBackend.CLAUDE
+        child_backend = _detect_backend_from_proc(pane_pid)
+        if child_backend != CliBackend.UNKNOWN:
+            return child_backend
         return CliBackend.UNKNOWN
 
     return CliBackend.UNKNOWN

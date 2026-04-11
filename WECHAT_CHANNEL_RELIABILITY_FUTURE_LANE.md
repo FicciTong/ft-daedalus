@@ -4,10 +4,16 @@ Canonical record of the next bounded improvement lane for `daedalus-wechat`.
 
 This is a **future lane**, not the current implementation lane.
 
-Update as of `2026-04-04`:
+Update as of `2026-04-12`:
 
 - the bridge now has a first bounded runtime-adapter cut for both `Codex` and
   `OpenCode`
+- room-mode prompt routing now claims one pending media batch per chat instead
+  of guessing from the global recent-image tail
+- room-mode desktop-mirror replies now respect a temporary target focus so an
+  off-target final does not jump ahead of the agent that was just tagged
+- backend/runtime detection now prefers live child/backend evidence for
+  `Codex` / `OpenCode` under tmux instead of weaker shell-screen heuristics
 - owner-facing command shape stays the same
 - this document still tracks the **next** reliability/drain semantics lane,
   not the already-landed runtime-adapter cut
@@ -35,6 +41,8 @@ As of `2026-04-04`, the current `daedalus-wechat` bridge already has:
   - `ret=-2` retry without `context_token`
   - pending flush on the next inbound message
   - final fallback from visible live `tmux` text
+  - pending media-batch claim per chat in room mode
+  - temporary room-focus deferral for off-target mirrored finals
 
 This means the current bridge is already beyond a toy transport script.
 

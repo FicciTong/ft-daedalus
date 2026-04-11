@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 import time
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,7 +15,7 @@ from daedalus_wechat.live_session import (
     LiveRuntimeStatus,
     TmuxRuntimeInventoryItem,
 )
-from daedalus_wechat.state import BridgeState, SessionRecord
+from daedalus_wechat.state import BridgeState, PendingMediaBatch, SessionRecord
 
 
 class _FakeWeChat:
@@ -801,8 +801,50 @@ class DaemonTests(unittest.TestCase):
             )
             text = daemon._handle_command("/sessions")
             self.assertIn("sessions=2", text)
-            self.assertIn("1 codex-main | 019cdfe5 | codex live", text)
+            self.assertIn("1 codex | 019cdfe5 | codex live", text)
             self.assertIn("*2 123 | 11111111 | 123 live", text)
+
+    def test_members_text_prefers_tmux_name_over_stale_label(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "ses_gpt"
+            state = BridgeState(
+                active_session_id=thread_id,
+                active_tmux_session="gpt",
+                room_mode_enabled=True,
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="codex",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-10T00:00:00+00:00",
+                        updated_at="2026-04-10T00:00:00+00:00",
+                        tmux_session="gpt",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="gpt",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                )
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+
+            text = daemon._handle_command("/members")
+
+            self.assertIn("*1 gpt | ses_gpt", text)
+            self.assertNotIn("codex | ses_gpt", text)
 
     def test_switch_can_target_live_tmux_session_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -983,6 +1025,100 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("已切换到 group 模式", text)
             self.assertIn("mode=group", text)
 
+    def test_switch_group_fast_forwards_live_cursors_and_drops_mirror_backlog(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_gpt = "ses_gpt"
+            thread_claude = "ses_claude"
+            state = BridgeState(
+                active_session_id=thread_gpt,
+                active_tmux_session="gpt",
+                mirror_offsets={thread_gpt: 10, thread_claude: 20},
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "[claude] old final",
+                        "created_at": "2026-04-10T00:00:00+00:00",
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                        "thread_id": thread_claude,
+                        "tmux_session": "claude",
+                        "attempt_count": 1,
+                        "last_attempt_at": "2026-04-10T00:00:00+00:00",
+                        "last_error": "",
+                    },
+                    {
+                        "to": "user@im.wechat",
+                        "text": "keep me",
+                        "created_at": "2026-04-10T00:00:00+00:00",
+                        "kind": "message",
+                        "origin": "bridge",
+                        "thread_id": "",
+                        "tmux_session": "",
+                        "attempt_count": 1,
+                        "last_attempt_at": "2026-04-10T00:00:00+00:00",
+                        "last_error": "",
+                    },
+                ],
+                sessions={
+                    thread_gpt: SessionRecord(
+                        thread_id=thread_gpt,
+                        label="gpt",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="gpt",
+                    ),
+                    thread_claude: SessionRecord(
+                        thread_id=thread_claude,
+                        label="claude",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="claude",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="gpt",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_gpt,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="claude",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_claude,
+                    pane_cwd="/tmp",
+                    backend="claude-code",
+                ),
+            ]
+            runner.rollout_sizes[thread_gpt] = 120
+            runner.rollout_sizes[thread_claude] = 220
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+
+            text = daemon._handle_command("/switch group")
+
+            self.assertTrue(state.room_mode_enabled)
+            self.assertEqual(state.get_mirror_offset(thread_gpt), 120)
+            self.assertEqual(state.get_mirror_offset(thread_claude), 220)
+            self.assertEqual(len(state.pending_outbox), 1)
+            self.assertEqual(state.pending_outbox[0]["origin"], "bridge")
+            self.assertIn("mode=group", text)
+
     def test_group_targeted_message_routes_without_replacing_active(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_active = "ses_gpt"
@@ -1058,9 +1194,14 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("say hi", runner.submitted[0][1])
             self.assertEqual(state.active_session_id, thread_active)
             self.assertEqual(state.active_tmux_session, "gpt")
+            self.assertEqual(state.room_focus_tmux_session, "kimi1")
             self.assertEqual(
                 fake_wechat.sent[-1],
-                ("user@im.wechat", "ctx-1", "⚙️ 已注入 @kimi1 terminal。"),
+                (
+                    "user@im.wechat",
+                    "ctx-1",
+                    "⚙️ 已注入 @kimi1 terminal，等待 [kimi1] 首条回复。",
+                ),
             )
 
     def test_room_mode_tags_desktop_final_with_speaker(self) -> None:
@@ -1102,6 +1243,190 @@ class DaemonTests(unittest.TestCase):
                 fake_wechat.sent[-1],
                 ("user@im.wechat", None, "[claude] ✅ HELLO"),
             )
+
+    def test_room_mode_defers_non_focused_final_until_target_replies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_gpt = "ses_gpt"
+            thread_codex = "ses_codex"
+            state = BridgeState(
+                room_mode_enabled=True,
+                bound_user_id="user@im.wechat",
+                sessions={
+                    thread_gpt: SessionRecord(
+                        thread_id=thread_gpt,
+                        label="gpt",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="gpt",
+                    ),
+                    thread_codex: SessionRecord(
+                        thread_id=thread_codex,
+                        label="codex",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="codex",
+                    ),
+                },
+            )
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+
+            daemon._set_room_focus(
+                thread_id=thread_gpt,
+                tmux_session="gpt",
+                trigger="test",
+            )
+            daemon._reply(
+                "user@im.wechat",
+                None,
+                "OTHER",
+                kind="final",
+                origin="desktop-mirror",
+                thread_id=thread_codex,
+                tmux_session="codex",
+            )
+
+            self.assertEqual(fake_wechat.sent, [])
+            self.assertEqual(len(state.pending_outbox), 1)
+            self.assertEqual(state.pending_outbox[0]["text"], "[codex] ✅ OTHER")
+
+            daemon._reply(
+                "user@im.wechat",
+                None,
+                "TARGET",
+                kind="final",
+                origin="desktop-mirror",
+                thread_id=thread_gpt,
+                tmux_session="gpt",
+            )
+
+            self.assertEqual(
+                fake_wechat.sent,
+                [
+                    ("user@im.wechat", None, "[gpt] ✅ TARGET"),
+                    ("user@im.wechat", None, "[codex] ✅ OTHER"),
+                ],
+            )
+            self.assertEqual(state.room_focus_tmux_session, None)
+
+    def test_room_mode_focus_timeout_does_not_hold_other_finals_forever(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_gpt = "ses_gpt"
+            thread_codex = "ses_codex"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_gpt: SessionRecord(
+                        thread_id=thread_gpt,
+                        label="gpt",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="gpt",
+                    ),
+                    thread_codex: SessionRecord(
+                        thread_id=thread_codex,
+                        label="codex",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="codex",
+                    ),
+                },
+            )
+            state.set_room_focus(
+                thread_id=thread_gpt,
+                tmux_session="gpt",
+                started_at=(datetime.now(UTC) - timedelta(seconds=45)).isoformat(),
+            )
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+
+            daemon._reply(
+                "user@im.wechat",
+                None,
+                "OTHER",
+                kind="final",
+                origin="desktop-mirror",
+                thread_id=thread_codex,
+                tmux_session="codex",
+            )
+
+            self.assertEqual(
+                fake_wechat.sent,
+                [("user@im.wechat", None, "[codex] ✅ OTHER")],
+            )
+            self.assertEqual(state.room_focus_tmux_session, None)
+
+    def test_room_mode_new_thread_adopts_tail_without_replaying_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "claude:abc"
+            state = BridgeState(
+                room_mode_enabled=True,
+                bound_user_id="user@im.wechat",
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="claude",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="claude",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="claude",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="claude-code",
+                )
+            ]
+            runner.rollout_sizes[thread_id] = 150
+            runner.finals[(thread_id, 0)] = ("OLD", 150)
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+
+            daemon._mirror_room_all_members()
+
+            self.assertEqual(fake_wechat.sent, [])
+            self.assertEqual(state.get_mirror_offset(thread_id), 150)
+
+            runner.finals[(thread_id, 150)] = ("NEW", 200)
+
+            daemon._mirror_room_all_members()
+
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                ("user@im.wechat", None, "[claude] ✅ NEW"),
+            )
+            self.assertEqual(state.get_mirror_offset(thread_id), 200)
 
     def test_group_mode_voice_fuzzy_match_session_name(self) -> None:
         """Voice transcript 'kimi 零 你好' should match tmux session 'kimi0'."""
@@ -1255,8 +1580,7 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(len(runner.submitted), 1)
             self.assertEqual(runner.submitted[0][0], thread_claude)
 
-    def test_group_mode_voice_no_match_falls_through(self) -> None:
-        """Unrecognized voice text should still prompt for @agent."""
+    def test_group_mode_voice_no_match_without_active_direct_prompts_for_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
                 room_mode_enabled=True,
@@ -1279,8 +1603,7 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(runner.submitted, [])
             self.assertIn("@agent", fake_wechat.sent[-1][2])
 
-    def test_group_mode_plain_text_not_delivered(self) -> None:
-        """In group mode, plain text without @agent should NOT be delivered."""
+    def test_group_mode_plain_text_falls_back_to_active_direct(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_id = "ses_claude"
             state = BridgeState(
@@ -1290,7 +1613,7 @@ class DaemonTests(unittest.TestCase):
                 sessions={
                     thread_id: SessionRecord(
                         thread_id=thread_id,
-                        label="claude",
+                        label="codex",
                         cwd="/tmp",
                         source="tmux-live",
                         created_at="2026-04-06T00:00:00+00:00",
@@ -1300,6 +1623,16 @@ class DaemonTests(unittest.TestCase):
                 },
             )
             runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="claude",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="claude",
+                )
+            ]
             fake_wechat = _FakeWeChat()
             daemon = _TestDaemon(
                 config=self._make_config(Path(tmpdir), frozenset()),
@@ -1322,11 +1655,584 @@ class DaemonTests(unittest.TestCase):
 
             daemon._handle_incoming(incoming)
 
-            # Should NOT have submitted any prompt
+            self.assertEqual(runner.submitted, [(thread_id, "hello without at")])
+            self.assertEqual(state.room_focus_tmux_session, "claude")
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                (
+                    "user@im.wechat",
+                    "ctx-1",
+                    "⚙️ 已注入 @claude terminal，等待 [claude] 首条回复。",
+                ),
+            )
+
+    def test_group_mode_pending_image_batch_is_claimed_by_next_targeted_message(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_target = "ses_kimi1"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_target: SessionRecord(
+                        thread_id=thread_target,
+                        label="kimi1",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-10T00:00:00+00:00",
+                        updated_at="2026-04-10T00:00:00+00:00",
+                        tmux_session="kimi1",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="kimi1",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_target,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            saved_path = Path(tmpdir) / "incoming_media" / "img-1_1.jpg"
+            saved_path.parent.mkdir(parents=True, exist_ok=True)
+            saved_path.write_bytes(b"image-bytes")
+            incoming_image = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-image",
+                    "message_id": "img-1",
+                    "item_list": [
+                        {
+                            "type": 2,
+                            "image_item": {"url": "https://example.com/test.jpg"},
+                        }
+                    ],
+                }
+            )
+            assert incoming_image is not None
+            with patch(
+                "daedalus_wechat.daemon.download_incoming_image",
+                return_value=SavedIncomingImage(
+                    index=0,
+                    path=saved_path,
+                    source_url="https://example.com/test.jpg",
+                    content_type="image/jpeg",
+                    size_bytes=len(b"image-bytes"),
+                ),
+            ):
+                daemon._handle_incoming(incoming_image)
             self.assertEqual(runner.submitted, [])
-            # Should have replied with a hint
-            last_text = fake_wechat.sent[-1][2]
-            self.assertIn("@agent", last_text)
+            self.assertEqual(len(state.pending_media_batches), 1)
+            self.assertIn("下一条用 @agent", fake_wechat.sent[-1][2])
+
+            incoming_target = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-target",
+                    "message_id": "msg-2",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "@kimi1 你看一下"}}
+                    ],
+                }
+            )
+            assert incoming_target is not None
+            daemon._handle_incoming(incoming_target)
+
+            self.assertEqual(runner.submitted[-1][0], thread_target)
+            submitted_prompt = runner.submitted[-1][1]
+            self.assertIn(str(saved_path), submitted_prompt)
+            self.assertIn("你看一下", submitted_prompt)
+            self.assertEqual(state.pending_media_batches, [])
+
+    def test_group_mode_consecutive_image_messages_merge_into_single_batch(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_target = "ses_kimi1"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_target: SessionRecord(
+                        thread_id=thread_target,
+                        label="kimi1",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-10T00:00:00+00:00",
+                        updated_at="2026-04-10T00:00:00+00:00",
+                        tmux_session="kimi1",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="kimi1",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_target,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            saved_images: list[SavedIncomingImage] = []
+            incoming_images: list[IncomingMessage] = []
+            for idx in range(3):
+                saved_path = Path(tmpdir) / "incoming_media" / f"img-{idx + 1}_1.jpg"
+                saved_path.parent.mkdir(parents=True, exist_ok=True)
+                saved_path.write_bytes(f"image-{idx + 1}".encode())
+                saved_images.append(
+                    SavedIncomingImage(
+                        index=0,
+                        path=saved_path,
+                        source_url=f"https://example.com/test-{idx + 1}.jpg",
+                        content_type="image/jpeg",
+                        size_bytes=saved_path.stat().st_size,
+                    )
+                )
+                incoming = daemon._parse_incoming(
+                    {
+                        "message_type": 1,
+                        "from_user_id": "user@im.wechat",
+                        "context_token": f"ctx-image-{idx + 1}",
+                        "message_id": f"img-{idx + 1}",
+                        "item_list": [
+                            {
+                                "type": 2,
+                                "image_item": {
+                                    "url": f"https://example.com/test-{idx + 1}.jpg"
+                                },
+                            }
+                        ],
+                    }
+                )
+                assert incoming is not None
+                incoming_images.append(incoming)
+
+            with patch(
+                "daedalus_wechat.daemon.download_incoming_image",
+                side_effect=saved_images,
+            ):
+                for incoming in incoming_images:
+                    daemon._handle_incoming(incoming)
+
+            self.assertEqual(len(state.pending_media_batches), 1)
+            batch = state.pending_media_batches[0]
+            self.assertEqual(batch.image_paths, [str(image.path) for image in saved_images])
+            self.assertIn("当前这批共 3 张图片", fake_wechat.sent[-1][2])
+
+            incoming_target = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-target",
+                    "message_id": "msg-4",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "@kimi1 继续看图"}}
+                    ],
+                }
+            )
+            assert incoming_target is not None
+            daemon._handle_incoming(incoming_target)
+
+            self.assertEqual(runner.submitted[-1][0], thread_target)
+            submitted_prompt = runner.submitted[-1][1]
+            for image in saved_images:
+                self.assertIn(str(image.path), submitted_prompt)
+            self.assertIn("继续看图", submitted_prompt)
+            self.assertEqual(state.pending_media_batches, [])
+
+    def test_group_mode_claim_coalesces_legacy_split_image_batches(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_target = "ses_kimi1"
+            base = datetime.now(UTC) - timedelta(seconds=3)
+            image_paths: list[str] = []
+            for idx in range(3):
+                path = Path(tmpdir) / "incoming_media" / f"legacy-{idx + 1}.jpg"
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(f"legacy-{idx + 1}".encode())
+                image_paths.append(str(path))
+            state = BridgeState(
+                room_mode_enabled=True,
+                pending_media_batches=[
+                    PendingMediaBatch(
+                        batch_id="img-1",
+                        from_user_id="user@im.wechat",
+                        message_id="img-1",
+                        created_at=base.isoformat(),
+                        updated_at=base.isoformat(),
+                        image_paths=[image_paths[0]],
+                    ),
+                    PendingMediaBatch(
+                        batch_id="img-2",
+                        from_user_id="user@im.wechat",
+                        message_id="img-2",
+                        created_at=(base + timedelta(seconds=1)).isoformat(),
+                        updated_at=(base + timedelta(seconds=1)).isoformat(),
+                        image_paths=[image_paths[1]],
+                    ),
+                    PendingMediaBatch(
+                        batch_id="img-3",
+                        from_user_id="user@im.wechat",
+                        message_id="img-3",
+                        created_at=(base + timedelta(seconds=2)).isoformat(),
+                        updated_at=(base + timedelta(seconds=2)).isoformat(),
+                        image_paths=[image_paths[2]],
+                    ),
+                ],
+                sessions={
+                    thread_target: SessionRecord(
+                        thread_id=thread_target,
+                        label="kimi1",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-10T00:00:00+00:00",
+                        updated_at="2026-04-10T00:00:00+00:00",
+                        tmux_session="kimi1",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="kimi1",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_target,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+
+            incoming_target = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-target",
+                    "message_id": "msg-legacy-claim",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "@kimi1 回去看刚才那组图"}}
+                    ],
+                }
+            )
+            assert incoming_target is not None
+            daemon._handle_incoming(incoming_target)
+
+            submitted_prompt = runner.submitted[-1][1]
+            for image_path in image_paths:
+                self.assertIn(image_path, submitted_prompt)
+            self.assertEqual(state.pending_media_batches, [])
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                (
+                    "user@im.wechat",
+                    "ctx-target",
+                    "⚙️ 已注入 @kimi1 terminal，等待 [kimi1] 首条回复。",
+                ),
+            )
+
+    def test_group_mode_new_image_batch_supersedes_older_pending_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_target = "ses_kimi1"
+            old_time = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+            state = BridgeState(
+                room_mode_enabled=True,
+                pending_media_batches=[
+                    PendingMediaBatch(
+                        batch_id="old-batch",
+                        from_user_id="user@im.wechat",
+                        message_id="old-batch",
+                        created_at=old_time,
+                        updated_at=old_time,
+                        image_paths=[str(Path(tmpdir) / "incoming_media" / "old.jpg")],
+                    )
+                ],
+                sessions={
+                    thread_target: SessionRecord(
+                        thread_id=thread_target,
+                        label="kimi1",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-10T00:00:00+00:00",
+                        updated_at="2026-04-10T00:00:00+00:00",
+                        tmux_session="kimi1",
+                    )
+                },
+            )
+            old_path = Path(state.pending_media_batches[0].image_paths[0])
+            old_path.parent.mkdir(parents=True, exist_ok=True)
+            old_path.write_bytes(b"old")
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="kimi1",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_target,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            new_path = Path(tmpdir) / "incoming_media" / "new.jpg"
+            new_path.parent.mkdir(parents=True, exist_ok=True)
+            new_path.write_bytes(b"new")
+            incoming_image = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-image",
+                    "message_id": "new-batch",
+                    "item_list": [
+                        {
+                            "type": 2,
+                            "image_item": {"url": "https://example.com/new.jpg"},
+                        }
+                    ],
+                }
+            )
+            assert incoming_image is not None
+            with patch(
+                "daedalus_wechat.daemon.download_incoming_image",
+                return_value=SavedIncomingImage(
+                    index=0,
+                    path=new_path,
+                    source_url="https://example.com/new.jpg",
+                    content_type="image/jpeg",
+                    size_bytes=new_path.stat().st_size,
+                ),
+            ):
+                daemon._handle_incoming(incoming_image)
+
+            self.assertEqual(len(state.pending_media_batches), 1)
+            self.assertEqual(state.pending_media_batches[0].batch_id, "new-batch")
+            self.assertEqual(state.pending_media_batches[0].image_paths, [str(new_path)])
+            self.assertNotIn("待分配图片", fake_wechat.sent[-1][2])
+
+            incoming_target = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-target",
+                    "message_id": "msg-target",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "@kimi1 看最新那组图"}}
+                    ],
+                }
+            )
+            assert incoming_target is not None
+            daemon._handle_incoming(incoming_target)
+
+            submitted_prompt = runner.submitted[-1][1]
+            self.assertIn(str(new_path), submitted_prompt)
+            self.assertNotIn(str(old_path), submitted_prompt)
+            self.assertEqual(state.pending_media_batches, [])
+
+    def test_group_mode_claim_prefers_latest_pending_batch_over_stale_older_batch(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_target = "ses_kimi1"
+            old_time = datetime.now(UTC) - timedelta(minutes=5)
+            new_time = datetime.now(UTC) - timedelta(seconds=5)
+            old_path = Path(tmpdir) / "incoming_media" / "old.jpg"
+            new_path = Path(tmpdir) / "incoming_media" / "new.jpg"
+            old_path.parent.mkdir(parents=True, exist_ok=True)
+            old_path.write_bytes(b"old")
+            new_path.write_bytes(b"new")
+            state = BridgeState(
+                room_mode_enabled=True,
+                pending_media_batches=[
+                    PendingMediaBatch(
+                        batch_id="old-batch",
+                        from_user_id="user@im.wechat",
+                        message_id="old-batch",
+                        created_at=old_time.isoformat(),
+                        updated_at=old_time.isoformat(),
+                        image_paths=[str(old_path)],
+                    ),
+                    PendingMediaBatch(
+                        batch_id="new-batch",
+                        from_user_id="user@im.wechat",
+                        message_id="new-batch",
+                        created_at=new_time.isoformat(),
+                        updated_at=new_time.isoformat(),
+                        image_paths=[str(new_path)],
+                    ),
+                ],
+                sessions={
+                    thread_target: SessionRecord(
+                        thread_id=thread_target,
+                        label="kimi1",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-10T00:00:00+00:00",
+                        updated_at="2026-04-10T00:00:00+00:00",
+                        tmux_session="kimi1",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="kimi1",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_target,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+
+            incoming_target = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-target",
+                    "message_id": "msg-target",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "@kimi1 看最新图片"}}
+                    ],
+                }
+            )
+            assert incoming_target is not None
+            daemon._handle_incoming(incoming_target)
+
+            submitted_prompt = runner.submitted[-1][1]
+            self.assertIn(str(new_path), submitted_prompt)
+            self.assertNotIn(str(old_path), submitted_prompt)
+            self.assertEqual(state.pending_media_batches, [])
+
+    def test_room_speaker_tag_prefers_tmux_name_over_stale_label(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "ses_gpt"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="codex",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-10T00:00:00+00:00",
+                        updated_at="2026-04-10T00:00:00+00:00",
+                        tmux_session="gpt",
+                    )
+                },
+            )
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=state,
+            )
+
+            tagged = daemon._tag_room_text(
+                "HELLO",
+                thread_id=thread_id,
+                tmux_session=None,
+            )
+
+            self.assertEqual(tagged, "[gpt] HELLO")
+
+    def test_group_mode_does_not_auto_attach_global_recent_images_by_keyword(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_target = "ses_kimi1"
+            state_dir = Path(tmpdir)
+            config = self._make_config(state_dir, frozenset())
+            config.incoming_media_dir.mkdir(parents=True, exist_ok=True)
+            old_image = config.incoming_media_dir / "20260405_old_1.jpg"
+            old_image.write_bytes(b"old-image")
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_target: SessionRecord(
+                        thread_id=thread_target,
+                        label="kimi1",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-10T00:00:00+00:00",
+                        updated_at="2026-04-10T00:00:00+00:00",
+                        tmux_session="kimi1",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="kimi1",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_target,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            daemon = _TestDaemon(
+                config=config,
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "msg-1",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "@kimi1 看一下图片"}}
+                    ],
+                }
+            )
+            assert incoming is not None
+
+            daemon._handle_incoming(incoming)
+
+            submitted_prompt = runner.submitted[-1][1]
+            self.assertEqual(submitted_prompt, "看一下图片")
+            self.assertNotIn(str(old_image), submitted_prompt)
+            self.assertNotIn("Owner 通过微信发送了图片", submitted_prompt)
 
     def test_current_mirror_thread_id_does_not_overwrite_newer_switch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -3156,9 +4062,16 @@ class DaemonTests(unittest.TestCase):
             ):
                 daemon._handle_incoming(incoming)
             submitted_prompt = runner.submitted[-1][1]
-            self.assertIn("Owner 通过微信发送了图片", submitted_prompt)
+            self.assertEqual(
+                submitted_prompt,
+                "image 1: /tmp/incoming_media/msg-image-1_1.jpg；Owner 消息：看下这张图",
+            )
             self.assertIn("/tmp/incoming_media/msg-image-1_1.jpg", submitted_prompt)
             self.assertIn("看下这张图", submitted_prompt)
+            self.assertNotIn("\n", submitted_prompt)
+            self.assertNotIn("本地图片文件：", submitted_prompt)
+            self.assertNotIn("Owner 通过微信发送了图片", submitted_prompt)
+            self.assertNotIn("如果你的判断依赖图片", submitted_prompt)
             self.assertEqual(
                 fake_wechat.sent[-1],
                 (
@@ -3167,6 +4080,88 @@ class DaemonTests(unittest.TestCase):
                     "⚙️ 已收到 1 张图片并注入 terminal。",
                 ),
             )
+
+    def test_image_only_prompt_stays_neutral_without_auto_interpret_instruction(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=BridgeState(
+                    active_session_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                ),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-image-only",
+                    "message_id": "msg-image-only",
+                    "item_list": [
+                        {
+                            "type": 2,
+                            "image_item": {"url": "https://example.com/test.jpg"},
+                        }
+                    ],
+                }
+            )
+            assert incoming is not None
+            with patch(
+                "daedalus_wechat.daemon.download_incoming_image",
+                return_value=SavedIncomingImage(
+                    index=0,
+                    path=Path("/tmp/incoming_media/msg-image-only_1.jpg"),
+                    source_url="https://example.com/test.jpg",
+                    content_type="image/jpeg",
+                    size_bytes=1234,
+                ),
+            ):
+                daemon._handle_incoming(incoming)
+
+            submitted_prompt = runner.submitted[-1][1]
+            self.assertEqual(
+                submitted_prompt,
+                "image 1: /tmp/incoming_media/msg-image-only_1.jpg",
+            )
+            self.assertNotIn("\n", submitted_prompt)
+            self.assertNotIn("本地图片文件：", submitted_prompt)
+            self.assertNotIn("Owner 通过微信发送了图片", submitted_prompt)
+            self.assertNotIn("Owner 没有附加文字。", submitted_prompt)
+            self.assertNotIn("如果你的判断依赖图片", submitted_prompt)
+            self.assertNotIn("请直接检查图片", submitted_prompt)
+
+    def test_multiline_text_prompt_is_flattened_before_submission(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=BridgeState(
+                    active_session_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                ),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-multiline",
+                    "message_id": "msg-multiline",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "第一段\n\n第二段\t第三段"}}
+                    ],
+                }
+            )
+            assert incoming is not None
+
+            daemon._handle_incoming(incoming)
+
+            self.assertEqual(runner.submitted[-1][1], "第一段 第二段 第三段")
 
     def test_image_without_direct_url_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

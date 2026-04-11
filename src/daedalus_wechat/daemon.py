@@ -21,7 +21,12 @@ from .live_session import OPENCODE_SESSION_PREFIX, PLAN_MARKER, LiveCodexSession
 from .room_transcript import (
     append_room_message,
 )
-from .state import BridgeState, SessionRecord, now_iso
+from .state import (
+    BridgeState,
+    PendingMediaBatch,
+    SessionRecord,
+    now_iso,
+)
 from .systemd_notify import notify as systemd_notify
 from .wechat_api import DEFAULT_CDN_BASE_URL, WeChatClient
 
@@ -30,7 +35,10 @@ STALE_AUTO_FLUSH_SECONDS = 300.0
 WAIT_FOR_BIND_TIMEOUT_SECONDS = 60.0
 _SEND_DEDUP_WINDOW_SECONDS = 30.0
 OWNER_VISIBLE_RECENT_CLUSTER_SECONDS = 1800.0
+PENDING_MEDIA_BATCH_TTL_SECONDS = OWNER_VISIBLE_RECENT_CLUSTER_SECONDS
+PENDING_MEDIA_BATCH_MERGE_SECONDS = 15.0
 STALE_DESKTOP_MIRROR_DROP_SECONDS = 600.0
+ROOM_FOCUS_TIMEOUT_SECONDS = 30.0
 ROOM_ROUTE_RE = re.compile(r"^[＠@](?P<target>[A-Za-z0-9_.:-]+)\s*(?P<body>[\s\S]*)$")
 
 # Digit words → ASCII digits for voice transcript normalization
@@ -212,7 +220,11 @@ class BridgeDaemon:
                     "<voice-no-transcript>" if incoming.is_voice else "<empty>"
                 )
                 self._log_event(
-                    "incoming", {"body": body_preview, "from": incoming.from_user_id}
+                    "incoming",
+                    {
+                        "body": body_preview,
+                        "from": incoming.from_user_id,
+                    },
                 )
                 if not self._is_authorized_sender(incoming.from_user_id):
                     self._reply(
@@ -274,14 +286,51 @@ class BridgeDaemon:
             if self._route_room_message(incoming, target=room_target):
                 return
         if self._room_mode_enabled() and not room_target:
-            # Images without @agent: accept silently (will be picked up by next @agent message)
+            # Images without @agent become one pending batch for the next explicit
+            # room-targeted message from the same sender. Never guess from global files.
             if incoming.images and not body:
-                saved_images, _ = self._materialize_incoming_images(incoming)
-                if saved_images:
+                saved_images, image_failures = self._materialize_incoming_images(incoming)
+                if incoming.images and not saved_images:
+                    error_text = "收到图片，但当前无法取回可用本地文件。"
+                    if image_failures:
+                        error_text = f"{error_text}\n" + "\n".join(
+                            f"- {reason}" for reason in image_failures
+                        )
                     self._reply(
                         incoming.from_user_id,
                         incoming.context_token,
-                        f"收到 {len(saved_images)} 张图片。用 @agent 指定谁来看。",
+                        error_text,
+                        kind="progress",
+                        origin="wechat-prompt-error",
+                        thread_id=None,
+                        tmux_session=None,
+                    )
+                    self._flush_bound_outbox_if_any()
+                    return
+                pending_count, batch_image_count, merged = self._register_pending_media_batch(
+                    incoming=incoming,
+                    saved_images=saved_images,
+                )
+                if saved_images:
+                    if merged:
+                        ack_text = (
+                            f"已加入当前图片批次，当前这批共 {batch_image_count} 张图片。"
+                            "下一条用 @agent 指定谁来看。"
+                        )
+                    else:
+                        ack_text = (
+                            f"收到 {len(saved_images)} 张图片。"
+                            "下一条用 @agent 指定谁来看。"
+                        )
+                    if pending_count > 1:
+                        ack_text = (
+                            f"{ack_text}\n当前已有 {pending_count} 批待分配图片；"
+                            "bridge 不会自动猜是哪一批。"
+                        )
+                    self._reply(
+                        incoming.from_user_id,
+                        incoming.context_token,
+                        ack_text,
                         kind="progress",
                         origin="wechat-room-target",
                         thread_id=None,
@@ -303,22 +352,16 @@ class BridgeDaemon:
                 )
                 if self._route_room_message(rewritten, target=voice_match):
                     return
-            self._reply(
-                incoming.from_user_id,
-                incoming.context_token,
-                "group 模式下请用 @agent 指定对象。\n例: @claude 你好",
-                kind="progress",
-                origin="wechat-prompt-error",
-                thread_id=None,
-                tmux_session=None,
-            )
-            self._flush_bound_outbox_if_any()
-            return
         with self._lock:
             if not self.state.active_session_id and not self.state.active_tmux_session:
                 hint = (
                     "没有 active session；请先用 /switch <tmux> 选择一个 live session。"
                 )
+                if self._room_mode_enabled():
+                    hint = (
+                        "group 模式下当前没有 active_direct；请先用 /switch <tmux>，"
+                        "或用 @agent 指定对象。"
+                    )
                 self._reply(
                     incoming.from_user_id,
                     incoming.context_token,
@@ -392,9 +435,23 @@ class BridgeDaemon:
                 "body": prompt[:400],
             },
         )
-        ack_text = "已注入 terminal。"
-        if saved_images:
-            ack_text = f"已收到 {len(saved_images)} 张图片并注入 terminal。"
+        if self._room_mode_enabled():
+            self._set_room_focus(
+                thread_id=thread_id,
+                tmux_session=refreshed.tmux_session,
+                trigger="active-direct",
+            )
+            focus_name = refreshed.tmux_session or "active_direct"
+            ack_text = f"已注入 @{focus_name} terminal，等待 [{focus_name}] 首条回复。"
+            if saved_images:
+                ack_text = (
+                    f"已收到 {len(saved_images)} 张图片并注入 @{focus_name} terminal，"
+                    f"等待 [{focus_name}] 首条回复。"
+                )
+        else:
+            ack_text = "已注入 terminal。"
+            if saved_images:
+                ack_text = f"已收到 {len(saved_images)} 张图片并注入 terminal。"
         self._reply(
             incoming.from_user_id,
             incoming.context_token,
@@ -445,6 +502,7 @@ class BridgeDaemon:
             self.state.active_session_id = None
             self.state.active_tmux_session = None
             self.state.room_mode_enabled = False
+            self.state.clear_room_focus()
             self._save_state()
             return "已清空 active session。"
         if command == "/attach-last":
@@ -465,6 +523,7 @@ class BridgeDaemon:
             label = arg or f"session-{datetime.now(UTC).strftime('%m%d-%H%M%S')}"
             record = self.runner.create_new_session(state=self.state, label=label)
             self.state.room_mode_enabled = False
+            self.state.clear_room_focus()
             self.state.active_session_id = record.thread_id
             self.state.active_tmux_session = record.tmux_session
             self._sync_mirror_cursor(record.thread_id)
@@ -479,9 +538,26 @@ class BridgeDaemon:
             if not arg:
                 return "用法: /switch <编号|thread_id前缀|label|tmux>"
             if arg.strip().lower() == "group":
+                with self._lock:
+                    live_records = self.runner.sync_live_sessions(self.state)
+                    self._save_state()
+                seeded = self._adopt_mirror_tail_for_records(
+                    live_records,
+                    force=True,
+                )
+                dropped = self._drop_pending_desktop_mirror_backlog()
                 self.state.room_mode_enabled = True
+                self.state.clear_room_focus()
                 self._save_state()
                 active = self.state.active_tmux_session or "none"
+                self._log_event(
+                    "room_mode_enabled",
+                    {
+                        "active_direct": active,
+                        "seeded_threads": seeded,
+                        "dropped_pending_desktop_mirror": dropped,
+                    },
+                )
                 return f"已切换到 group 模式。\nactive_direct={active}\n{self._members_text()}"
             with self._lock:
                 live_records = self.runner.sync_live_sessions(self.state)
@@ -499,6 +575,7 @@ class BridgeDaemon:
             refreshed.updated_at = datetime.now(UTC).isoformat()
             with self._lock:
                 self.state.room_mode_enabled = False
+                self.state.clear_room_focus()
                 self.state.active_session_id = refreshed.thread_id
                 self.state.active_tmux_session = refreshed.tmux_session
                 self._sync_mirror_cursor(refreshed.thread_id)
@@ -1074,7 +1151,7 @@ class BridgeDaemon:
             marker = "*" if self._is_active_record(record) else " "
             live_marker = " live" if record.thread_id in live_thread_ids else ""
             lines.append(
-                f"{marker}{idx} {record.label} | {self._short_thread(record.thread_id)} | {record.tmux_session or '-'}{live_marker}"
+                f"{marker}{idx} {self._session_display_name(record)} | {self._short_thread(record.thread_id)} | {record.tmux_session or '-'}{live_marker}"
             )
         if excluded:
             lines.append(f"excluded={len(excluded)}")
@@ -1149,6 +1226,32 @@ class BridgeDaemon:
                 thread_id=thread_id,
                 tmux_session=tmux_session,
             )
+        if self._should_defer_room_mirror_reply(
+            kind=kind,
+            origin=origin,
+            thread_id=thread_id,
+            tmux_session=tmux_session,
+        ):
+            with self._lock:
+                self.state.enqueue_pending_with_meta(
+                    to_user_id=to_user_id,
+                    text=rendered,
+                    kind=kind,
+                    origin=origin,
+                    thread_id=thread_id,
+                    tmux_session=tmux_session,
+                )
+                self._save_state()
+            self._log_event(
+                "room_focus_deferred_outgoing",
+                {
+                    "to": to_user_id,
+                    "text": rendered[:400],
+                    "thread": self._short_thread(thread_id) if thread_id else "",
+                    "tmux_session": str(tmux_session or "").strip(),
+                },
+            )
+            return True
         chunks = self._chunk_text(rendered)
         for idx, chunk in enumerate(chunks):
             # Dedup: suppress re-sending identical text within a short window.
@@ -1241,6 +1344,14 @@ class BridgeDaemon:
                         error=str(exc),
                     )
                 return False
+        released_room_focus = self._release_room_focus_for_reply(
+            kind=kind,
+            origin=origin,
+            thread_id=thread_id,
+            tmux_session=tmux_session,
+        )
+        if released_room_focus:
+            self._flush_bound_outbox_if_any()
         return True
 
     def _render_reply_text(self, text: str, *, kind: str, origin: str) -> str:
@@ -1489,6 +1600,8 @@ class BridgeDaemon:
             tmux_session = str(status.tmux_session or "").strip()
             if not thread_id or not tmux_session:
                 continue
+            if self._adopt_mirror_tail(thread_id):
+                continue
             with self._lock:
                 start_offset = self.state.get_mirror_offset(thread_id)
             scan = self.runner.latest_mirror_since(
@@ -1569,6 +1682,8 @@ class BridgeDaemon:
             if not thread_id or not tmux_session:
                 continue
             if thread_id == active_thread_id and tmux_session == active_tmux_session:
+                continue
+            if self._adopt_mirror_tail(thread_id):
                 continue
             with self._lock:
                 start_offset = self.state.get_mirror_offset(thread_id)
@@ -1777,6 +1892,268 @@ class BridgeDaemon:
             )
         return saved, failures
 
+    def _parse_iso_time(self, raw: str) -> datetime | None:
+        text = str(raw or "").strip()
+        if not text:
+            return None
+        try:
+            dt = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC)
+
+    def _prune_expired_pending_media_batches(self) -> list[PendingMediaBatch]:
+        expired: list[PendingMediaBatch] = []
+        now = datetime.now(UTC)
+        with self._lock:
+            kept: list[PendingMediaBatch] = []
+            for batch in self.state.pending_media_batches:
+                created_at = self._parse_iso_time(batch.created_at) or now
+                age_seconds = (now - created_at).total_seconds()
+                if age_seconds > PENDING_MEDIA_BATCH_TTL_SECONDS:
+                    expired.append(batch)
+                    continue
+                kept.append(batch)
+            if len(kept) != len(self.state.pending_media_batches):
+                self.state.pending_media_batches = kept
+                self._save_state()
+        for batch in expired:
+            self._log_event(
+                "pending_media_expired",
+                {
+                    "batch_id": batch.batch_id,
+                    "from": batch.from_user_id,
+                    "message_id": batch.message_id,
+                    "image_count": len(batch.image_paths),
+                },
+            )
+        return expired
+
+    def _coalesce_pending_media_batches(self) -> int:
+        merged_batches = 0
+        with self._lock:
+            if len(self.state.pending_media_batches) < 2:
+                return 0
+            coalesced: list[PendingMediaBatch] = []
+            for batch in self.state.pending_media_batches:
+                if not coalesced:
+                    coalesced.append(batch)
+                    continue
+                previous = coalesced[-1]
+                if batch.from_user_id != previous.from_user_id:
+                    coalesced.append(batch)
+                    continue
+                previous_updated_at = self._parse_iso_time(previous.updated_at)
+                current_created_at = self._parse_iso_time(batch.created_at)
+                if previous_updated_at is None or current_created_at is None:
+                    coalesced.append(batch)
+                    continue
+                age_seconds = (current_created_at - previous_updated_at).total_seconds()
+                if age_seconds > PENDING_MEDIA_BATCH_MERGE_SECONDS:
+                    coalesced.append(batch)
+                    continue
+                known_paths = set(previous.image_paths)
+                for image_path in batch.image_paths:
+                    if image_path in known_paths:
+                        continue
+                    previous.image_paths.append(image_path)
+                    known_paths.add(image_path)
+                previous.updated_at = (
+                    batch.updated_at
+                    if self._parse_iso_time(batch.updated_at) is not None
+                    else previous.updated_at
+                )
+                merged_batches += 1
+            if merged_batches <= 0:
+                return 0
+            self.state.pending_media_batches = coalesced
+            self._save_state()
+        self._log_event(
+            "pending_media_coalesced",
+            {
+                "merged_batches": merged_batches,
+                "remaining_batches": len(coalesced),
+            },
+        )
+        return merged_batches
+
+    def _register_pending_media_batch(
+        self,
+        *,
+        incoming: IncomingMessage,
+        saved_images: list[SavedIncomingImage],
+    ) -> tuple[int, int, bool]:
+        if not saved_images:
+            return (0, 0, False)
+        self._prune_expired_pending_media_batches()
+        self._coalesce_pending_media_batches()
+        created_at = now_iso()
+        created_dt = self._parse_iso_time(created_at) or datetime.now(UTC)
+        batch_id = str(incoming.message_id or now_iso()).strip() or now_iso()
+        image_paths = [str(image.path) for image in saved_images]
+        merged = False
+        batch_image_count = len(image_paths)
+        superseded_count = 0
+        with self._lock:
+            merge_target: PendingMediaBatch | None = None
+            normalized_from = str(incoming.from_user_id or "").strip()
+            for batch in reversed(self.state.pending_media_batches):
+                if batch.from_user_id != normalized_from:
+                    continue
+                batch_updated_at = self._parse_iso_time(batch.updated_at)
+                if batch_updated_at is None:
+                    break
+                age_seconds = (created_dt - batch_updated_at).total_seconds()
+                if age_seconds > PENDING_MEDIA_BATCH_MERGE_SECONDS:
+                    break
+                merge_target = batch
+                break
+            if merge_target is not None:
+                known_paths = set(merge_target.image_paths)
+                for image_path in image_paths:
+                    if image_path in known_paths:
+                        continue
+                    merge_target.image_paths.append(image_path)
+                    known_paths.add(image_path)
+                merge_target.updated_at = created_at
+                batch_id = merge_target.batch_id
+                batch_image_count = len(merge_target.image_paths)
+                merged = True
+                kept: list[PendingMediaBatch] = []
+                for batch in self.state.pending_media_batches:
+                    if batch.from_user_id != normalized_from:
+                        kept.append(batch)
+                        continue
+                    if batch.batch_id == merge_target.batch_id:
+                        kept.append(batch)
+                        continue
+                    superseded_count += 1
+                self.state.pending_media_batches = kept
+            else:
+                existing_batches = [
+                    batch
+                    for batch in self.state.pending_media_batches
+                    if batch.from_user_id == normalized_from
+                ]
+                superseded_count = len(existing_batches)
+                if existing_batches:
+                    self.state.pending_media_batches = [
+                        batch
+                        for batch in self.state.pending_media_batches
+                        if batch.from_user_id != normalized_from
+                    ]
+                record = self.state.add_pending_media_batch(
+                    batch_id=batch_id,
+                    from_user_id=incoming.from_user_id,
+                    message_id=incoming.message_id,
+                    image_paths=image_paths,
+                    created_at=created_at,
+                )
+                batch_id = record.batch_id
+                batch_image_count = len(record.image_paths)
+            pending_count = sum(
+                1
+                for batch in self.state.pending_media_batches
+                if batch.from_user_id == incoming.from_user_id
+            )
+            self._save_state()
+        self._log_event(
+            "pending_media_registered",
+            {
+                "batch_id": batch_id,
+                "from": incoming.from_user_id,
+                "message_id": incoming.message_id,
+                "image_count": batch_image_count,
+                "added_count": len(image_paths),
+                "merged": merged,
+                "superseded_count": superseded_count,
+            },
+        )
+        return (pending_count, batch_image_count, merged)
+
+    def _claim_pending_media_batch(
+        self, *, from_user_id: str
+    ) -> tuple[PendingMediaBatch | None, int]:
+        self._prune_expired_pending_media_batches()
+        self._coalesce_pending_media_batches()
+        normalized_from = str(from_user_id or "").strip()
+        with self._lock:
+            indexed_matches = [
+                (idx, batch)
+                for idx, batch in enumerate(self.state.pending_media_batches)
+                if batch.from_user_id == normalized_from
+            ]
+            if not indexed_matches:
+                return (None, 0)
+            _, claimed = max(
+                indexed_matches,
+                key=lambda item: (
+                    self._pending_media_batch_time(item[1]),
+                    item[0],
+                ),
+            )
+            match_count = len(indexed_matches)
+            self.state.pending_media_batches = [
+                batch
+                for batch in self.state.pending_media_batches
+                if batch.from_user_id != normalized_from
+            ]
+            self._save_state()
+        self._log_event(
+            "pending_media_claimed",
+            {
+                "batch_id": claimed.batch_id,
+                "from": claimed.from_user_id,
+                "message_id": claimed.message_id,
+                "image_count": len(claimed.image_paths),
+                "match_count": match_count,
+                "dropped_stale_batches": max(0, match_count - 1),
+            },
+        )
+        return (claimed, match_count)
+
+    def _saved_images_from_pending_batch(
+        self, batch: PendingMediaBatch
+    ) -> tuple[list[SavedIncomingImage], list[str]]:
+        saved: list[SavedIncomingImage] = []
+        failures: list[str] = []
+        for idx, raw_path in enumerate(batch.image_paths):
+            path = Path(raw_path)
+            if not path.is_file():
+                reason = f"image {idx + 1}: missing local file {path}"
+                failures.append(reason)
+                self._log_event(
+                    "pending_media_missing_file",
+                    {
+                        "batch_id": batch.batch_id,
+                        "from": batch.from_user_id,
+                        "path": raw_path,
+                    },
+                )
+                continue
+            saved.append(
+                SavedIncomingImage(
+                    index=idx,
+                    path=path,
+                    source_url="",
+                    content_type="",
+                    size_bytes=path.stat().st_size,
+                )
+            )
+        return (saved, failures)
+
+    def _pending_media_batch_time(self, batch: PendingMediaBatch) -> datetime:
+        return (
+            self._parse_iso_time(batch.updated_at)
+            or self._parse_iso_time(batch.created_at)
+            or datetime.min.replace(tzinfo=UTC)
+        )
+
+    def _flatten_prompt_text(self, text: str) -> str:
+        return " ".join(str(text or "").split())
+
     def _compose_prompt(
         self,
         *,
@@ -1784,28 +2161,21 @@ class BridgeDaemon:
         saved_images: list[SavedIncomingImage],
         image_failures: list[str],
     ) -> str:
-        body = incoming.body.strip()
+        body = self._flatten_prompt_text(incoming.body)
         if not saved_images and not image_failures:
             return body
         parts: list[str] = []
         if saved_images:
-            lines = [
-                "Owner 通过微信发送了图片。",
-                "如果你的判断依赖图片，请先查看这些本地图片文件，再回答。",
-            ]
             for image in saved_images:
-                lines.append(f"- image {image.index + 1}: {image.path}")
-            parts.append("\n".join(lines))
+                parts.append(f"image {image.index + 1}: {image.path}")
         if image_failures:
             parts.append(
-                "图片 ingress 备注：\n"
-                + "\n".join(f"- {reason}" for reason in image_failures)
+                "图片 ingress 备注："
+                + "；".join(self._flatten_prompt_text(reason) for reason in image_failures)
             )
         if body:
-            parts.append("Owner 消息：\n" + body)
-        elif saved_images:
-            parts.append("Owner 没有附加文字。请直接检查图片，并如实说明你看到的内容。")
-        return "\n\n".join(part.strip() for part in parts if part.strip())
+            parts.append("Owner 消息：" + body)
+        return "；".join(part.strip() for part in parts if part.strip())
 
     def _parse_incoming(self, raw: dict) -> IncomingMessage | None:
         message_type = raw.get("message_type")
@@ -1907,27 +2277,6 @@ class BridgeDaemon:
             return False
         return from_user_id in self.config.allowed_users
 
-    def _recent_incoming_images(self, *, limit: int = 5) -> list[SavedIncomingImage]:
-        """Return the most recent incoming images by filename (timestamp-sorted)."""
-        media_dir = self.config.incoming_media_dir
-        if not media_dir.is_dir():
-            return []
-        image_files = sorted(
-            (f for f in media_dir.iterdir() if f.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp", ".gif"}),
-            key=lambda p: p.name,
-            reverse=True,
-        )
-        return [
-            SavedIncomingImage(
-                index=i,
-                path=f,
-                source_url="",
-                content_type="",
-                size_bytes=f.stat().st_size,
-            )
-            for i, f in enumerate(image_files[:limit])
-        ]
-
     def _bind_peer(self, from_user_id: str, context_token: str | None) -> None:
         with self._lock:
             previous_user_id = self.state.bound_user_id
@@ -1945,6 +2294,165 @@ class BridgeDaemon:
 
     def _room_mode_enabled(self) -> bool:
         return bool(self.state.room_mode_enabled)
+
+    def _set_room_focus(
+        self,
+        *,
+        thread_id: str | None,
+        tmux_session: str | None,
+        trigger: str,
+    ) -> None:
+        if not self._room_mode_enabled():
+            return
+        normalized_thread = str(thread_id or "").strip() or None
+        normalized_tmux = str(tmux_session or "").strip() or None
+        if not normalized_thread and not normalized_tmux:
+            self._clear_room_focus(reason="empty-focus")
+            return
+        with self._lock:
+            self.state.set_room_focus(
+                thread_id=normalized_thread,
+                tmux_session=normalized_tmux,
+            )
+            self._save_state()
+        self._log_event(
+            "room_focus_started",
+            {
+                "trigger": trigger,
+                "thread": self._short_thread(normalized_thread)
+                if normalized_thread
+                else "",
+                "tmux_session": normalized_tmux or "",
+            },
+        )
+
+    def _clear_room_focus(self, *, reason: str) -> bool:
+        with self._lock:
+            thread_id = str(self.state.room_focus_thread_id or "").strip()
+            tmux_session = str(self.state.room_focus_tmux_session or "").strip()
+            started_at = str(self.state.room_focus_started_at or "").strip()
+            if not thread_id and not tmux_session and not started_at:
+                return False
+            self.state.clear_room_focus()
+            self._save_state()
+        self._log_event(
+            "room_focus_cleared",
+            {
+                "reason": reason,
+                "thread": self._short_thread(thread_id) if thread_id else "",
+                "tmux_session": tmux_session,
+            },
+        )
+        return True
+
+    def _active_room_focus(self) -> dict[str, str] | None:
+        with self._lock:
+            room_mode_enabled = self.state.room_mode_enabled
+            thread_id = str(self.state.room_focus_thread_id or "").strip()
+            tmux_session = str(self.state.room_focus_tmux_session or "").strip()
+            started_at = str(self.state.room_focus_started_at or "").strip()
+        if not room_mode_enabled or (not thread_id and not tmux_session):
+            return None
+        if started_at:
+            try:
+                dt = datetime.fromisoformat(started_at)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=UTC)
+                age_seconds = (
+                    datetime.now(UTC) - dt.astimezone(UTC)
+                ).total_seconds()
+            except ValueError:
+                age_seconds = 0.0
+            if age_seconds >= ROOM_FOCUS_TIMEOUT_SECONDS:
+                self._clear_room_focus(reason="timeout")
+                return None
+        return {
+            "thread_id": thread_id,
+            "tmux_session": tmux_session,
+            "started_at": started_at,
+        }
+
+    def _room_focus_matches(
+        self,
+        *,
+        thread_id: str | None,
+        tmux_session: str | None,
+        focus: dict[str, str] | None = None,
+    ) -> bool:
+        active_focus = focus or self._active_room_focus()
+        if active_focus is None:
+            return False
+        normalized_tmux = str(tmux_session or "").strip()
+        focus_tmux = str(active_focus.get("tmux_session", "")).strip()
+        if normalized_tmux and focus_tmux:
+            return normalized_tmux == focus_tmux
+        normalized_thread = str(thread_id or "").strip()
+        focus_thread = str(active_focus.get("thread_id", "")).strip()
+        if normalized_thread and focus_thread:
+            return normalized_thread == focus_thread
+        return False
+
+    def _should_defer_room_mirror_reply(
+        self,
+        *,
+        kind: str,
+        origin: str,
+        thread_id: str | None,
+        tmux_session: str | None,
+    ) -> bool:
+        if not self._room_mode_enabled():
+            return False
+        if kind != "final" or str(origin or "").strip() != "desktop-mirror":
+            return False
+        focus = self._active_room_focus()
+        if focus is None:
+            return False
+        return not self._room_focus_matches(
+            thread_id=thread_id,
+            tmux_session=tmux_session,
+            focus=focus,
+        )
+
+    def _release_room_focus_for_reply(
+        self,
+        *,
+        kind: str,
+        origin: str,
+        thread_id: str | None,
+        tmux_session: str | None,
+    ) -> bool:
+        if kind != "final" or str(origin or "").strip() != "desktop-mirror":
+            return False
+        if not self._room_focus_matches(
+            thread_id=thread_id,
+            tmux_session=tmux_session,
+        ):
+            return False
+        return self._clear_room_focus(reason="target-final")
+
+    def _pending_item_blocked_by_room_focus(
+        self,
+        item: dict[str, str],
+        *,
+        focus: dict[str, str] | None,
+    ) -> bool:
+        if focus is None:
+            return False
+        if str(item.get("origin", "")).strip() != "desktop-mirror":
+            return False
+        if str(item.get("kind", "message")).strip() != "final":
+            return False
+        thread_id = str(item.get("thread_id", "")).strip() or None
+        tmux_session = (
+            self._tmux_for_thread(thread_id)
+            or str(item.get("tmux_session", "")).strip()
+            or None
+        )
+        return not self._room_focus_matches(
+            thread_id=thread_id,
+            tmux_session=tmux_session,
+            focus=focus,
+        )
 
     def _voice_fuzzy_match_agent(self, body: str) -> tuple[str | None, str]:
         """Try to match the beginning of a voice transcript to a live tmux session name.
@@ -2044,9 +2552,15 @@ class BridgeDaemon:
         if not normalized_thread:
             return None
         record = self.state.sessions.get(normalized_thread)
-        if record and record.label:
-            return record.label
+        speaker = self._session_display_name(record)
+        if speaker:
+            return speaker
         return self._short_thread(normalized_thread)
+
+    def _session_display_name(self, record: SessionRecord | None) -> str:
+        if record is None:
+            return ""
+        return str(record.tmux_session or record.label).strip()
 
     def _tag_room_text(
         self, text: str, *, thread_id: str | None, tmux_session: str | None
@@ -2068,9 +2582,9 @@ class BridgeDaemon:
         for idx, record in enumerate(live_records[:20], start=1):
             marker = "*" if self._is_active_record(record) else " "
             lines.append(
-                f"{marker}{idx} {record.tmux_session or record.label} | {record.label} | {self._short_thread(record.thread_id)}"
+                f"{marker}{idx} {self._session_display_name(record)} | {self._short_thread(record.thread_id)}"
             )
-        lines.append("use=@agent 消息")
+        lines.append("use=@agent 消息 或直接发给 active_direct")
         return "\n".join(lines)
 
     def _route_room_message(self, incoming: IncomingMessage, *, target: str) -> bool:
@@ -2120,15 +2634,28 @@ class BridgeDaemon:
             )
             self._flush_bound_outbox_if_any()
             return True
+        claimed_batch: PendingMediaBatch | None = None
+        if self._room_mode_enabled() and not saved_images and not incoming.images:
+            claimed_batch, _pending_count = self._claim_pending_media_batch(
+                from_user_id=incoming.from_user_id
+            )
+            if claimed_batch is not None:
+                saved_images, claimed_failures = self._saved_images_from_pending_batch(
+                    claimed_batch
+                )
+                image_failures.extend(claimed_failures)
+                if claimed_batch.message_id and not incoming.message_id:
+                    incoming = IncomingMessage(
+                        from_user_id=incoming.from_user_id,
+                        context_token=incoming.context_token,
+                        body=incoming.body,
+                        message_id=claimed_batch.message_id,
+                        is_voice=incoming.is_voice,
+                        has_transcript=incoming.has_transcript,
+                        images=incoming.images,
+                    )
         target_name, stripped_body = self._extract_room_target(incoming.body)
         effective_body = stripped_body if target_name else incoming.body
-        # In room mode, if no images attached but message mentions images/photos,
-        # auto-attach recent incoming images so agent can find them.
-        if self._room_mode_enabled() and not saved_images:
-            image_keywords = ("图", "照片", "photo", "image", "截图", "screenshot", "看图", "看一下图", "看看图")
-            body_lower = (effective_body or "").lower()
-            if any(kw in body_lower for kw in image_keywords):
-                saved_images = self._recent_incoming_images(limit=5)
         prompt = self._compose_prompt(
             incoming=IncomingMessage(
                 from_user_id=incoming.from_user_id,
@@ -2161,10 +2688,16 @@ class BridgeDaemon:
                 "room_target": target,
             },
         )
+        self._set_room_focus(
+            thread_id=refreshed.thread_id,
+            tmux_session=refreshed.tmux_session,
+            trigger="room-target",
+        )
+        focus_name = refreshed.tmux_session or target
         self._reply(
             incoming.from_user_id,
             incoming.context_token,
-            f"已注入 @{target} terminal。",
+            f"已注入 @{focus_name} terminal，等待 [{focus_name}] 首条回复。",
             kind="progress",
             origin="wechat-room-target",
             thread_id=refreshed.thread_id,
@@ -2278,8 +2811,60 @@ class BridgeDaemon:
                 origin=str(item.get("origin", "bridge")),
                 thread_id=thread_id,
                 tmux_session=tmux_session,
-                error=reason,
-            )
+                        error=reason,
+                    )
+
+    def _adopt_mirror_tail(self, thread_id: str, *, force: bool = False) -> bool:
+        normalized_thread = str(thread_id or "").strip()
+        if not normalized_thread:
+            return False
+        with self._lock:
+            if not force and normalized_thread in self.state.mirror_offsets:
+                return False
+        tail_offset = int(self.runner.rollout_size(normalized_thread))
+        with self._lock:
+            if not force and normalized_thread in self.state.mirror_offsets:
+                return False
+            self.state.set_mirror_offset(normalized_thread, tail_offset)
+            self._save_state()
+        return True
+
+    def _adopt_mirror_tail_for_records(
+        self,
+        records: list[SessionRecord],
+        *,
+        force: bool = False,
+    ) -> int:
+        adopted = 0
+        seen_threads: set[str] = set()
+        for record in records:
+            thread_id = str(record.thread_id or "").strip()
+            if not thread_id or thread_id in seen_threads:
+                continue
+            seen_threads.add(thread_id)
+            if self._adopt_mirror_tail(thread_id, force=force):
+                adopted += 1
+        return adopted
+
+    def _drop_pending_desktop_mirror_backlog(self) -> int:
+        dropped = 0
+        with self._lock:
+            if not self.state.pending_outbox:
+                return 0
+            kept: list[dict[str, str]] = []
+            for item in self.state.pending_outbox:
+                if str(item.get("origin", "")).strip() == "desktop-mirror":
+                    dropped += 1
+                    continue
+                kept.append(item)
+            if dropped <= 0:
+                return 0
+            self.state.pending_outbox = kept
+            if not self.state.pending_outbox:
+                self.state.outbox_waiting_for_bind = False
+                self.state.outbox_waiting_for_bind_since = ""
+            self._save_state()
+        return dropped
 
     def _outbox_watchdog_tick(self) -> None:
         with self._lock:
@@ -2471,6 +3056,7 @@ class BridgeDaemon:
             self._save_state()
         if not pending:
             return
+        focus = self._active_room_focus()
         kept: list[dict[str, str]] = []
         for idx, item in enumerate(pending):
             text = item.get("text", "").strip()
@@ -2484,6 +3070,9 @@ class BridgeDaemon:
                 or str(item.get("tmux_session", "")).strip()
                 or None
             )
+            if self._pending_item_blocked_by_room_focus(item, focus=focus):
+                kept.append(item)
+                continue
             if self._should_suppress_pending_item(kind=kind, origin=origin):
                 continue
             flush_hash = hash((to_user_id, text))

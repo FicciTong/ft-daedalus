@@ -22,10 +22,23 @@ class SessionRecord:
 
 
 @dataclass
+class PendingMediaBatch:
+    batch_id: str
+    from_user_id: str
+    message_id: str
+    created_at: str
+    updated_at: str
+    image_paths: list[str] = field(default_factory=list)
+
+
+@dataclass
 class BridgeState:
     active_session_id: str | None = None
     active_tmux_session: str | None = None
     room_mode_enabled: bool = False
+    room_focus_thread_id: str | None = None
+    room_focus_tmux_session: str | None = None
+    room_focus_started_at: str = ""
     get_updates_buf: str = ""
     bound_user_id: str | None = None
     bound_context_token: str | None = None
@@ -38,6 +51,7 @@ class BridgeState:
     last_progress_summaries: dict[str, str] = field(default_factory=dict)
     pending_outbox: list[dict[str, str]] = field(default_factory=list)
     pending_outbox_overflow_dropped: int = 0
+    pending_media_batches: list[PendingMediaBatch] = field(default_factory=list)
     sessions: dict[str, SessionRecord] = field(default_factory=dict)
 
     @classmethod
@@ -64,6 +78,9 @@ class BridgeState:
             active_session_id=raw.get("active_session_id"),
             active_tmux_session=raw.get("active_tmux_session"),
             room_mode_enabled=bool(raw.get("room_mode_enabled", False)),
+            room_focus_thread_id=raw.get("room_focus_thread_id"),
+            room_focus_tmux_session=raw.get("room_focus_tmux_session"),
+            room_focus_started_at=str(raw.get("room_focus_started_at", "")),
             get_updates_buf=raw.get("get_updates_buf", ""),
             bound_user_id=raw.get("bound_user_id"),
             bound_context_token=raw.get("bound_context_token"),
@@ -119,6 +136,29 @@ class BridgeState:
             pending_outbox_overflow_dropped=int(
                 raw.get("pending_outbox_overflow_dropped", 0) or 0
             ),
+            pending_media_batches=[
+                PendingMediaBatch(
+                    batch_id=str(item.get("batch_id", "")).strip()
+                    or str(item.get("message_id", "")).strip()
+                    or now_iso(),
+                    from_user_id=str(item.get("from_user_id", "")).strip(),
+                    message_id=str(item.get("message_id", "")).strip(),
+                    created_at=str(item.get("created_at", now_iso())),
+                    updated_at=str(
+                        item.get(
+                            "updated_at",
+                            item.get("created_at", now_iso()),
+                        )
+                    ),
+                    image_paths=[
+                        str(path)
+                        for path in (item.get("image_paths", []) or [])
+                        if str(path).strip()
+                    ],
+                )
+                for item in (raw.get("pending_media_batches", []) or [])
+                if str(item.get("from_user_id", "")).strip()
+            ],
             sessions=sessions,
         )
 
@@ -130,6 +170,9 @@ class BridgeState:
                     "active_session_id": self.active_session_id,
                     "active_tmux_session": self.active_tmux_session,
                     "room_mode_enabled": self.room_mode_enabled,
+                    "room_focus_thread_id": self.room_focus_thread_id,
+                    "room_focus_tmux_session": self.room_focus_tmux_session,
+                    "room_focus_started_at": self.room_focus_started_at,
                     "get_updates_buf": self.get_updates_buf,
                     "bound_user_id": self.bound_user_id,
                     "bound_context_token": self.bound_context_token,
@@ -142,6 +185,9 @@ class BridgeState:
                     "last_progress_summaries": self.last_progress_summaries,
                     "pending_outbox": self.pending_outbox,
                     "pending_outbox_overflow_dropped": self.pending_outbox_overflow_dropped,
+                    "pending_media_batches": [
+                        asdict(value) for value in self.pending_media_batches
+                    ],
                     "sessions": {
                         key: asdict(value) for key, value in self.sessions.items()
                     },
@@ -173,6 +219,52 @@ class BridgeState:
         )
         self.sessions[thread_id] = record
         return record
+
+    def add_pending_media_batch(
+        self,
+        *,
+        batch_id: str,
+        from_user_id: str,
+        message_id: str,
+        image_paths: list[str],
+        created_at: str,
+    ) -> PendingMediaBatch:
+        record = PendingMediaBatch(
+            batch_id=str(batch_id).strip() or now_iso(),
+            from_user_id=str(from_user_id).strip(),
+            message_id=str(message_id).strip(),
+            created_at=str(created_at or now_iso()),
+            updated_at=str(created_at or now_iso()),
+            image_paths=[str(path) for path in image_paths if str(path).strip()],
+        )
+        self.pending_media_batches = [
+            batch
+            for batch in self.pending_media_batches
+            if batch.batch_id != record.batch_id
+        ]
+        self.pending_media_batches.append(record)
+        return record
+
+    def set_room_focus(
+        self,
+        *,
+        thread_id: str | None,
+        tmux_session: str | None,
+        started_at: str | None = None,
+    ) -> None:
+        normalized_thread = str(thread_id or "").strip() or None
+        normalized_tmux = str(tmux_session or "").strip() or None
+        if not normalized_thread and not normalized_tmux:
+            self.clear_room_focus()
+            return
+        self.room_focus_thread_id = normalized_thread
+        self.room_focus_tmux_session = normalized_tmux
+        self.room_focus_started_at = str(started_at or now_iso())
+
+    def clear_room_focus(self) -> None:
+        self.room_focus_thread_id = None
+        self.room_focus_tmux_session = None
+        self.room_focus_started_at = ""
 
     def get_mirror_offset(self, thread_id: str) -> int:
         return int(self.mirror_offsets.get(thread_id, 0))

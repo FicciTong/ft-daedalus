@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from daedalus_wechat.cli_backend import CliBackend, detect_backend
 
 
@@ -58,6 +60,22 @@ def test_detect_node_with_opencode_screen():
     )
 
 
+def test_detect_node_prefers_child_process_backend_over_stale_screen_hints():
+    screen = "OpenCode\nBuild GPT-5.4 OpenAI · xhigh\nAsk anything"
+    with patch(
+        "daedalus_wechat.cli_backend._detect_backend_from_proc",
+        return_value=CliBackend.CODEX,
+    ):
+        assert (
+            detect_backend(
+                pane_command="node",
+                screen_text=screen,
+                pane_pid=1234,
+            )
+            == CliBackend.CODEX
+        )
+
+
 def test_detect_unknown_for_bash():
     assert detect_backend(pane_command="bash") == CliBackend.UNKNOWN
 
@@ -72,6 +90,16 @@ def test_detect_bash_with_opencode_screen():
     assert (
         detect_backend(pane_command="bash", screen_text=screen) == CliBackend.OPENCODE
     )
+
+
+def test_detect_bash_uses_child_process_backend_when_screen_is_empty():
+    with patch(
+        "daedalus_wechat.cli_backend._detect_backend_from_proc",
+        return_value=CliBackend.CODEX,
+    ):
+        assert (
+            detect_backend(pane_command="bash", pane_pid=1234) == CliBackend.CODEX
+        )
 
 
 def test_detect_none_command():

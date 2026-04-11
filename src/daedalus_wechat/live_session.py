@@ -30,6 +30,9 @@ PENDING_RUNTIME_PREFIX = "pending:"
 CLAUDE_SESSION_FILE_RE = re.compile(
     r"/\.claude/projects/[^/]+/(?P<session_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?: \(deleted\))?$"
 )
+CODEX_ROLLOUT_FILE_RE = re.compile(
+    r"/\.codex/sessions/[\s\S]*/rollout-[^/]*-(?P<thread_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?: \(deleted\))?$"
+)
 
 
 @dataclass(frozen=True)
@@ -1104,6 +1107,9 @@ class LiveCodexSessionManager:
             )
         if backend == CliBackend.CLAUDE.value:
             return self._resolve_claude_session_id(tmux_session=tmux_session)
+        codex_thread_id = self._resolve_codex_thread_id(tmux_session=tmux_session)
+        if codex_thread_id:
+            return codex_thread_id
         candidates = self._extract_thread_candidates(screen_text)
         pane_candidate = candidates[-1] if candidates else None
         if backend != "codex" or not self._is_workspace_tmux(pane_cwd):
@@ -1180,6 +1186,38 @@ class LiveCodexSessionManager:
             return hinted
         return None
 
+    def _resolve_codex_thread_id(self, *, tmux_session: str) -> str | None:
+        rollout_file = self._current_codex_rollout_file(tmux_session)
+        if rollout_file is None:
+            return None
+        return self._extract_codex_thread_id_from_path(rollout_file)
+
+    def _extract_codex_thread_id_from_path(self, path: Path) -> str | None:
+        match = CODEX_ROLLOUT_FILE_RE.search(str(path))
+        if not match:
+            return None
+        return str(match.group("thread_id"))
+
+    def _current_codex_rollout_file(self, tmux_session: str) -> Path | None:
+        pane_pid = self._pane_pid(tmux_session)
+        if pane_pid is None:
+            return None
+        candidates: list[Path] = []
+        for pid in [pane_pid, *self._proc_descendants(pane_pid)]:
+            for raw_path in self._proc_open_paths(pid):
+                match = CODEX_ROLLOUT_FILE_RE.search(raw_path)
+                if match:
+                    candidates.append(Path(raw_path.replace(" (deleted)", "")))
+        if not candidates:
+            return None
+        return max(
+            candidates,
+            key=lambda path: (
+                path.stat().st_mtime if path.exists() else float("-inf"),
+                str(path),
+            ),
+        )
+
     def _extract_claude_session_id_from_path(self, path: Path) -> str | None:
         match = CLAUDE_SESSION_FILE_RE.search(str(path))
         if not match:
@@ -1189,7 +1227,7 @@ class LiveCodexSessionManager:
     def _current_claude_session_file(self, tmux_session: str) -> Path | None:
         pane_pid = self._pane_pid(tmux_session)
         if pane_pid is not None:
-            for pid in [pane_pid, *self._proc_children(pane_pid)]:
+            for pid in [pane_pid, *self._proc_descendants(pane_pid)]:
                 for raw_path in self._proc_open_paths(pid):
                     match = CLAUDE_SESSION_FILE_RE.search(raw_path)
                     if match:
@@ -1230,6 +1268,19 @@ class LiveCodexSessionManager:
             except ValueError:
                 continue
         return children
+
+    def _proc_descendants(self, pid: int) -> list[int]:
+        descendants: list[int] = []
+        seen: set[int] = set()
+        stack = list(self._proc_children(pid))
+        while stack:
+            child = stack.pop()
+            if child in seen:
+                continue
+            seen.add(child)
+            descendants.append(child)
+            stack.extend(self._proc_children(child))
+        return descendants
 
     def _proc_open_paths(self, pid: int) -> list[str]:
         fd_dir = Path(f"/proc/{pid}/fd")
@@ -1618,13 +1669,6 @@ class LiveCodexSessionManager:
         if backend == CliBackend.UNKNOWN:
             if hinted_backend:
                 backend = CliBackend(hinted_backend)
-        elif (
-            pane_command == "node"
-            and not (pane_start_command or "").strip()
-            and hinted_backend
-            and backend.value != hinted_backend
-        ):
-            backend = CliBackend(hinted_backend)
         thread_id = self._resolve_runtime_thread_id(
             tmux_session=tmux_session,
             pane_cwd=pane_cwd,

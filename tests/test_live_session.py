@@ -626,6 +626,86 @@ class LiveSessionTests(unittest.TestCase):
         self.assertEqual(status.backend, "opencode")
         self.assertEqual(status.thread_id, "ses_owner_opencode")
 
+    def test_runtime_status_prefers_detected_codex_backend_over_stale_opencode_hint_for_shell(
+        self,
+    ) -> None:
+        latest_thread = "019d332d-1bc8-7151-a874-ab0fbc493747"
+        with patch.object(self.runner, "_tmux_exists", return_value=True):
+            with patch.object(
+                self.runner, "_pane_current_command", return_value="bash"
+            ):
+                with patch.object(
+                    self.runner, "_pane_current_path", return_value="/tmp"
+                ):
+                    with patch.object(
+                        self.runner, "_capture_clean_text", return_value=""
+                    ):
+                        with patch.object(
+                            self.runner, "_pane_start_command", return_value=""
+                        ):
+                            with patch.object(
+                                self.runner,
+                                "_get_tmux_runtime_id",
+                                return_value="ses_owner_opencode",
+                            ):
+                                with patch.object(
+                                    self.runner, "_pane_pid", return_value=1234
+                                ):
+                                    with patch(
+                                        "daedalus_wechat.live_session.detect_backend",
+                                        return_value=CliBackend.CODEX,
+                                    ):
+                                        with patch.object(
+                                            self.runner,
+                                            "find_latest_thread",
+                                            return_value=latest_thread,
+                                        ):
+                                            status = self.runner._runtime_status_for_tmux(
+                                                "codex"
+                                            )
+        self.assertEqual(status.backend, "codex")
+        self.assertEqual(status.thread_id, latest_thread)
+
+    def test_runtime_status_prefers_detected_codex_backend_over_stale_opencode_hint_for_node(
+        self,
+    ) -> None:
+        latest_thread = "019d332d-1bc8-7151-a874-ab0fbc493747"
+        with patch.object(self.runner, "_tmux_exists", return_value=True):
+            with patch.object(
+                self.runner, "_pane_current_command", return_value="node"
+            ):
+                with patch.object(
+                    self.runner, "_pane_current_path", return_value="/tmp"
+                ):
+                    with patch.object(
+                        self.runner, "_capture_clean_text", return_value=""
+                    ):
+                        with patch.object(
+                            self.runner, "_pane_start_command", return_value=""
+                        ):
+                            with patch.object(
+                                self.runner,
+                                "_get_tmux_runtime_id",
+                                return_value="ses_owner_opencode",
+                            ):
+                                with patch.object(
+                                    self.runner, "_pane_pid", return_value=1234
+                                ):
+                                    with patch(
+                                        "daedalus_wechat.live_session.detect_backend",
+                                        return_value=CliBackend.CODEX,
+                                    ):
+                                        with patch.object(
+                                            self.runner,
+                                            "find_latest_thread",
+                                            return_value=latest_thread,
+                                        ):
+                                            status = self.runner._runtime_status_for_tmux(
+                                                "gpt"
+                                            )
+        self.assertEqual(status.backend, "codex")
+        self.assertEqual(status.thread_id, latest_thread)
+
     def test_resolve_opencode_session_prefers_db_truth_over_pending_tmux_hint(
         self,
     ) -> None:
@@ -644,6 +724,37 @@ class LiveSessionTests(unittest.TestCase):
                     pane_cwd="/tmp",
                 )
         self.assertEqual(resolved, "ses_old")
+
+    def test_resolve_runtime_thread_id_prefers_codex_proc_rollout_file(
+        self,
+    ) -> None:
+        pane_thread = "019d74bd-debd-7772-8c13-53356881614a"
+        latest_thread = "019d6add-22bb-73f3-b236-e805d401943e"
+        rollout_path = Path(
+            f"/home/ft/.codex/sessions/2026/04/10/rollout-2026-04-10T08-14-53-{pane_thread}.jsonl"
+        )
+        with patch.object(self.runner, "_pane_pid", return_value=1234):
+            with patch.object(self.runner, "_proc_descendants", return_value=[5678]):
+                with patch.object(
+                    self.runner,
+                    "_proc_open_paths",
+                    side_effect=[
+                        [],
+                        [str(rollout_path)],
+                    ],
+                ):
+                    with patch.object(
+                        self.runner,
+                        "find_latest_thread",
+                        return_value=latest_thread,
+                    ):
+                        resolved = self.runner._resolve_runtime_thread_id(
+                            tmux_session="gpt",
+                            pane_cwd="/tmp",
+                            screen_text="",
+                            backend="codex",
+                        )
+        self.assertEqual(resolved, pane_thread)
 
     def test_inventory_marks_duplicate_runtime_ids_without_guessing_backend(
         self,
@@ -1096,17 +1207,18 @@ class LiveSessionTests(unittest.TestCase):
                     with patch.object(
                         self.runner, "_pane_current_path", return_value="/tmp"
                     ):
-                        with patch.object(
-                            self.runner,
-                            "_capture_clean_text",
-                            return_value=f"old log {stale_thread}",
-                        ):
+                        with patch.object(self.runner, "_pane_pid", return_value=None):
                             with patch.object(
                                 self.runner,
-                                "find_latest_thread",
-                                return_value=fresh_thread,
+                                "_capture_clean_text",
+                                return_value=f"old log {stale_thread}",
                             ):
-                                status = self.runner._runtime_status_for_tmux("codex")
+                                with patch.object(
+                                    self.runner,
+                                    "find_latest_thread",
+                                    return_value=fresh_thread,
+                                ):
+                                    status = self.runner._runtime_status_for_tmux("codex")
         self.assertEqual(status.thread_id, fresh_thread)
 
     def test_find_latest_thread_ignores_spawn_child_when_root_exists(self) -> None:
@@ -1355,12 +1467,13 @@ class LiveSessionTests(unittest.TestCase):
                     with patch.object(
                         self.runner, "_pane_current_path", return_value="/tmp"
                     ):
-                        with patch.object(
-                            self.runner,
-                            "_capture_clean_text",
-                            return_value=f"stale pane text {stale_thread}",
-                        ):
-                            status = self.runner._runtime_status_for_tmux("codex")
+                        with patch.object(self.runner, "_pane_pid", return_value=None):
+                            with patch.object(
+                                self.runner,
+                                "_capture_clean_text",
+                                return_value=f"stale pane text {stale_thread}",
+                            ):
+                                status = self.runner._runtime_status_for_tmux("codex")
         self.assertEqual(status.thread_id, root_thread)
 
     def test_runtime_status_keeps_pane_thread_outside_workspace(self) -> None:
@@ -1380,17 +1493,18 @@ class LiveSessionTests(unittest.TestCase):
                     with patch.object(
                         self.runner, "_pane_current_path", return_value="/var/tmp"
                     ):
-                        with patch.object(
-                            self.runner,
-                            "_capture_clean_text",
-                            return_value=f"old log {stale_thread}",
-                        ):
+                        with patch.object(self.runner, "_pane_pid", return_value=None):
                             with patch.object(
                                 self.runner,
-                                "find_latest_thread",
-                                return_value=fresh_thread,
+                                "_capture_clean_text",
+                                return_value=f"old log {stale_thread}",
                             ):
-                                status = self.runner._runtime_status_for_tmux("codex")
+                                with patch.object(
+                                    self.runner,
+                                    "find_latest_thread",
+                                    return_value=fresh_thread,
+                                ):
+                                    status = self.runner._runtime_status_for_tmux("codex")
         self.assertEqual(status.thread_id, stale_thread)
 
 

@@ -59,7 +59,7 @@ class WeChatApiTests(unittest.TestCase):
         self.assertEqual(response["ret"], 0)
         self.assertEqual(len(client.payloads), 2)
         self.assertEqual(client.payloads[0]["msg"]["context_token"], "ctx-1")
-        self.assertIsNone(client.payloads[1]["msg"]["context_token"])
+        self.assertNotIn("context_token", client.payloads[1]["msg"])
         self.assertNotEqual(
             client.payloads[0]["msg"]["client_id"],
             client.payloads[1]["msg"]["client_id"],
