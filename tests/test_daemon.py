@@ -1603,7 +1603,7 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(runner.submitted, [])
             self.assertIn("@agent", fake_wechat.sent[-1][2])
 
-    def test_group_mode_plain_text_falls_back_to_active_direct(self) -> None:
+    def test_group_mode_plain_text_without_target_prompts_for_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_id = "ses_claude"
             state = BridgeState(
@@ -1655,16 +1655,10 @@ class DaemonTests(unittest.TestCase):
 
             daemon._handle_incoming(incoming)
 
-            self.assertEqual(runner.submitted, [(thread_id, "hello without at")])
-            self.assertEqual(state.room_focus_tmux_session, "claude")
-            self.assertEqual(
-                fake_wechat.sent[-1],
-                (
-                    "user@im.wechat",
-                    "ctx-1",
-                    "⚙️ 已注入 @claude terminal，等待 [claude] 首条回复。",
-                ),
-            )
+            self.assertEqual(runner.submitted, [])
+            self.assertIsNone(state.room_focus_tmux_session)
+            self.assertIn("@agent", fake_wechat.sent[-1][2])
+            self.assertIn("不会默认发给 active_direct", fake_wechat.sent[-1][2])
 
     def test_group_mode_pending_image_batch_is_claimed_by_next_targeted_message(
         self,

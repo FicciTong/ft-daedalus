@@ -352,6 +352,20 @@ class BridgeDaemon:
                 )
                 if self._route_room_message(rewritten, target=voice_match):
                     return
+            self._reply(
+                incoming.from_user_id,
+                incoming.context_token,
+                (
+                    "group 模式下请用 @agent 指定对象。\n"
+                    "未署名消息不会默认发给 active_direct。"
+                ),
+                kind="progress",
+                origin="wechat-room-target",
+                thread_id=None,
+                tmux_session=None,
+            )
+            self._flush_bound_outbox_if_any()
+            return
         with self._lock:
             if not self.state.active_session_id and not self.state.active_tmux_session:
                 hint = (
@@ -558,7 +572,11 @@ class BridgeDaemon:
                         "dropped_pending_desktop_mirror": dropped,
                     },
                 )
-                return f"已切换到 group 模式。\nactive_direct={active}\n{self._members_text()}"
+                return (
+                    "已切换到 group 模式。\n"
+                    f"active_direct={active}（仅保留个人默认对象；group 未署名不会默认发送）\n"
+                    f"{self._members_text()}"
+                )
             with self._lock:
                 live_records = self.runner.sync_live_sessions(self.state)
                 self._save_state()
@@ -2584,7 +2602,7 @@ class BridgeDaemon:
             lines.append(
                 f"{marker}{idx} {self._session_display_name(record)} | {self._short_thread(record.thread_id)}"
             )
-        lines.append("use=@agent 消息 或直接发给 active_direct")
+        lines.append("use=@agent 消息")
         return "\n".join(lines)
 
     def _route_room_message(self, incoming: IncomingMessage, *, target: str) -> bool:
