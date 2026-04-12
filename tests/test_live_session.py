@@ -6,7 +6,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from daedalus_wechat.cli_backend import CliBackend
 from daedalus_wechat.live_session import (
@@ -124,6 +124,120 @@ class LiveSessionTests(unittest.TestCase):
             self.runner._extract_progress_text(event),
             PLAN_MARKER
             + "Plan\n切到更小的主线切片。\n1. 完成: 检查 bridge 当前状态\n2. 进行中: 实现 plan icon",
+        )
+
+    def test_inject_prompt_uses_send_keys_for_opencode_runtime_even_in_codex_tmux(
+        self,
+    ) -> None:
+        with patch.object(
+            self.runner,
+            "_runtime_status_for_tmux",
+            return_value=LiveRuntimeStatus(
+                tmux_session="codex",
+                exists=True,
+                pane_command="node",
+                thread_id="ses_demo",
+                pane_cwd="/tmp",
+                backend=CliBackend.OPENCODE.value,
+            ),
+        ), patch("daedalus_wechat.live_session.time.sleep", lambda _: None), patch(
+            "daedalus_wechat.live_session.subprocess.run"
+        ) as run_mock:
+            self.runner._inject_prompt("codex", "line one\nline two")
+
+        self.assertEqual(
+            run_mock.call_args_list,
+            [
+                call(
+                    ["tmux", "send-keys", "-t", "codex:0.0", "line one line two"],
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
+                call(
+                    ["tmux", "send-keys", "-t", "codex:0.0", "C-m"],
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
+            ],
+        )
+
+    def test_inject_prompt_uses_send_keys_for_codex_runtime(self) -> None:
+        with patch.object(
+            self.runner,
+            "_runtime_status_for_tmux",
+            return_value=LiveRuntimeStatus(
+                tmux_session="codex",
+                exists=True,
+                pane_command="codex",
+                thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                pane_cwd="/tmp",
+                backend=CliBackend.CODEX.value,
+            ),
+        ), patch("daedalus_wechat.live_session.time.sleep", lambda _: None), patch(
+            "daedalus_wechat.live_session.subprocess.run"
+        ) as run_mock:
+            self.runner._inject_prompt("codex", "line one\nline two")
+
+        self.assertEqual(
+            run_mock.call_args_list,
+            [
+                call(
+                    ["tmux", "send-keys", "-t", "codex:0.0", "line one line two"],
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
+                call(
+                    ["tmux", "send-keys", "-t", "codex:0.0", "C-m"],
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
+            ],
+        )
+
+    def test_inject_prompt_uses_paste_buffer_for_claude_runtime(self) -> None:
+        with patch.object(
+            self.runner,
+            "_runtime_status_for_tmux",
+            return_value=LiveRuntimeStatus(
+                tmux_session="claude",
+                exists=True,
+                pane_command="claude",
+                thread_id="claude:demo",
+                pane_cwd="/tmp",
+                backend=CliBackend.CLAUDE.value,
+            ),
+        ), patch("daedalus_wechat.live_session.time.sleep", lambda _: None), patch(
+            "daedalus_wechat.live_session.subprocess.run"
+        ) as run_mock:
+            self.runner._inject_prompt("claude", "line one\nline two")
+
+        self.assertEqual(
+            run_mock.call_args_list,
+            [
+                call(
+                    ["tmux", "load-buffer", "-"],
+                    input=b"line one\nline two",
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
+                call(
+                    ["tmux", "paste-buffer", "-d", "-t", "claude:0.0"],
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
+                call(
+                    ["tmux", "send-keys", "-t", "claude:0.0", "C-m"],
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
+            ],
         )
 
     def test_wait_for_final_reply_returns_final_without_task_complete(self) -> None:
