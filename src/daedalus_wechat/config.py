@@ -11,7 +11,6 @@ class BridgeConfig:
     account_file: Path
     state_dir: Path
     default_cwd: Path
-    openclaw_profile: str
     canonical_tmux_session: str
     allowed_users: frozenset[str]
     progress_updates_default: bool
@@ -44,17 +43,6 @@ class BridgeConfig:
     @property
     def room_transcript_file(self) -> Path:
         return self.state_dir / "room_transcript.jsonl"
-
-    @property
-    def openclaw_state_dir(self) -> Path:
-        if self.openclaw_profile == "default":
-            return Path.home() / ".openclaw"
-        return Path.home() / f".openclaw-{self.openclaw_profile}"
-
-    @property
-    def openclaw_accounts_dir(self) -> Path:
-        return self.openclaw_state_dir / "openclaw-weixin" / "accounts"
-
 
 def _parse_allowed_users(raw: str) -> frozenset[str]:
     entries = []
@@ -178,10 +166,6 @@ def load_config() -> BridgeConfig:
         opencode_state_db_source = "default_resolved"
         raw_opencode_state_db = str(default_opencode_state_db())
     opencode_state_db = Path(raw_opencode_state_db).expanduser()
-    openclaw_profile = os.environ.get(
-        "DAEDALUS_WECHAT_OPENCLAW_PROFILE",
-        file_env.get("DAEDALUS_WECHAT_OPENCLAW_PROFILE", "daedalus-wechat"),
-    ).strip() or "daedalus-wechat"
     canonical_tmux_session = (
         os.environ.get(
             "DAEDALUS_WECHAT_TMUX_SESSION",
@@ -226,7 +210,6 @@ def load_config() -> BridgeConfig:
         codex_state_db_source=codex_state_db_source,
         opencode_state_db=opencode_state_db,
         opencode_state_db_source=opencode_state_db_source,
-        openclaw_profile=openclaw_profile,
         canonical_tmux_session=canonical_tmux_session,
         allowed_users=allowed_users,
         progress_updates_default=progress_updates_default,

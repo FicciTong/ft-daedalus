@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -16,8 +15,6 @@ from .live_session import LiveCodexSessionManager
 from .security_drill import run_security_drill
 from .state import BridgeState
 from .wechat_api import WeChatAccount, WeChatClient
-
-OPENCLAW_WEIXIN_PLUGIN_SPEC = "@tencent-weixin/openclaw-weixin"
 
 
 def _chunk_text(text: str, limit: int) -> list[str]:
@@ -129,124 +126,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub.add_parser(
         "auth-ilink",
-        help="Run direct official iLink QR login without OpenClaw, then write bridge account.json",
-    )
-    sub.add_parser(
-        "auth-openclaw",
-        help="Run legacy official openclaw-weixin login under the dedicated bridge profile, then import the account",
-    )
-    sub.add_parser(
-        "import-openclaw-account",
-        help="Import the newest official OpenClaw Weixin account into the bridge state dir",
+        help="Run direct official iLink QR login, then write bridge account.json",
     )
     return parser
-
-
-def _import_latest_openclaw_account(config, state: BridgeState) -> int:
-    root = config.openclaw_accounts_dir
-    candidates = sorted(
-        (
-            p
-            for p in root.glob("*.json")
-            if not p.name.endswith(".sync.json")
-            and not p.name.endswith(".context-tokens.json")
-        ),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    if not candidates:
-        raise RuntimeError(
-            "No OpenClaw Weixin account found. Run `daedalus-wechat auth-openclaw` first."
-        )
-    account_src = candidates[0]
-    sync_src = root / f"{account_src.stem}.sync.json"
-    config.state_dir.mkdir(parents=True, exist_ok=True)
-    account_obj = json.loads(account_src.read_text())
-    if not account_obj.get("accountId"):
-        account_obj["accountId"] = account_src.stem
-    if not account_obj.get("cdnBaseUrl"):
-        account_obj["cdnBaseUrl"] = "https://novac2c.cdn.weixin.qq.com/c2c"
-    config.account_file.write_text(
-        json.dumps(account_obj, ensure_ascii=False, indent=2) + "\n"
-    )
-    if sync_src.exists():
-        sync_obj = json.loads(sync_src.read_text())
-        state.get_updates_buf = str(sync_obj.get("get_updates_buf", "") or "")
-        state.save(config.state_file)
-    print(f"imported_account={account_src}")
-    print(f"bridge_account_file={config.account_file}")
-    print(f"openclaw_profile={config.openclaw_profile}")
-    if sync_src.exists():
-        print(f"seeded_get_updates_buf_from={sync_src}")
-    return 0
-
-
-def _resolve_openclaw_module_dir() -> Path:
-    openclaw_bin = shutil.which("openclaw")
-    if not openclaw_bin:
-        raise RuntimeError("openclaw CLI not found in PATH")
-    candidate = (
-        Path(openclaw_bin).resolve().parent.parent / "lib" / "node_modules" / "openclaw"
-    )
-    if not candidate.exists():
-        raise RuntimeError(
-            f"Cannot resolve global openclaw module dir from {openclaw_bin}"
-        )
-    return candidate
-
-
-def _ensure_openclaw_profile_bootstrap(config) -> None:
-    profile_args = ["openclaw", "--profile", config.openclaw_profile]
-    plugin_root = config.openclaw_state_dir / "extensions" / "openclaw-weixin"
-    if not plugin_root.exists():
-        subprocess.run(
-            profile_args + ["plugins", "install", OPENCLAW_WEIXIN_PLUGIN_SPEC],
-            check=True,
-        )
-    plugin_node_modules = plugin_root / "node_modules"
-    plugin_node_modules.mkdir(parents=True, exist_ok=True)
-    openclaw_link = plugin_node_modules / "openclaw"
-    if not openclaw_link.exists():
-        openclaw_link.symlink_to(_resolve_openclaw_module_dir())
-    subprocess.run(
-        profile_args
-        + [
-            "config",
-            "set",
-            "plugins.entries.openclaw-weixin.enabled",
-            "true",
-            "--strict-json",
-        ],
-        check=True,
-    )
-    subprocess.run(
-        profile_args
-        + [
-            "config",
-            "set",
-            "plugins.allow",
-            '["openclaw-weixin"]',
-            "--strict-json",
-        ],
-        check=True,
-    )
-
-
-def _auth_openclaw(config, state: BridgeState) -> int:
-    _ensure_openclaw_profile_bootstrap(config)
-    cmd = [
-        "openclaw",
-        "--profile",
-        config.openclaw_profile,
-        "channels",
-        "login",
-        "--channel",
-        "openclaw-weixin",
-    ]
-    completed = subprocess.run(cmd, check=False)
-    if completed.returncode != 0:
-        return completed.returncode
-    return _import_latest_openclaw_account(config, state)
 
 
 def _maybe_restart_bridge_service() -> bool:
@@ -299,19 +181,12 @@ def main() -> int:
     if args.command == "status":
         print(f"state_file={config.state_file}")
         print(f"account_file={config.account_file}")
-        print(f"openclaw_profile={config.openclaw_profile}")
         print(f"active_session_id={state.active_session_id}")
         print(f"sessions={len(state.sessions)}")
         return 0
 
-    if args.command == "auth-openclaw":
-        return _auth_openclaw(config, state)
-
     if args.command == "auth-ilink":
         return _auth_ilink(config, state)
-
-    if args.command == "import-openclaw-account":
-        return _import_latest_openclaw_account(config, state)
 
     if args.command == "doctor":
         print(
@@ -325,7 +200,6 @@ def main() -> int:
         print(f"codex_bin={config.codex_bin}")
         print(f"opencode_bin={config.opencode_bin}")
         print(f"account_file={config.account_file}")
-        print(f"openclaw_profile={config.openclaw_profile}")
         print(f"default_cwd={config.default_cwd}")
         print(f"state_file={config.state_file}")
         print(f"active_session_id={state.active_session_id}")

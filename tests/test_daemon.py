@@ -328,7 +328,6 @@ class DaemonTests(unittest.TestCase):
             account_file=state_dir / "account.json",
             state_dir=state_dir,
             default_cwd=Path("/tmp"),
-            openclaw_profile="daedalus-wechat",
             canonical_tmux_session="codex",
             allowed_users=allowed_users,
             progress_updates_default=False,
@@ -819,7 +818,7 @@ class DaemonTests(unittest.TestCase):
                     pane_cwd="/tmp",
                 ),
                 LiveRuntimeStatus(
-                    tmux_session="openclaw",
+                    tmux_session="stray-shell",
                     exists=True,
                     pane_command="node",
                     thread_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
@@ -835,7 +834,7 @@ class DaemonTests(unittest.TestCase):
             text = daemon._handle_command("/sessions")
             self.assertIn("sessions=2", text)
             self.assertIn("excluded=1", text)
-            self.assertIn("x openclaw | outside-workspace", text)
+            self.assertIn("x stray-shell | outside-workspace", text)
 
     def test_sessions_text_lists_multiple_live_tmux_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

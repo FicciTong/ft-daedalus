@@ -26,7 +26,6 @@ Current mainline truth:
 
 - Tencent hosts the upstream `iLink bot` service
 - `ft-daedalus` now talks to that upstream directly
-- OpenClaw is no longer required on the machine
 - the bridge remains owner-facing and repo-native
 
 This is **not** a cloud-task wrapper. It preserves **local session continuity**
@@ -87,7 +86,6 @@ This bridge:
 - does **not** stream many live shells into one WeChat chat at once (unless
   group mode is explicitly enabled)
 - **does** use the official Tencent Weixin iLink upstream
-- **does not** need OpenClaw as the long-term host dependency
 - **does** treat workspace live tmux sessions as switchable runtime targets,
   with `tmux codex` as the canonical default
 - **does** mirror desktop-originated final replies back to WeChat once the chat
@@ -148,7 +146,6 @@ Current truthful read:
 
 - Tencent's official upstream is the `iLink bot` route
 - `daedalus-wechat` now bootstraps directly against that route
-- no OpenClaw host install is required
 
 ## 🚀 Install
 
@@ -225,8 +222,6 @@ send:
 /status
 /recent 6
 ```
-
-You do not need an OpenClaw profile for the current mainline.
 
 ## 🛡️ Security Boundary
 

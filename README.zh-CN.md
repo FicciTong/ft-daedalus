@@ -25,7 +25,6 @@
 
 - 腾讯提供官方 `iLink bot` 上游
 - `ft-daedalus` 现在直接对接这条上游
-- 这台机器已经不再需要安装 OpenClaw 宿主
 - bridge 仍然只是 owner-facing 的本地 operator surface
 
 它**不是**云端任务转发器，也**不是**“换个平台聊同一个机器人”的空壳。  
@@ -86,7 +85,6 @@ surface 落在这里。
 - **不会**接管 repo 治理
 - **不会**把多个 live shell 同时混流到一个聊天窗口（除非显式开启 group 模式）
 - **会**使用腾讯官方 iLink 上游
-- **不会**把 OpenClaw 继续当长期必需宿主依赖
 - **会**把 workspace 下的 live tmux session 当成可切换 runtime target，
   同时保留一个 canonical default tmux
 - **会**在当前微信会话绑定后，把桌面侧产生的 final reply 镜像回微信
@@ -150,7 +148,6 @@ uv --version
 
 - 腾讯官方上游是 `iLink bot`
 - bridge 现在直接对接这条上游
-- 当前主线不再需要 OpenClaw 宿主
 
 ## 🚀 安装
 
@@ -231,8 +228,6 @@ uv run daedalus-wechat auth-ilink
 /status
 /recent 6
 ```
-
-当前主线不需要 OpenClaw profile。
 
 ## 🤖 给别的 Agent 的最短部署路径
 
