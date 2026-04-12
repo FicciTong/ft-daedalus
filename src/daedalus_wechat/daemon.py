@@ -117,11 +117,11 @@ HELP_TEXT = """FT bridge 命令总览（支持 `/command` 和 `\\command`）
 /help              显示这页
 /menu              同 /help
 
-普通文本消息 = 直接发给当前 active live tmux session。
-group 模式下可用 `@agent 消息` 定向发给某个参与者，所有桌面 final 会带说话人标签回到同一个聊天。
+个人模式下普通文本消息 = 直接发给当前 active live tmux session。
+group 模式下只认显式 `@agent 消息` 定向；所有桌面 final 会带说话人标签回到同一个聊天。
 如果当前 active tmux 还没打开受支持的 live runtime，bridge 会明确提示你先启动/恢复。
 /sessions 只显示当前 workspace 下、看起来像 live runtime 的 tmux。
-个人模式下同一时刻只会有一个 active live session；group 模式是 additive，不替代个人 /switch。
+group 路由与个人默认对象隔离；退出 group 后个人 /switch 仍按 single 模式生效。
 bridge 会后台定期检查并冲洗 pending backlog，无需 /queue /catchup。
 """
 
@@ -357,7 +357,7 @@ class BridgeDaemon:
                 incoming.context_token,
                 (
                     "group 模式下请用 @agent 指定对象。\n"
-                    "未署名消息不会默认发给 active_direct。"
+                    "未署名消息不会默认路由。"
                 ),
                 kind="progress",
                 origin="wechat-room-target",
@@ -373,8 +373,8 @@ class BridgeDaemon:
                 )
                 if self._room_mode_enabled():
                     hint = (
-                        "group 模式下当前没有 active_direct；请先用 /switch <tmux>，"
-                        "或用 @agent 指定对象。"
+                        "group 模式下请直接用 @agent 指定对象。\n"
+                        "个人 /switch 只影响 single 模式。"
                     )
                 self._reply(
                     incoming.from_user_id,
@@ -455,7 +455,7 @@ class BridgeDaemon:
                 tmux_session=refreshed.tmux_session,
                 trigger="active-direct",
             )
-            focus_name = refreshed.tmux_session or "active_direct"
+            focus_name = refreshed.tmux_session or "target"
             ack_text = f"已注入 @{focus_name} terminal，等待 [{focus_name}] 首条回复。"
             if saved_images:
                 ack_text = (
@@ -567,16 +567,12 @@ class BridgeDaemon:
                 self._log_event(
                     "room_mode_enabled",
                     {
-                        "active_direct": active,
+                        "preserved_single_default": active,
                         "seeded_threads": seeded,
                         "dropped_pending_desktop_mirror": dropped,
                     },
                 )
-                return (
-                    "已切换到 group 模式。\n"
-                    f"active_direct={active}（仅保留个人默认对象；group 未署名不会默认发送）\n"
-                    f"{self._members_text()}"
-                )
+                return "已切换到 group 模式。\n" + self._members_text()
             with self._lock:
                 live_records = self.runner.sync_live_sessions(self.state)
                 self._save_state()
@@ -1065,16 +1061,12 @@ class BridgeDaemon:
         return self._ordered_sessions()
 
     def _status_text(self) -> str:
-        self.runner.sync_live_sessions(self.state)
+        live_records = self.runner.sync_live_sessions(self.state)
+        if self._room_mode_enabled():
+            return self._room_status_text(live_records=live_records)
         if not self.state.active_session_id and not self.state.active_tmux_session:
             lines = ["status=no_active"]
-            if self._room_mode_enabled():
-                lines.append("mode=group")
-                lines.append(
-                    "hint=先用 @agent 定向消息，或 /switch <tmux> 选择默认 live session"
-                )
-            else:
-                lines.append("hint=先用 /switch <tmux> 选择一个 live session")
+            lines.append("hint=先用 /switch <tmux> 选择一个 live session")
             return "\n".join(lines)
         runtime = self.runner.current_runtime_status(
             active_session_id=self.state.active_session_id,
@@ -1138,6 +1130,34 @@ class BridgeDaemon:
             lines.insert(1, "mode=group")
         return "\n".join(lines)
 
+    def _room_status_text(self, *, live_records: list | None = None) -> str:
+        listed = self._listed_sessions(live_records)
+        focus = self._active_room_focus()
+        focus_name = "none"
+        if focus is not None:
+            focus_name = str(focus.get("tmux_session", "")).strip()
+            if not focus_name:
+                focus_thread = str(focus.get("thread_id", "")).strip()
+                if focus_thread:
+                    record = self.state.sessions.get(focus_thread)
+                    focus_name = (
+                        str(record.tmux_session or "").strip()
+                        if record is not None
+                        else ""
+                    ) or self._short_thread(focus_thread)
+        lines = [
+            "status=group",
+            "mode=group",
+            f"members={len(listed)}",
+            f"focus={focus_name or 'none'}",
+            f"notify={self._notify_mode_text()}",
+        ]
+        if listed:
+            lines.append("hint=用 @agent 定向；/members 看参与者")
+        else:
+            lines.append("hint=当前没有可见 live session；先启动/恢复后再 @agent")
+        return "\n".join(lines)
+
     def _sessions_text(self, live_records: list | None = None) -> str:
         runtime = self.runner.current_runtime_status(
             active_session_id=self.state.active_session_id,
@@ -1178,7 +1198,9 @@ class BridgeDaemon:
         return "\n".join(lines) + "\nuse=/switch 1"
 
     def _health_text(self) -> str:
-        self.runner.sync_live_sessions(self.state)
+        live_records = self.runner.sync_live_sessions(self.state)
+        if self._room_mode_enabled():
+            return self._room_health_text(live_records=live_records)
         runtime = self.runner.current_runtime_status(
             active_session_id=self.state.active_session_id,
             active_tmux_session=self.state.active_tmux_session,
@@ -1218,6 +1240,50 @@ class BridgeDaemon:
             lines.append("mode=group")
         if conflict_reason is not None:
             lines.append(f"conflict={conflict_reason}")
+        return "\n".join(lines)
+
+    def _room_health_text(self, *, live_records: list | None = None) -> str:
+        listed = self._listed_sessions(live_records)
+        ready_members = 0
+        conflict_members = 0
+        for runtime in self.runner.list_live_runtime_statuses():
+            if not str(runtime.tmux_session or "").strip():
+                continue
+            runtime_conflict = None
+            if hasattr(self.runner, "runtime_conflict_reason"):
+                runtime_conflict = self.runner.runtime_conflict_reason(runtime)
+            if runtime_conflict is not None:
+                conflict_members += 1
+                continue
+            if runtime.exists and runtime.backend != "unknown" and runtime.thread_id:
+                ready_members += 1
+        status = "ok" if ready_members > 0 else "degraded"
+        access = (
+            f"locked:{len(self.config.allowed_users)}"
+            if self.config.allowed_users
+            else "open"
+        )
+        wechat_account = getattr(
+            getattr(self.wechat, "account", None), "account_id", "unknown"
+        )
+        focus = self._active_room_focus()
+        focus_name = "none"
+        if focus is not None:
+            focus_name = str(focus.get("tmux_session", "")).strip() or self._short_thread(
+                str(focus.get("thread_id", "")).strip()
+            )
+        lines = [
+            f"health={status}",
+            "mode=group",
+            f"members={len(listed)}",
+            f"ready_members={ready_members}",
+            f"focus={focus_name or 'none'}",
+            f"wechat={wechat_account}",
+            f"access={access}",
+            f"notify={self._notify_mode_text()}",
+        ]
+        if conflict_members:
+            lines.append(f"conflict_members={conflict_members}")
         return "\n".join(lines)
 
     def _reply(

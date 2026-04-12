@@ -654,6 +654,94 @@ class DaemonTests(unittest.TestCase):
             self.assertIsNone(state.active_session_id)
             self.assertIsNone(state.active_tmux_session)
 
+    def test_status_text_in_group_mode_is_room_summary_without_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "ses_kimi"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="kimi",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-12T00:00:00+00:00",
+                        updated_at="2026-04-12T00:00:00+00:00",
+                        tmux_session="kimi",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="kimi",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+
+            text = daemon._status_text()
+
+            self.assertIn("status=group", text)
+            self.assertIn("mode=group", text)
+            self.assertIn("members=1", text)
+            self.assertIn("focus=none", text)
+            self.assertIn("@agent", text)
+            self.assertNotIn("status=no_active", text)
+
+    def test_health_text_in_group_mode_is_room_summary_without_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "ses_codex"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="codex",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-12T00:00:00+00:00",
+                        updated_at="2026-04-12T00:00:00+00:00",
+                        tmux_session="codex",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                )
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+
+            text = daemon._health_text()
+
+            self.assertIn("health=ok", text)
+            self.assertIn("mode=group", text)
+            self.assertIn("members=1", text)
+            self.assertIn("ready_members=1", text)
+            self.assertIn("focus=none", text)
+            self.assertNotIn("tmux=", text)
+
     def test_bootstrap_runtime_does_not_auto_select_live_session_without_active(
         self,
     ) -> None:
@@ -1580,7 +1668,7 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(len(runner.submitted), 1)
             self.assertEqual(runner.submitted[0][0], thread_claude)
 
-    def test_group_mode_voice_no_match_without_active_direct_prompts_for_target(self) -> None:
+    def test_group_mode_voice_no_match_prompts_for_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
                 room_mode_enabled=True,
@@ -1658,7 +1746,7 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(runner.submitted, [])
             self.assertIsNone(state.room_focus_tmux_session)
             self.assertIn("@agent", fake_wechat.sent[-1][2])
-            self.assertIn("不会默认发给 active_direct", fake_wechat.sent[-1][2])
+            self.assertIn("不会默认路由", fake_wechat.sent[-1][2])
 
     def test_group_mode_pending_image_batch_is_claimed_by_next_targeted_message(
         self,
@@ -3355,7 +3443,7 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("/log 10", help_text)
             self.assertIn("当前可切换的 live tmux 列表", help_text)
             self.assertIn("当前 active live tmux session", help_text)
-            self.assertIn("同一时刻只会有一个 active live session", help_text)
+            self.assertIn("group 路由与个人默认对象隔离", help_text)
             self.assertIn("无需 /queue /catchup", help_text)
 
     def test_queue_text_summarizes_pending_outbox(self) -> None:
