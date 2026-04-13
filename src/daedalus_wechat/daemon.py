@@ -11,7 +11,11 @@ from zoneinfo import ZoneInfo
 
 from .cli_backend import CliBackend
 from .config import BridgeConfig
-from .delivery_ledger import append_delivery, read_recent_for_user
+from .delivery_ledger import (
+    append_delivery,
+    read_recent_for_user,
+    rotate_jsonl_if_needed,
+)
 from .incoming_media import (
     IncomingImageRef,
     SavedIncomingImage,
@@ -156,6 +160,8 @@ class BridgeDaemon:
         self._send_dedup_cache: dict[int, float] = {}  # hash(text) -> monotonic time
         self._room_final_dedup: dict[int, float] = {}  # hash((thread,text)) -> mono time
         self.config.state_dir.mkdir(parents=True, exist_ok=True)
+        rotate_jsonl_if_needed(self.config.delivery_ledger_file)
+        rotate_jsonl_if_needed(self.config.event_log_file)
         if self.state.progress_updates_enabled is None:
             self.state.progress_updates_enabled = self.config.progress_updates_default
         self._bootstrap_runtime()
