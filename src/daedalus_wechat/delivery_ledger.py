@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -25,8 +26,19 @@ def _parse_ts(value: object) -> datetime | None:
 def _last_seq(ledger_file: Path) -> int:
     if not ledger_file.exists():
         return 0
-    lines = ledger_file.read_text(encoding="utf-8").splitlines()
-    for raw in reversed(lines):
+    try:
+        with ledger_file.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            pos = fh.tell()
+            chunk = b""
+            while pos > 0 and chunk.count(b"\n") < 8:
+                step = min(8192, pos)
+                pos -= step
+                fh.seek(pos)
+                chunk = fh.read(step) + chunk
+    except OSError:
+        return 0
+    for raw in reversed(chunk.decode("utf-8", errors="replace").splitlines()):
         try:
             item = json.loads(raw)
         except json.JSONDecodeError:

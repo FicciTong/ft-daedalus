@@ -9,6 +9,8 @@ WorkingDirectory=%h/dev/ft-cosmos/ft-daedalus
 EnvironmentFile=-%h/.config/daedalus-wechat.env
 Environment=PATH=%h/.local/share/mise/installs/node/24.13.1/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/dev/ft-cosmos/ft-daedalus/.venv/bin/daedalus-wechat run
+MemoryHigh=512M
+MemoryMax=768M
 Restart=always
 RestartSec=5
 
