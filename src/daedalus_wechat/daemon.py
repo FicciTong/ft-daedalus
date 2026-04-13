@@ -3070,20 +3070,13 @@ class BridgeDaemon:
             ):
                 kept.append(item)
                 continue
-            # Dedup: if this exact text was already sent (or attempted)
-            # within the dedup window, skip the send but keep in pending
-            # so it doesn't vanish from state.
+            # Dedup: if this exact text was already sent within the dedup
+            # window, drop the pending item (it was already delivered).
             flush_hash = hash((to_user_id, text))
             now_mono = time.monotonic()
             with self._lock:
                 last_sent_at = self._send_dedup_cache.get(flush_hash)
             if last_sent_at is not None and (now_mono - last_sent_at) < _SEND_DEDUP_WINDOW_SECONDS:
-                with self._lock:
-                    self._log_event(
-                        "flush_dedup_suppressed",
-                        {"to": to_user_id, "text": text[:200], "age_s": round(now_mono - last_sent_at, 1)},
-                    )
-                kept.append(item)
                 continue
             effective_context = self._effective_send_context(
                 context_token=context_token,
@@ -3116,8 +3109,6 @@ class BridgeDaemon:
                         tmux_session=self._tmux_for_thread(thread_id) or tmux_session,
                     )
             except Exception as exc:  # noqa: BLE001
-                with self._lock:
-                    self._send_dedup_cache[flush_hash] = now_mono
                 item["last_attempt_at"] = now_iso()
                 item["attempt_count"] = int(item.get("attempt_count", 1) or 1) + 1
                 item["last_error"] = str(exc)
@@ -3183,12 +3174,6 @@ class BridgeDaemon:
             with self._lock:
                 last_sent_at = self._send_dedup_cache.get(flush_hash)
             if last_sent_at is not None and (now_mono - last_sent_at) < _SEND_DEDUP_WINDOW_SECONDS:
-                with self._lock:
-                    self._log_event(
-                        "flush_all_dedup_suppressed",
-                        {"to": to_user_id, "text": text[:200], "age_s": round(now_mono - last_sent_at, 1)},
-                    )
-                kept.append(item)
                 continue
             effective_context = self._effective_send_context(
                 context_token=context_token,
@@ -3221,8 +3206,6 @@ class BridgeDaemon:
                         tmux_session=resolved_tmux_session,
                     )
             except Exception as exc:  # noqa: BLE001
-                with self._lock:
-                    self._send_dedup_cache[flush_hash] = now_mono
                 item["last_attempt_at"] = now_iso()
                 item["attempt_count"] = int(item.get("attempt_count", 1) or 1) + 1
                 item["last_error"] = str(exc)
