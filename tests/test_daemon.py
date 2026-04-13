@@ -4654,8 +4654,8 @@ class DaemonTests(unittest.TestCase):
                 daemon.state.get_recent_delivery_cursor("user@im.wechat|codex"), 9239
             )
 
-    def test_stale_pending_backlog_is_auto_flushed(self) -> None:
-        """Stale desktop-mirror items should be delivered, not held forever."""
+    def test_ambiguous_stale_pending_backlog_is_suppressed(self) -> None:
+        """Ambiguous ret=-2 desktop finals should not be replayed into chat."""
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
                 bound_user_id="user@im.wechat",
@@ -4685,11 +4685,41 @@ class DaemonTests(unittest.TestCase):
 
             daemon._flush_bound_outbox_if_any()
 
-            self.assertEqual(
-                fake_wechat.sent,
-                [("user@im.wechat", None, "VERY_OLD_FINAL")],
-            )
+            self.assertEqual(fake_wechat.sent, [])
             self.assertEqual(len(state.pending_outbox), 0)
+
+    def test_room_mode_suppresses_ambiguous_desktop_final_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(
+                room_mode_enabled=True,
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "ROOM_OLD_FINAL",
+                        "created_at": "2026-03-26T00:00:00+00:00",
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                        "thread_id": "thread-1",
+                        "tmux_session": "codex",
+                        "attempt_count": 2,
+                        "last_error": "ret=-2",
+                    }
+                ],
+            )
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+
+            daemon._flush_bound_outbox_if_any()
+
+            self.assertEqual(fake_wechat.sent, [])
+            self.assertEqual(state.pending_outbox, [])
 
     def test_stale_desktop_mirror_backlog_from_inactive_thread_is_dropped(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5485,6 +5515,106 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(
                 fake_wechat.sent[-1],
                 ("user@im.wechat", None, "📋 Plan\n1. 进行中: 实现 plan icon"),
+            )
+
+    def test_room_mode_dedups_repeated_identical_plan_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            state = BridgeState(
+                room_mode_enabled=True,
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="beta",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="beta",
+                    )
+                },
+                mirror_offsets={thread_id: 100},
+            )
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="beta",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                )
+            ]
+            runner.progresses[(thread_id, 100)] = (
+                [PLAN_MARKER + "Plan\n1. 进行中: SAME"],
+                "",
+                150,
+            )
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+
+            daemon._mirror_room_all_members()
+
+            runner.progresses[(thread_id, 150)] = (
+                [PLAN_MARKER + "Plan\n1. 进行中: SAME"],
+                "",
+                160,
+            )
+            daemon._mirror_room_all_members()
+
+            self.assertEqual(
+                fake_wechat.sent,
+                [("user@im.wechat", None, "[beta] 📋 Plan\n1. 进行中: SAME")],
+            )
+
+    def test_active_mirror_dedups_repeated_identical_final_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            state = BridgeState(
+                active_session_id=thread_id,
+                active_tmux_session="codex",
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                mirror_offsets={thread_id: 100},
+                sessions={
+                    thread_id: SessionRecord(
+                        thread_id=thread_id,
+                        label="codex",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="codex",
+                    )
+                },
+            )
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            runner.runtime_thread_id = thread_id
+            runner.progresses[(thread_id, 100)] = ([], "FINAL_OK", 150)
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+
+            daemon._mirror_desktop_final_if_any()
+
+            runner.progresses[(thread_id, 150)] = ([], "FINAL_OK", 160)
+            daemon._mirror_desktop_final_if_any()
+
+            self.assertEqual(
+                fake_wechat.sent,
+                [("user@im.wechat", None, "✅ FINAL_OK")],
             )
 
     def test_desktop_progress_pending_queue_preserves_backlog_for_thread(self) -> None:

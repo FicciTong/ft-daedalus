@@ -43,6 +43,7 @@ PENDING_MEDIA_BATCH_TTL_SECONDS = OWNER_VISIBLE_RECENT_CLUSTER_SECONDS
 PENDING_MEDIA_BATCH_MERGE_SECONDS = 15.0
 STALE_DESKTOP_MIRROR_DROP_SECONDS = 600.0
 ROOM_FOCUS_TIMEOUT_SECONDS = 30.0
+MIRRORED_TEXT_DEDUP_SECONDS = 1800.0
 ROOM_ROUTE_RE = re.compile(r"^[＠@](?P<target>[A-Za-z0-9_.:-]+)\s*(?P<body>[\s\S]*)$")
 
 # Digit words → ASCII digits for voice transcript normalization
@@ -159,6 +160,7 @@ class BridgeDaemon:
         self._last_external_state_mtime_ns = 0
         self._send_dedup_cache: dict[int, float] = {}  # hash(text) -> monotonic time
         self._room_final_dedup: dict[int, float] = {}  # hash((thread,text)) -> mono time
+        self._mirrored_text_dedup: dict[int, float] = {}  # hash((thread,kind,text)) -> mono time
         self.config.state_dir.mkdir(parents=True, exist_ok=True)
         rotate_jsonl_if_needed(self.config.delivery_ledger_file)
         rotate_jsonl_if_needed(self.config.event_log_file)
@@ -1649,6 +1651,13 @@ class BridgeDaemon:
             self._save_state()
         now = time.monotonic()
         for final_text in scan.final_texts:
+            if self._should_suppress_mirrored_text(
+                thread_id=thread_id,
+                kind="final",
+                text=final_text,
+                now=now,
+            ):
+                continue
             # Dedup: same final text within 10s window → skip
             final_key = hash(final_text)
             last = getattr(self, "_last_mirrored_final", None)
@@ -1704,6 +1713,12 @@ class BridgeDaemon:
                     continue
                 kind = self._classify_mirror_text_kind(progress)
                 body = self._strip_plan_marker(progress)
+                if self._should_suppress_mirrored_text(
+                    thread_id=thread_id,
+                    kind=kind,
+                    text=body,
+                ):
+                    continue
                 if kind == "progress":
                     if not self._progress_updates_enabled():
                         continue
@@ -1734,6 +1749,13 @@ class BridgeDaemon:
             # Finals
             now = time.monotonic()
             for final_text in scan.final_texts:
+                if self._should_suppress_mirrored_text(
+                    thread_id=thread_id,
+                    kind="final",
+                    text=final_text,
+                    now=now,
+                ):
+                    continue
                 final_key = hash((thread_id, final_text))
                 last = self._room_final_dedup.get(final_key)
                 if last is not None and (now - last) < 10.0:
@@ -1756,6 +1778,30 @@ class BridgeDaemon:
                 self._room_final_dedup = {
                     k: v for k, v in self._room_final_dedup.items() if v > cutoff
                 }
+
+    def _should_suppress_mirrored_text(
+        self,
+        *,
+        thread_id: str,
+        kind: str,
+        text: str,
+        now: float | None = None,
+    ) -> bool:
+        body = str(text or "").strip()
+        if not thread_id or not body:
+            return False
+        current = time.monotonic() if now is None else now
+        key = hash((thread_id, kind, body))
+        last = self._mirrored_text_dedup.get(key)
+        if last is not None and (current - last) < MIRRORED_TEXT_DEDUP_SECONDS:
+            return True
+        self._mirrored_text_dedup[key] = current
+        if len(self._mirrored_text_dedup) > 1000:
+            cutoff = current - MIRRORED_TEXT_DEDUP_SECONDS * 2
+            self._mirrored_text_dedup = {
+                k: v for k, v in self._mirrored_text_dedup.items() if v > cutoff
+            }
+        return False
 
     def _queue_inactive_desktop_finals_if_any(self) -> None:
         with self._lock:
@@ -3042,11 +3088,21 @@ class BridgeDaemon:
             kind = str(item.get("kind", "message"))
             origin = str(item.get("origin", "bridge"))
             thread_id = str(item.get("thread_id", "")).strip() or None
-            if self._should_suppress_pending_item(kind=kind, origin=origin):
+            suppression_reason = self._pending_item_suppression_reason(
+                item=item,
+                kind=kind,
+                origin=origin,
+            )
+            if suppression_reason:
                 with self._lock:
                     self._log_event(
                         "suppressed_outgoing",
-                        {"to": to_user_id, "text": text[:400], "kind": kind},
+                        {
+                            "to": to_user_id,
+                            "text": text[:400],
+                            "kind": kind,
+                            "reason": suppression_reason,
+                        },
                     )
                     append_delivery(
                         state=self.state,
@@ -3059,6 +3115,7 @@ class BridgeDaemon:
                         origin=origin,
                         thread_id=thread_id,
                         tmux_session=self._tmux_for_thread(thread_id) or tmux_session,
+                        error=suppression_reason,
                     )
                 continue
             # Stale items (old + retried) bypass wait_for_bind so they
@@ -3167,7 +3224,35 @@ class BridgeDaemon:
             if self._pending_item_blocked_by_room_focus(item, focus=focus):
                 kept.append(item)
                 continue
-            if self._should_suppress_pending_item(kind=kind, origin=origin):
+            suppression_reason = self._pending_item_suppression_reason(
+                item=item,
+                kind=kind,
+                origin=origin,
+            )
+            if suppression_reason:
+                with self._lock:
+                    self._log_event(
+                        "suppressed_outgoing",
+                        {
+                            "to": to_user_id,
+                            "text": text[:400],
+                            "kind": kind,
+                            "reason": suppression_reason,
+                        },
+                    )
+                    append_delivery(
+                        state=self.state,
+                        state_file=self.config.state_file,
+                        ledger_file=self.config.delivery_ledger_file,
+                        to_user_id=to_user_id,
+                        text=text,
+                        status="suppressed",
+                        kind=kind,
+                        origin=origin,
+                        thread_id=thread_id,
+                        tmux_session=resolved_tmux_session,
+                        error=suppression_reason,
+                    )
                 continue
             flush_hash = hash((to_user_id, text))
             now_mono = time.monotonic()
@@ -3352,12 +3437,30 @@ class BridgeDaemon:
             return False
         return "ret=-2" in str(item.get("last_error", "")).strip()
 
-    def _should_suppress_pending_item(self, *, kind: str, origin: str) -> bool:
-        return (
+    def _pending_item_suppression_reason(
+        self,
+        *,
+        item: dict[str, str],
+        kind: str,
+        origin: str,
+    ) -> str | None:
+        if (
             kind == "progress"
             and origin == "desktop-mirror"
             and not self._progress_updates_enabled()
-        )
+        ):
+            return "progress_updates_disabled"
+        # For desktop-mirror finals, ret=-2 is an ambiguous send result:
+        # the message may already be in WeChat even when the API reports a
+        # failure. Auto-retrying these stale finals pollutes the owner's chat
+        # with historical duplicates, so we fail closed after the first queue.
+        if (
+            kind == "final"
+            and origin == "desktop-mirror"
+            and "ret=-2" in str(item.get("last_error", "")).strip()
+        ):
+            return "ambiguous_desktop_mirror_ret_minus_2"
+        return None
 
     def _effective_send_context(
         self,
