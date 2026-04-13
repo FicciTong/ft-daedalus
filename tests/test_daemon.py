@@ -930,7 +930,7 @@ class DaemonTests(unittest.TestCase):
 
             text = daemon._handle_command("/members")
 
-            self.assertIn("*1 gpt | ses_gpt", text)
+            self.assertIn("*1 gpt (codex) | ses_gpt", text)
             self.assertNotIn("codex | ses_gpt", text)
 
     def test_switch_can_target_live_tmux_session_name(self) -> None:

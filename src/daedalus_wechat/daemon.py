@@ -2658,15 +2658,29 @@ class BridgeDaemon:
 
     def _members_text(self) -> str:
         live_records = self.runner.sync_live_sessions(self.state)
+        # Clear stale active session pointing to a dead tmux.
+        if self.state.active_tmux_session:
+            live_tmux = {r.tmux_session for r in live_records if r.tmux_session}
+            if self.state.active_tmux_session not in live_tmux:
+                self.state.active_session_id = None
+                self.state.active_tmux_session = None
         self._save_state()
+        # Build backend lookup from inventory.
+        backend_map: dict[str, str] = {}
+        for item in self.runner.list_tmux_runtime_inventory():
+            if item.tmux_session and item.backend:
+                backend_map[item.tmux_session] = item.backend
         lines = [
             f"mode={'group' if self._room_mode_enabled() else 'single'}",
             f"members={len(live_records)}",
         ]
         for idx, record in enumerate(live_records[:20], start=1):
             marker = "*" if self._is_active_record(record) else " "
+            name = self._session_display_name(record)
+            backend = backend_map.get(record.tmux_session or "", "")
+            suffix = f" ({backend})" if backend and backend != name else ""
             lines.append(
-                f"{marker}{idx} {self._session_display_name(record)} | {self._short_thread(record.thread_id)}"
+                f"{marker}{idx} {name}{suffix} | {self._short_thread(record.thread_id)}"
             )
         lines.append("use=@agent 消息")
         return "\n".join(lines)
