@@ -110,18 +110,8 @@ def detect_backend(
         return CliBackend.UNKNOWN
 
     if not cmd or cmd in {"bash", "zsh", "sh", "fish"}:
-        if screen_text and CODEX_STATUS_RE.search(screen_text):
-            return CliBackend.CODEX
-        if screen_text and OPENCODE_HINT_RE.search(screen_text):
-            return CliBackend.OPENCODE
-        if screen_text and CLAUDE_HINT_RE.search(screen_text):
-            return CliBackend.CLAUDE
-        if "opencode" in start_cmd:
-            return CliBackend.OPENCODE
-        if "codex" in start_cmd:
-            return CliBackend.CODEX
-        if "claude" in start_cmd:
-            return CliBackend.CLAUDE
+        # Once the pane is back at a shell prompt, stale screen text or the
+        # original start command must not keep masquerading as a live runtime.
         child_backend = _detect_backend_from_proc(pane_pid)
         if child_backend != CliBackend.UNKNOWN:
             return child_backend

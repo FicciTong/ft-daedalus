@@ -240,6 +240,41 @@ class LiveSessionTests(unittest.TestCase):
             ],
         )
 
+    def test_current_runtime_status_falls_back_when_active_tmux_is_missing(self) -> None:
+        missing = LiveRuntimeStatus(
+            tmux_session="gpt",
+            exists=False,
+            pane_command=None,
+            thread_id=None,
+            pane_cwd=None,
+            backend="unknown",
+        )
+        codex = LiveRuntimeStatus(
+            tmux_session="codex",
+            exists=True,
+            pane_command="node",
+            thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+            pane_cwd="/tmp",
+            backend=CliBackend.CODEX.value,
+        )
+
+        with patch.object(
+            self.runner,
+            "_runtime_status_for_tmux",
+            side_effect=lambda tmux: missing if tmux == "gpt" else codex,
+        ), patch.object(
+            self.runner,
+            "list_live_runtime_statuses",
+            return_value=[codex],
+        ):
+            status = self.runner.current_runtime_status(
+                active_session_id="stale-thread",
+                active_tmux_session="gpt",
+            )
+
+        self.assertEqual(status.tmux_session, "codex")
+        self.assertEqual(status.thread_id, "019cdfe5-fa14-74a3-aa31-5451128ea58d")
+
     def test_wait_for_final_reply_returns_final_without_task_complete(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             rollout = Path(tmpdir) / "rollout.jsonl"
@@ -739,6 +774,38 @@ class LiveSessionTests(unittest.TestCase):
                                 )
         self.assertEqual(status.backend, "opencode")
         self.assertEqual(status.thread_id, "ses_owner_opencode")
+
+    def test_runtime_status_does_not_promote_shell_from_stale_hint(self) -> None:
+        with patch.object(self.runner, "_tmux_exists", return_value=True):
+            with patch.object(
+                self.runner, "_pane_current_command", return_value="bash"
+            ):
+                with patch.object(
+                    self.runner, "_pane_current_path", return_value="/tmp"
+                ):
+                    with patch.object(
+                        self.runner, "_capture_clean_text", return_value=""
+                    ):
+                        with patch.object(
+                            self.runner, "_pane_start_command", return_value=""
+                        ):
+                            with patch.object(
+                                self.runner,
+                                "_get_tmux_runtime_id",
+                                return_value="ses_owner_opencode",
+                            ):
+                                with patch.object(
+                                    self.runner, "_pane_pid", return_value=1234
+                                ):
+                                    with patch(
+                                        "daedalus_wechat.live_session.detect_backend",
+                                        return_value=CliBackend.UNKNOWN,
+                                    ):
+                                        status = self.runner._runtime_status_for_tmux(
+                                            "alpha"
+                                        )
+        self.assertEqual(status.backend, "unknown")
+        self.assertIsNone(status.thread_id)
 
     def test_runtime_status_prefers_detected_codex_backend_over_stale_opencode_hint_for_shell(
         self,

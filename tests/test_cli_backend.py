@@ -80,15 +80,15 @@ def test_detect_unknown_for_bash():
     assert detect_backend(pane_command="bash") == CliBackend.UNKNOWN
 
 
-def test_detect_bash_with_claude_screen():
+def test_detect_bash_with_stale_claude_screen_is_unknown():
     screen = "Claude Code ⏵⏵ bypass permissions on"
-    assert detect_backend(pane_command="bash", screen_text=screen) == CliBackend.CLAUDE
+    assert detect_backend(pane_command="bash", screen_text=screen) == CliBackend.UNKNOWN
 
 
-def test_detect_bash_with_opencode_screen():
+def test_detect_bash_with_stale_opencode_screen_is_unknown():
     screen = "OpenCode\nBuild GPT-5.4 OpenAI · xhigh\nAsk anything"
     assert (
-        detect_backend(pane_command="bash", screen_text=screen) == CliBackend.OPENCODE
+        detect_backend(pane_command="bash", screen_text=screen) == CliBackend.UNKNOWN
     )
 
 

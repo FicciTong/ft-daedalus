@@ -1117,6 +1117,23 @@ class BridgeDaemon:
                 f"backend={runtime.backend}\n"
                 f"{no_thread_hint}"
             )
+        if (
+            self.state.active_session_id != runtime.thread_id
+            or self.state.active_tmux_session != runtime.tmux_session
+        ):
+            existing = self.state.sessions.get(runtime.thread_id)
+            self.state.touch_session(
+                runtime.thread_id,
+                label=existing.label if existing else runtime.tmux_session,
+                cwd=existing.cwd
+                if existing
+                else runtime.pane_cwd or str(self.config.default_cwd),
+                source=existing.source if existing else "tmux-live",
+                tmux_session=runtime.tmux_session,
+            )
+            self.state.active_session_id = runtime.thread_id
+            self.state.active_tmux_session = runtime.tmux_session
+            self._save_state()
         record = self.state.sessions.get(runtime.thread_id)
         if not record:
             return (

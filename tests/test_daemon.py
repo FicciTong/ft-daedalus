@@ -569,6 +569,60 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("tmux=codex", text)
             self.assertIn("attach=tmux attach -t codex", text)
 
+    def test_status_text_heals_stale_missing_active_tmux(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            stale_thread = "019d74bd-debd-7772-8c13-53356881614a"
+            live_thread = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            state = BridgeState(
+                active_session_id=stale_thread,
+                active_tmux_session="gpt",
+                sessions={
+                    stale_thread: SessionRecord(
+                        thread_id=stale_thread,
+                        label="gpt",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="gpt",
+                    ),
+                    live_thread: SessionRecord(
+                        thread_id=live_thread,
+                        label="codex",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="codex",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_thread_id = live_thread
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=live_thread,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                )
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+
+            text = daemon._status_text()
+
+            self.assertIn("status=ok", text)
+            self.assertIn("tmux=codex", text)
+            self.assertEqual(state.active_tmux_session, "codex")
+            self.assertEqual(state.active_session_id, live_thread)
+
     def test_status_text_marks_pending_runtime_id_as_provisional(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             pending_thread = "pending:opencode"

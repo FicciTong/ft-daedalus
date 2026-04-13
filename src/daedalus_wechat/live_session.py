@@ -344,7 +344,9 @@ class LiveCodexSessionManager:
         active_tmux_session: str | None = None,
     ) -> LiveRuntimeStatus:
         if active_tmux_session:
-            return self._runtime_status_for_tmux(active_tmux_session)
+            active_status = self._runtime_status_for_tmux(active_tmux_session)
+            if active_status.exists:
+                return active_status
         live_statuses = self.list_live_runtime_statuses()
         if active_session_id:
             for status in live_statuses:
@@ -358,6 +360,8 @@ class LiveCodexSessionManager:
                 return status
         if live_statuses:
             return live_statuses[0]
+        if active_tmux_session:
+            return self._runtime_status_for_tmux(active_tmux_session)
         return canonical_status
 
     def list_tmux_runtime_inventory(self) -> list[TmuxRuntimeInventoryItem]:
@@ -1680,7 +1684,9 @@ class LiveCodexSessionManager:
             pane_pid=pane_pid,
         )
         if backend == CliBackend.UNKNOWN:
-            if hinted_backend:
+            # A stale tmux runtime-id hint is allowed to disambiguate node-backed
+            # TUIs, but it must never promote a plain shell pane into a live runtime.
+            if hinted_backend and (pane_command or "").strip().lower() == "node":
                 backend = CliBackend(hinted_backend)
         thread_id = self._resolve_runtime_thread_id(
             tmux_session=tmux_session,
