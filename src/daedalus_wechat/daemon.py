@@ -1585,10 +1585,9 @@ class BridgeDaemon:
             to_user_id = self.state.bound_user_id
             bound_context_token = self.state.bound_context_token
             start_offset = self.state.get_mirror_offset(thread_id) if thread_id else 0
-            selected_tmux_session = self.state.active_tmux_session
         if not thread_id or not to_user_id:
             return
-        mirror_tmux_session = self._tmux_for_thread(thread_id) or selected_tmux_session
+        mirror_tmux_session = self._tmux_for_thread(thread_id) or self._live_tmux_for_thread(thread_id)
         scan = self.runner.latest_mirror_since(
             thread_id=thread_id,
             start_offset=start_offset,
@@ -3734,6 +3733,16 @@ class BridgeDaemon:
         if not record or not record.tmux_session:
             return None
         return record.tmux_session
+
+    def _live_tmux_for_thread(self, thread_id: str | None) -> str | None:
+        """Resolve tmux session name from live runtime scan (not state cache)."""
+        normalized = str(thread_id or "").strip()
+        if not normalized:
+            return None
+        for status in self.runner.list_live_runtime_statuses():
+            if status.thread_id == normalized and status.tmux_session:
+                return status.tmux_session
+        return None
 
     def _log_event(self, kind: str, payload: dict) -> None:
         with self._lock:
