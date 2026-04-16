@@ -75,7 +75,9 @@ def _is_control_related(rel_path: str) -> bool:
     return (
         rel_path.startswith("docs/control/")
         or rel_path.startswith("docs/consultants/")
-        or rel_path.startswith("var/reports/organism/")
+        or rel_path.startswith("evidence/organism/")
+        or rel_path.startswith("var/reports/organism/_state/")
+        or rel_path.startswith("var/reports/organism/_helper/")
         or rel_path in CONTROL_AUTHORITY_FILES
     )
 
@@ -103,6 +105,9 @@ def _allow_generic_discovery(source_rel_path: str, candidate: str) -> bool:
         return (
             candidate.startswith("docs/control/")
             or candidate.startswith("docs/consultants/")
+            or candidate.startswith("evidence/organism/")
+            or candidate.startswith("var/reports/organism/_state/")
+            or candidate.startswith("var/reports/organism/_helper/")
             or candidate == "docs/REVIEW_LOG.md"
             or candidate.startswith("ft-daedalus/opencode-harness/")
         )
@@ -111,6 +116,9 @@ def _allow_generic_discovery(source_rel_path: str, candidate: str) -> bool:
             _is_harness_related(candidate)
             or candidate.startswith("docs/control/")
             or candidate.startswith("docs/consultants/")
+            or candidate.startswith("evidence/organism/")
+            or candidate.startswith("var/reports/organism/_state/")
+            or candidate.startswith("var/reports/organism/_helper/")
             or candidate == "docs/REVIEW_LOG.md"
             or candidate.startswith("ft-daedalus/opencode-harness/")
         )
