@@ -29,6 +29,8 @@ class PendingMediaBatch:
     created_at: str
     updated_at: str
     image_paths: list[str] = field(default_factory=list)
+    file_paths: list[str] = field(default_factory=list)
+    video_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -53,6 +55,42 @@ class BridgeState:
     pending_outbox_overflow_dropped: int = 0
     pending_media_batches: list[PendingMediaBatch] = field(default_factory=list)
     sessions: dict[str, SessionRecord] = field(default_factory=dict)
+
+    @staticmethod
+    def _load_pending_outbox_item(
+        item: dict,
+        *,
+        sessions: dict[str, SessionRecord],
+    ) -> dict[str, str]:
+        thread_id = str(item.get("thread_id", "")).strip()
+        normalized = {
+            "to": str(item.get("to", "")),
+            "text": str(item.get("text", "")),
+            "created_at": str(item.get("created_at", now_iso())),
+            "kind": str(item.get("kind", "message")),
+            "origin": str(item.get("origin", "bridge")),
+            "thread_id": thread_id,
+            "tmux_session": (
+                str(item.get("tmux_session")).strip()
+                if item.get("tmux_session")
+                else (
+                    sessions[thread_id].tmux_session or ""
+                    if thread_id in sessions
+                    else ""
+                )
+            ),
+            "attempt_count": int(item.get("attempt_count", 1) or 1),
+            "last_attempt_at": str(
+                item.get("last_attempt_at", item.get("created_at", now_iso()))
+            ),
+            "last_error": str(item.get("last_error", "")),
+        }
+        for key, value in item.items():
+            key_text = str(key).strip()
+            if not key_text or key_text in normalized or value is None:
+                continue
+            normalized[key_text] = str(value)
+        return normalized
 
     @classmethod
     def load(cls, path: Path) -> BridgeState:
@@ -103,33 +141,7 @@ class BridgeState:
                 for key, value in (raw.get("last_progress_summaries", {}) or {}).items()
             },
             pending_outbox=[
-                {
-                    "to": str(item.get("to", "")),
-                    "text": str(item.get("text", "")),
-                    "created_at": str(item.get("created_at", now_iso())),
-                    "kind": str(item.get("kind", "message")),
-                    "origin": str(item.get("origin", "bridge")),
-                    "thread_id": (
-                        str(item.get("thread_id")).strip()
-                        if item.get("thread_id")
-                        else ""
-                    ),
-                    "tmux_session": (
-                        str(item.get("tmux_session")).strip()
-                        if item.get("tmux_session")
-                        else (
-                            sessions[str(item.get("thread_id")).strip()].tmux_session
-                            or ""
-                            if str(item.get("thread_id", "")).strip() in sessions
-                            else ""
-                        )
-                    ),
-                    "attempt_count": int(item.get("attempt_count", 1) or 1),
-                    "last_attempt_at": str(
-                        item.get("last_attempt_at", item.get("created_at", now_iso()))
-                    ),
-                    "last_error": str(item.get("last_error", "")),
-                }
+                cls._load_pending_outbox_item(item, sessions=sessions)
                 for item in (raw.get("pending_outbox", []) or [])
                 if str(item.get("to", "")).strip() and str(item.get("text", "")).strip()
             ],
@@ -153,6 +165,16 @@ class BridgeState:
                     image_paths=[
                         str(path)
                         for path in (item.get("image_paths", []) or [])
+                        if str(path).strip()
+                    ],
+                    file_paths=[
+                        str(path)
+                        for path in (item.get("file_paths", []) or [])
+                        if str(path).strip()
+                    ],
+                    video_paths=[
+                        str(path)
+                        for path in (item.get("video_paths", []) or [])
                         if str(path).strip()
                     ],
                 )
@@ -227,6 +249,8 @@ class BridgeState:
         from_user_id: str,
         message_id: str,
         image_paths: list[str],
+        file_paths: list[str] | None = None,
+        video_paths: list[str] | None = None,
         created_at: str,
     ) -> PendingMediaBatch:
         record = PendingMediaBatch(
@@ -236,6 +260,8 @@ class BridgeState:
             created_at=str(created_at or now_iso()),
             updated_at=str(created_at or now_iso()),
             image_paths=[str(path) for path in image_paths if str(path).strip()],
+            file_paths=[str(path) for path in (file_paths or []) if str(path).strip()],
+            video_paths=[str(path) for path in (video_paths or []) if str(path).strip()],
         )
         self.pending_media_batches = [
             batch
@@ -309,6 +335,7 @@ class BridgeState:
         thread_id: str | None,
         tmux_session: str | None,
         error: str | None = None,
+        extra_metadata: dict[str, str | None] | None = None,
     ) -> None:
         body = text.strip()
         if not to_user_id or not body:
@@ -341,21 +368,33 @@ class BridgeState:
             item["attempt_count"] = int(item.get("attempt_count", 1) or 1) + 1
             if error:
                 item["last_error"] = str(error)
+            for key, value in (extra_metadata or {}).items():
+                key_text = str(key).strip()
+                if not key_text:
+                    continue
+                if value is None or not str(value).strip():
+                    item.pop(key_text, None)
+                    continue
+                item[key_text] = str(value)
             return
-        self.pending_outbox.append(
-            {
-                "to": str(to_user_id),
-                "text": body,
-                "created_at": now,
-                "kind": str(kind),
-                "origin": str(origin),
-                "thread_id": str(thread_id or ""),
-                "tmux_session": str(resolved_tmux_session or ""),
-                "attempt_count": 1,
-                "last_attempt_at": now,
-                "last_error": str(error or ""),
-            }
-        )
+        item = {
+            "to": str(to_user_id),
+            "text": body,
+            "created_at": now,
+            "kind": str(kind),
+            "origin": str(origin),
+            "thread_id": str(thread_id or ""),
+            "tmux_session": str(resolved_tmux_session or ""),
+            "attempt_count": 1,
+            "last_attempt_at": now,
+            "last_error": str(error or ""),
+        }
+        for key, value in (extra_metadata or {}).items():
+            key_text = str(key).strip()
+            if not key_text or value is None or not str(value).strip():
+                continue
+            item[key_text] = str(value)
+        self.pending_outbox.append(item)
         max_items = 1000
         overflow = len(self.pending_outbox) - max_items
         if overflow > 0:

@@ -9,7 +9,11 @@ from unittest.mock import patch
 
 from daedalus_wechat.config import BridgeConfig
 from daedalus_wechat.daemon import BridgeDaemon, IncomingMessage
-from daedalus_wechat.incoming_media import SavedIncomingImage
+from daedalus_wechat.incoming_media import (
+    SavedIncomingFile,
+    SavedIncomingImage,
+    SavedIncomingVideo,
+)
 from daedalus_wechat.live_session import (
     PLAN_MARKER,
     LiveRuntimeStatus,
@@ -40,6 +44,23 @@ class _ChunkFailWeChat(_FakeWeChat):
     def send_text(self, *, to_user_id: str, context_token: str | None, text: str):
         self.calls += 1
         if self.calls == self.fail_on_call:
+            raise RuntimeError("ret=-2")
+        return super().send_text(
+            to_user_id=to_user_id,
+            context_token=context_token,
+            text=text,
+        )
+
+
+class _FailOnCallsWeChat(_FakeWeChat):
+    def __init__(self, *, fail_on_calls: set[int]) -> None:
+        super().__init__()
+        self.calls = 0
+        self.fail_on_calls = set(fail_on_calls)
+
+    def send_text(self, *, to_user_id: str, context_token: str | None, text: str):
+        self.calls += 1
+        if self.calls in self.fail_on_calls:
             raise RuntimeError("ret=-2")
         return super().send_text(
             to_user_id=to_user_id,
@@ -1166,7 +1187,7 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("已切换到 group 模式", text)
             self.assertIn("mode=group", text)
 
-    def test_switch_group_fast_forwards_live_cursors_and_drops_mirror_backlog(
+    def test_switch_group_fast_forwards_live_cursors_and_preserves_mirror_backlog(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -1256,8 +1277,11 @@ class DaemonTests(unittest.TestCase):
             self.assertTrue(state.room_mode_enabled)
             self.assertEqual(state.get_mirror_offset(thread_gpt), 120)
             self.assertEqual(state.get_mirror_offset(thread_claude), 220)
-            self.assertEqual(len(state.pending_outbox), 1)
-            self.assertEqual(state.pending_outbox[0]["origin"], "bridge")
+            self.assertEqual(len(state.pending_outbox), 2)
+            self.assertEqual(
+                [item["origin"] for item in state.pending_outbox],
+                ["desktop-mirror", "bridge"],
+            )
             self.assertIn("mode=group", text)
 
     def test_group_targeted_message_routes_without_replacing_active(self) -> None:
@@ -1385,31 +1409,31 @@ class DaemonTests(unittest.TestCase):
                 ("user@im.wechat", None, "[claude] ✅ HELLO"),
             )
 
-    def test_room_mode_defers_non_focused_final_until_target_replies(self) -> None:
+    def test_room_mode_non_focused_final_is_not_deferred(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            thread_gpt = "ses_gpt"
-            thread_codex = "ses_codex"
+            thread_alpha = "ses_alpha"
+            thread_beta = "ses_beta"
             state = BridgeState(
                 room_mode_enabled=True,
                 bound_user_id="user@im.wechat",
                 sessions={
-                    thread_gpt: SessionRecord(
-                        thread_id=thread_gpt,
-                        label="gpt",
+                    thread_alpha: SessionRecord(
+                        thread_id=thread_alpha,
+                        label="alpha",
                         cwd="/tmp",
                         source="tmux-live",
                         created_at="2026-04-04T00:00:00+00:00",
                         updated_at="2026-04-04T00:00:00+00:00",
-                        tmux_session="gpt",
+                        tmux_session="alpha",
                     ),
-                    thread_codex: SessionRecord(
-                        thread_id=thread_codex,
-                        label="codex",
+                    thread_beta: SessionRecord(
+                        thread_id=thread_beta,
+                        label="beta",
                         cwd="/tmp",
                         source="tmux-live",
                         created_at="2026-04-04T00:00:00+00:00",
                         updated_at="2026-04-04T00:00:00+00:00",
-                        tmux_session="codex",
+                        tmux_session="beta",
                     ),
                 },
             )
@@ -1422,8 +1446,8 @@ class DaemonTests(unittest.TestCase):
             )
 
             daemon._set_room_focus(
-                thread_id=thread_gpt,
-                tmux_session="gpt",
+                thread_id=thread_alpha,
+                tmux_session="alpha",
                 trigger="test",
             )
             daemon._reply(
@@ -1432,13 +1456,16 @@ class DaemonTests(unittest.TestCase):
                 "OTHER",
                 kind="final",
                 origin="desktop-mirror",
-                thread_id=thread_codex,
-                tmux_session="codex",
+                thread_id=thread_beta,
+                tmux_session="beta",
             )
 
-            self.assertEqual(fake_wechat.sent, [])
-            self.assertEqual(len(state.pending_outbox), 1)
-            self.assertEqual(state.pending_outbox[0]["text"], "[codex] ✅ OTHER")
+            self.assertEqual(
+                fake_wechat.sent,
+                [("user@im.wechat", None, "[beta] ✅ OTHER")],
+            )
+            self.assertEqual(state.pending_outbox, [])
+            self.assertEqual(state.room_focus_tmux_session, "alpha")
 
             daemon._reply(
                 "user@im.wechat",
@@ -1446,49 +1473,49 @@ class DaemonTests(unittest.TestCase):
                 "TARGET",
                 kind="final",
                 origin="desktop-mirror",
-                thread_id=thread_gpt,
-                tmux_session="gpt",
+                thread_id=thread_alpha,
+                tmux_session="alpha",
             )
 
             self.assertEqual(
                 fake_wechat.sent,
                 [
-                    ("user@im.wechat", None, "[gpt] ✅ TARGET"),
-                    ("user@im.wechat", None, "[codex] ✅ OTHER"),
+                    ("user@im.wechat", None, "[beta] ✅ OTHER"),
+                    ("user@im.wechat", None, "[alpha] ✅ TARGET"),
                 ],
             )
             self.assertEqual(state.room_focus_tmux_session, None)
 
-    def test_room_mode_focus_timeout_does_not_hold_other_finals_forever(self) -> None:
+    def test_room_mode_focus_timeout_still_clears_stale_focus(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            thread_gpt = "ses_gpt"
-            thread_codex = "ses_codex"
+            thread_alpha = "ses_alpha"
+            thread_beta = "ses_beta"
             state = BridgeState(
                 room_mode_enabled=True,
                 sessions={
-                    thread_gpt: SessionRecord(
-                        thread_id=thread_gpt,
-                        label="gpt",
+                    thread_alpha: SessionRecord(
+                        thread_id=thread_alpha,
+                        label="alpha",
                         cwd="/tmp",
                         source="tmux-live",
                         created_at="2026-04-04T00:00:00+00:00",
                         updated_at="2026-04-04T00:00:00+00:00",
-                        tmux_session="gpt",
+                        tmux_session="alpha",
                     ),
-                    thread_codex: SessionRecord(
-                        thread_id=thread_codex,
-                        label="codex",
+                    thread_beta: SessionRecord(
+                        thread_id=thread_beta,
+                        label="beta",
                         cwd="/tmp",
                         source="tmux-live",
                         created_at="2026-04-04T00:00:00+00:00",
                         updated_at="2026-04-04T00:00:00+00:00",
-                        tmux_session="codex",
+                        tmux_session="beta",
                     ),
                 },
             )
             state.set_room_focus(
-                thread_id=thread_gpt,
-                tmux_session="gpt",
+                thread_id=thread_alpha,
+                tmux_session="alpha",
                 started_at=(datetime.now(UTC) - timedelta(seconds=45)).isoformat(),
             )
             fake_wechat = _FakeWeChat()
@@ -1499,19 +1526,21 @@ class DaemonTests(unittest.TestCase):
                 state=state,
             )
 
+            self.assertIsNone(daemon._active_room_focus())
+
             daemon._reply(
                 "user@im.wechat",
                 None,
                 "OTHER",
                 kind="final",
                 origin="desktop-mirror",
-                thread_id=thread_codex,
-                tmux_session="codex",
+                thread_id=thread_beta,
+                tmux_session="beta",
             )
 
             self.assertEqual(
                 fake_wechat.sent,
-                [("user@im.wechat", None, "[codex] ✅ OTHER")],
+                [("user@im.wechat", None, "[beta] ✅ OTHER")],
             )
             self.assertEqual(state.room_focus_tmux_session, None)
 
@@ -1993,6 +2022,202 @@ class DaemonTests(unittest.TestCase):
             for image in saved_images:
                 self.assertIn(str(image.path), submitted_prompt)
             self.assertIn("继续看图", submitted_prompt)
+            self.assertEqual(state.pending_media_batches, [])
+
+    def test_group_mode_file_only_message_registers_pending_batch_and_claims_on_target(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_target = "ses_kimi1"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_target: SessionRecord(
+                        thread_id=thread_target,
+                        label="kimi1",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-10T00:00:00+00:00",
+                        updated_at="2026-04-10T00:00:00+00:00",
+                        tmux_session="kimi1",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="kimi1",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_target,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            saved_path = Path(tmpdir) / "incoming_media" / "report.docx"
+            saved_path.parent.mkdir(parents=True, exist_ok=True)
+            saved_path.write_bytes(b"file-bytes")
+            incoming_file = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-file",
+                    "message_id": "file-1",
+                    "item_list": [
+                        {
+                            "type": 4,
+                            "file_item": {
+                                "file_name": "report.docx",
+                                "media": {
+                                    "encrypt_query_param": "file-enc",
+                                    "aes_key": "MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
+                                },
+                            },
+                        }
+                    ],
+                }
+            )
+            assert incoming_file is not None
+            with patch(
+                "daedalus_wechat.daemon.download_incoming_file",
+                return_value=SavedIncomingFile(
+                    index=0,
+                    path=saved_path,
+                    source_url="https://cdn.example.com/report.docx",
+                    content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    size_bytes=saved_path.stat().st_size,
+                    file_name="report.docx",
+                ),
+            ):
+                daemon._handle_incoming(incoming_file)
+            self.assertEqual(runner.submitted, [])
+            self.assertEqual(len(state.pending_media_batches), 1)
+            self.assertEqual(state.pending_media_batches[0].file_paths, [str(saved_path)])
+            self.assertIn("收到 1 个文件。", fake_wechat.sent[-1][2])
+            self.assertIn("下一条用 @agent", fake_wechat.sent[-1][2])
+
+            incoming_target = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-target",
+                    "message_id": "msg-file-target",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "@kimi1 你看一下这个文件"}}
+                    ],
+                }
+            )
+            assert incoming_target is not None
+            daemon._handle_incoming(incoming_target)
+
+            self.assertEqual(runner.submitted[-1][0], thread_target)
+            submitted_prompt = runner.submitted[-1][1]
+            self.assertIn(str(saved_path), submitted_prompt)
+            self.assertIn("你看一下这个文件", submitted_prompt)
+            self.assertEqual(state.pending_media_batches, [])
+
+    def test_group_mode_video_only_message_registers_pending_batch_and_claims_on_target(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_target = "ses_kimi1"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_target: SessionRecord(
+                        thread_id=thread_target,
+                        label="kimi1",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-10T00:00:00+00:00",
+                        updated_at="2026-04-10T00:00:00+00:00",
+                        tmux_session="kimi1",
+                    )
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="kimi1",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_target,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            saved_path = Path(tmpdir) / "incoming_media" / "clip.mp4"
+            saved_path.parent.mkdir(parents=True, exist_ok=True)
+            saved_path.write_bytes(b"video-bytes")
+            incoming_video = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-video",
+                    "message_id": "video-1",
+                    "item_list": [
+                        {
+                            "type": 5,
+                            "video_item": {
+                                "media": {
+                                    "encrypt_query_param": "video-enc",
+                                    "aes_key": "MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
+                                }
+                            },
+                        }
+                    ],
+                }
+            )
+            assert incoming_video is not None
+            with patch(
+                "daedalus_wechat.daemon.download_incoming_video",
+                return_value=SavedIncomingVideo(
+                    index=0,
+                    path=saved_path,
+                    source_url="https://cdn.example.com/clip.mp4",
+                    content_type="video/mp4",
+                    size_bytes=saved_path.stat().st_size,
+                ),
+            ):
+                daemon._handle_incoming(incoming_video)
+            self.assertEqual(runner.submitted, [])
+            self.assertEqual(len(state.pending_media_batches), 1)
+            self.assertEqual(state.pending_media_batches[0].video_paths, [str(saved_path)])
+            self.assertIn("收到 1 个视频。", fake_wechat.sent[-1][2])
+            self.assertIn("下一条用 @agent", fake_wechat.sent[-1][2])
+
+            incoming_target = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-target",
+                    "message_id": "msg-video-target",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "@kimi1 你看一下这个视频"}}
+                    ],
+                }
+            )
+            assert incoming_target is not None
+            daemon._handle_incoming(incoming_target)
+
+            self.assertEqual(runner.submitted[-1][0], thread_target)
+            submitted_prompt = runner.submitted[-1][1]
+            self.assertIn(str(saved_path), submitted_prompt)
+            self.assertIn("你看一下这个视频", submitted_prompt)
             self.assertEqual(state.pending_media_batches, [])
 
     def test_group_mode_claim_coalesces_legacy_split_image_batches(self) -> None:
@@ -3864,6 +4089,8 @@ class DaemonTests(unittest.TestCase):
                         "tmux_session": "codex",
                         "attempt_count": 2,
                         "last_error": "ret=-2",
+                        "awaiting_rebind_retry": "1",
+                        "rebind_retry_group": "group-1",
                     }
                 ],
             )
@@ -3880,6 +4107,115 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(fake_wechat.sent, [])
             self.assertEqual(len(state.pending_outbox), 1)
             self.assertEqual(state.pending_outbox[0]["text"], "RETRY_AFTER_REBIND")
+
+    def test_ambiguous_desktop_mirror_final_retries_after_bind_and_flushes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                active_tmux_session="codex",
+            )
+            fake_wechat = _ChunkFailWeChat(fail_on_call=2)
+            config = self._make_config(Path(tmpdir), frozenset())
+            object.__setattr__(config, "text_chunk_limit", 5)
+            daemon = _TestDaemon(
+                config=config,
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+
+            daemon._reply(
+                "user@im.wechat",
+                "ctx-1",
+                "1234567890ABCDE",
+                kind="final",
+                origin="desktop-mirror",
+                thread_id="thread-1",
+                tmux_session="codex",
+            )
+            self.assertTrue(state.outbox_waiting_for_bind)
+            self.assertEqual(len(state.pending_outbox), 3)
+
+            attempts_after_failure = len(fake_wechat.sent)
+            daemon._flush_bound_outbox_if_any()
+            self.assertEqual(len(fake_wechat.sent), attempts_after_failure)
+            self.assertEqual(len(state.pending_outbox), 3)
+
+            daemon._bind_peer("user@im.wechat", "ctx-2")
+            daemon._flush_bound_outbox_if_any()
+
+            self.assertFalse(state.outbox_waiting_for_bind)
+            self.assertEqual(
+                fake_wechat.sent,
+                [
+                    ("user@im.wechat", None, "✅ 123"),
+                    ("user@im.wechat", None, "45678"),
+                    ("user@im.wechat", None, "90ABC"),
+                    ("user@im.wechat", None, "DE"),
+                ],
+            )
+            self.assertEqual(state.pending_outbox, [])
+
+    def test_post_bind_retry_exhaustion_suppresses_ambiguous_desktop_final_group(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                active_tmux_session="codex",
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "RETRY_A",
+                        "created_at": "2026-03-26T00:00:00+00:00",
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                        "thread_id": "thread-1",
+                        "tmux_session": "codex",
+                        "attempt_count": 1,
+                        "last_error": "ret=-2",
+                        "awaiting_rebind_retry": "1",
+                        "rebind_retry_group": "group-1",
+                    },
+                    {
+                        "to": "user@im.wechat",
+                        "text": "RETRY_B",
+                        "created_at": "2026-03-26T00:00:01+00:00",
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                        "thread_id": "thread-1",
+                        "tmux_session": "codex",
+                        "attempt_count": 1,
+                        "last_error": "ret=-2",
+                        "awaiting_rebind_retry": "1",
+                        "rebind_retry_group": "group-1",
+                    },
+                ],
+            )
+            fake_wechat = _FailOnCallsWeChat(fail_on_calls={1})
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+
+            daemon._flush_bound_outbox_if_any()
+
+            self.assertFalse(state.outbox_waiting_for_bind)
+            self.assertEqual(fake_wechat.sent, [])
+            self.assertEqual(len(state.pending_outbox), 2)
+            self.assertEqual(
+                [item.get("awaiting_rebind_retry", "") for item in state.pending_outbox],
+                ["", ""],
+            )
+
+            daemon._flush_bound_outbox_if_any()
+
+            self.assertEqual(fake_wechat.sent, [])
+            self.assertEqual(state.pending_outbox, [])
 
     def test_merge_external_state_imports_cli_pending_outbox(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -4425,6 +4761,229 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(image.media_source, "thumb_media")
             self.assertEqual(image.media_encrypt_query_param, "thumb-enc")
             self.assertEqual(image.aes_key, "00112233445566778899aabbccddeeff")
+
+    def test_parse_incoming_file_supports_media_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-file",
+                    "message_id": "msg-file-1",
+                    "item_list": [
+                        {
+                            "type": 4,
+                            "file_item": {
+                                "file_name": "report.pdf",
+                                "media": {
+                                    "encrypt_query_param": "file-enc",
+                                    "aes_key": "MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
+                                    "full_url": "https://cdn.example.com/file.bin",
+                                },
+                            },
+                        }
+                    ],
+                }
+            )
+            assert incoming is not None
+            self.assertEqual(len(incoming.files), 1)
+            file_ref = incoming.files[0]
+            self.assertEqual(file_ref.file_name, "report.pdf")
+            self.assertEqual(file_ref.media_encrypt_query_param, "file-enc")
+            self.assertEqual(
+                file_ref.media_aes_key,
+                "MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
+            )
+            self.assertEqual(file_ref.media_full_url, "https://cdn.example.com/file.bin")
+
+    def test_parse_incoming_video_supports_media_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-video",
+                    "message_id": "msg-video-1",
+                    "item_list": [
+                        {
+                            "type": 5,
+                            "video_item": {
+                                "media": {
+                                    "encrypt_query_param": "video-enc",
+                                    "aes_key": "MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
+                                    "full_url": "https://cdn.example.com/clip.mp4",
+                                },
+                                "thumb_media": {"encrypt_query_param": "thumb-enc"},
+                            },
+                        }
+                    ],
+                }
+            )
+            assert incoming is not None
+            self.assertEqual(len(incoming.videos), 1)
+            video_ref = incoming.videos[0]
+            self.assertEqual(video_ref.media_encrypt_query_param, "video-enc")
+            self.assertEqual(
+                video_ref.media_aes_key,
+                "MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
+            )
+            self.assertEqual(video_ref.media_full_url, "https://cdn.example.com/clip.mp4")
+
+    def test_incoming_file_is_downloaded_and_submitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=BridgeState(
+                    active_session_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                ),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-file",
+                    "message_id": "msg-file-2",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "看这个文件"}},
+                        {
+                            "type": 4,
+                            "file_item": {
+                                "file_name": "report.pdf",
+                                "media": {
+                                    "encrypt_query_param": "file-enc",
+                                    "aes_key": "MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
+                                },
+                            },
+                        },
+                    ],
+                }
+            )
+            assert incoming is not None
+            with patch(
+                "daedalus_wechat.daemon.download_incoming_file",
+                return_value=SavedIncomingFile(
+                    index=0,
+                    path=Path("/tmp/incoming_media/report.pdf"),
+                    source_url="https://cdn.example.com/report.pdf",
+                    content_type="application/pdf",
+                    size_bytes=3333,
+                    file_name="report.pdf",
+                ),
+            ):
+                daemon._handle_incoming(incoming)
+            self.assertIn("/tmp/incoming_media/report.pdf", runner.submitted[-1][1])
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                (
+                    "user@im.wechat",
+                    "ctx-file",
+                    "⚙️ 已收到 1 个文件并注入 terminal。",
+                ),
+            )
+
+    def test_incoming_video_is_downloaded_and_submitted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=BridgeState(
+                    active_session_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                ),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-video",
+                    "message_id": "msg-video-2",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "看这个视频"}},
+                        {
+                            "type": 5,
+                            "video_item": {
+                                "media": {
+                                    "encrypt_query_param": "video-enc",
+                                    "aes_key": "MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
+                                },
+                            },
+                        },
+                    ],
+                }
+            )
+            assert incoming is not None
+            with patch(
+                "daedalus_wechat.daemon.download_incoming_video",
+                return_value=SavedIncomingVideo(
+                    index=0,
+                    path=Path("/tmp/incoming_media/clip.mp4"),
+                    source_url="https://cdn.example.com/clip.mp4",
+                    content_type="video/mp4",
+                    size_bytes=4444,
+                ),
+            ):
+                daemon._handle_incoming(incoming)
+            self.assertIn("/tmp/incoming_media/clip.mp4", runner.submitted[-1][1])
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                (
+                    "user@im.wechat",
+                    "ctx-video",
+                    "⚙️ 已收到 1 个视频并注入 terminal。",
+                ),
+            )
+
+    def test_file_without_aes_key_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=BridgeState(
+                    active_session_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                ),
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-file",
+                    "message_id": "msg-file-3",
+                    "item_list": [
+                        {
+                            "type": 4,
+                            "file_item": {
+                                "file_name": "report.pdf",
+                                "media": {"encrypt_query_param": "file-enc"},
+                            },
+                        }
+                    ],
+                }
+            )
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            self.assertEqual(runner.submitted, [])
+            self.assertIn("收到文件，但当前无法取回可用本地文件", fake_wechat.sent[-1][2])
 
     def test_recent_replays_latest_outgoing_messages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5374,7 +5933,7 @@ class DaemonTests(unittest.TestCase):
             )
             self.assertEqual(state.get_mirror_offset(thread_id), 150)
 
-    def test_inactive_mirror_final_is_queued_for_scope_and_flushed_after_switch(
+    def test_single_mode_inactive_mirror_final_is_sent_immediately(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5436,27 +5995,13 @@ class DaemonTests(unittest.TestCase):
                 state=state,
             )
 
-            daemon._queue_inactive_desktop_finals_if_any()
-
-            self.assertEqual(fake_wechat.sent, [])
-            self.assertEqual(state.get_mirror_offset(opencode_thread), 150)
-            self.assertEqual(
-                [item["text"] for item in state.pending_outbox],
-                ["✅ OK"],
-            )
-            self.assertEqual(
-                [item["tmux_session"] for item in state.pending_outbox],
-                ["opencode"],
-            )
-
-            state.active_session_id = opencode_thread
-            state.active_tmux_session = "opencode"
-            daemon._flush_bound_outbox_if_any()
+            daemon._mirror_room_all_members()
 
             self.assertEqual(
                 fake_wechat.sent,
-                [("user@im.wechat", None, "✅ OK")],
+                [("user@im.wechat", None, "[opencode] ✅ OK")],
             )
+            self.assertEqual(state.get_mirror_offset(opencode_thread), 150)
             self.assertEqual(state.pending_outbox, [])
 
     def test_command_reply_gets_system_tag(self) -> None:
@@ -5748,8 +6293,8 @@ class DaemonTests(unittest.TestCase):
                 ["45678", "90ABC", "DE"],
             )
 
-    def test_mirror_reply_failure_queues_without_blocking_bind(self) -> None:
-        """Desktop-mirror messages queue on failure but don't block on bind."""
+    def test_mirror_reply_failure_waits_for_next_bind_once(self) -> None:
+        """Ambiguous desktop finals pause until the next bind refresh."""
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState()
             fake_wechat = _ChunkFailWeChat(fail_on_call=2)
@@ -5775,10 +6320,22 @@ class DaemonTests(unittest.TestCase):
                 [item["text"] for item in state.pending_outbox],
                 ["45678", "90ABC", "DE"],
             )
-            # But they do NOT trigger waiting_for_bind.
-            self.assertFalse(state.outbox_waiting_for_bind)
+            self.assertTrue(state.outbox_waiting_for_bind)
+            self.assertEqual(
+                {item.get("awaiting_rebind_retry") for item in state.pending_outbox},
+                {"1"},
+            )
+            self.assertEqual(
+                len(
+                    {
+                        item.get("rebind_retry_group", "")
+                        for item in state.pending_outbox
+                    }
+                ),
+                1,
+            )
 
-    def test_flush_bound_outbox_only_releases_active_tmux_scope(self) -> None:
+    def test_flush_bound_outbox_releases_owner_wide_backlog(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_codex = "019d332d-1bc8-7151-a874-ab0fbc493747"
             thread_daedalus = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
@@ -5840,12 +6397,12 @@ class DaemonTests(unittest.TestCase):
             daemon._flush_bound_outbox_if_any()
             self.assertEqual(
                 fake_wechat.sent,
-                [("user@im.wechat", None, "DAEDALUS BACKLOG")],
+                [
+                    ("user@im.wechat", None, "CODEX BACKLOG"),
+                    ("user@im.wechat", None, "DAEDALUS BACKLOG"),
+                ],
             )
-            self.assertEqual(
-                [item["text"] for item in state.pending_outbox],
-                ["CODEX BACKLOG"],
-            )
+            self.assertEqual(state.pending_outbox, [])
 
 
 if __name__ == "__main__":

@@ -6,7 +6,14 @@ from email.message import Message
 from pathlib import Path
 from unittest.mock import patch
 
-from daedalus_wechat.incoming_media import IncomingImageRef, download_incoming_image
+from daedalus_wechat.incoming_media import (
+    IncomingFileRef,
+    IncomingImageRef,
+    IncomingVideoRef,
+    download_incoming_file,
+    download_incoming_image,
+    download_incoming_video,
+)
 
 
 class _FakeHTTPResponse:
@@ -110,3 +117,82 @@ class IncomingMediaTests(unittest.TestCase):
             decrypt_mock.assert_not_called()
             self.assertEqual(saved.path.suffix, ".png")
             self.assertEqual(saved.path.read_bytes(), plain_body)
+
+    def test_download_incoming_file_decrypts_media_query_and_preserves_suffix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_ref = IncomingFileRef(
+                index=0,
+                file_name="report.pdf",
+                media_encrypt_query_param="encrypted-query",
+                media_aes_key="MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
+            )
+            encrypted_body = b"encrypted-body"
+            with patch(
+                "daedalus_wechat.incoming_media._download_bytes",
+                return_value=(encrypted_body, "application/octet-stream"),
+            ), patch(
+                "daedalus_wechat.incoming_media._decrypt_aes_128_ecb",
+                return_value=b"%PDF-1.7\nfake-pdf",
+            ):
+                saved = download_incoming_file(
+                    file_ref,
+                    target_dir=Path(tmpdir),
+                    message_id="msg-file",
+                    cdn_base_url="https://ilinkai.weixin.qq.com",
+                )
+            self.assertEqual(saved.path.suffix, ".pdf")
+            self.assertEqual(saved.file_name, "report.pdf")
+            self.assertEqual(saved.path.read_bytes(), b"%PDF-1.7\nfake-pdf")
+
+    def test_download_incoming_file_requires_aes_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            file_ref = IncomingFileRef(
+                index=0,
+                file_name="report.pdf",
+                media_encrypt_query_param="encrypted-query",
+            )
+            with self.assertRaisesRegex(RuntimeError, "missing aes key"):
+                download_incoming_file(
+                    file_ref,
+                    target_dir=Path(tmpdir),
+                    message_id="msg-file",
+                    cdn_base_url="https://ilinkai.weixin.qq.com",
+                )
+
+    def test_download_incoming_video_decrypts_media_query_and_defaults_mp4(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            video_ref = IncomingVideoRef(
+                index=0,
+                media_encrypt_query_param="encrypted-query",
+                media_aes_key="MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
+            )
+            encrypted_body = b"encrypted-body"
+            with patch(
+                "daedalus_wechat.incoming_media._download_bytes",
+                return_value=(encrypted_body, "video/mp4"),
+            ), patch(
+                "daedalus_wechat.incoming_media._decrypt_aes_128_ecb",
+                return_value=b"\x00\x00\x00\x18ftypmp42fake-video",
+            ):
+                saved = download_incoming_video(
+                    video_ref,
+                    target_dir=Path(tmpdir),
+                    message_id="msg-video",
+                    cdn_base_url="https://ilinkai.weixin.qq.com",
+                )
+            self.assertEqual(saved.path.suffix, ".mp4")
+            self.assertEqual(saved.path.read_bytes(), b"\x00\x00\x00\x18ftypmp42fake-video")
+
+    def test_download_incoming_video_requires_aes_key(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            video_ref = IncomingVideoRef(
+                index=0,
+                media_encrypt_query_param="encrypted-query",
+            )
+            with self.assertRaisesRegex(RuntimeError, "missing aes key"):
+                download_incoming_video(
+                    video_ref,
+                    target_dir=Path(tmpdir),
+                    message_id="msg-video",
+                    cdn_base_url="https://ilinkai.weixin.qq.com",
+                )
