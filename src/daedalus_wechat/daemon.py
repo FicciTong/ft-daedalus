@@ -3336,11 +3336,19 @@ class BridgeDaemon:
                             dt = dt.replace(tzinfo=UTC)
                         age = (datetime.now(UTC) - dt.astimezone(UTC)).total_seconds()
                         if age >= WAIT_FOR_BIND_TIMEOUT_SECONDS:
-                            self.state.outbox_waiting_for_bind = False
-                            self._log_event(
-                                "wait_for_bind_auto_cleared",
-                                {"age_seconds": round(age, 1)},
-                            )
+                            if self._has_pending_rebind_retry_waiter(
+                                to_user_id=to_user_id,
+                            ):
+                                self._log_event(
+                                    "wait_for_bind_timeout_held_for_rebind_retry",
+                                    {"age_seconds": round(age, 1)},
+                                )
+                            else:
+                                self.state.outbox_waiting_for_bind = False
+                                self._log_event(
+                                    "wait_for_bind_auto_cleared",
+                                    {"age_seconds": round(age, 1)},
+                                )
                     except ValueError:
                         pass
             delivery_stats = self._scope_pending_delivery_stats(
@@ -3884,7 +3892,27 @@ class BridgeDaemon:
             oldest = max(oldest, self._pending_item_age_seconds(item))
         return oldest
 
+    def _has_pending_rebind_retry_waiter(self, *, to_user_id: str | None) -> bool:
+        if not to_user_id:
+            return False
+        for item in self.state.pending_outbox:
+            if item.get("to") != to_user_id:
+                continue
+            if self._pending_item_waits_for_rebind_retry(
+                item=item,
+                kind=str(item.get("kind", "message")),
+                origin=str(item.get("origin", "bridge")),
+            ):
+                return True
+        return False
+
     def _is_stale_pending_for_auto_flush(self, item: dict[str, str]) -> bool:
+        if self._pending_item_waits_for_rebind_retry(
+            item=item,
+            kind=str(item.get("kind", "message")),
+            origin=str(item.get("origin", "bridge")),
+        ):
+            return False
         attempt_count = int(item.get("attempt_count", 1) or 1)
         last_error = str(item.get("last_error", "")).strip()
         if attempt_count <= 1 and not last_error:
@@ -3905,6 +3933,12 @@ class BridgeDaemon:
         kind = str(item.get("kind", "message")).strip()
         last_error = str(item.get("last_error", "")).strip()
         attempt_count = int(item.get("attempt_count", 1) or 1)
+        if self._pending_item_waits_for_rebind_retry(
+            item=item,
+            kind=kind,
+            origin=str(item.get("origin", "bridge")),
+        ):
+            return True
         if "ret=-2" in last_error and attempt_count >= 2:
             return True
         if thread_id and active_thread_id and thread_id != active_thread_id:

@@ -4108,6 +4108,85 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(len(state.pending_outbox), 1)
             self.assertEqual(state.pending_outbox[0]["text"], "RETRY_AFTER_REBIND")
 
+    def test_wait_for_bind_timeout_does_not_consume_rebind_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                outbox_waiting_for_bind=True,
+                outbox_waiting_for_bind_since=(
+                    datetime.now(UTC) - timedelta(seconds=61)
+                ).isoformat(),
+                active_tmux_session="codex",
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "REAL_BIND_ONLY",
+                        "created_at": datetime.now(UTC).isoformat(),
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                        "thread_id": "thread-1",
+                        "tmux_session": "codex",
+                        "attempt_count": 1,
+                        "last_error": "ret=-2",
+                        "awaiting_rebind_retry": "1",
+                        "rebind_retry_group": "group-1",
+                    }
+                ],
+            )
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+
+            daemon._flush_bound_outbox_if_any()
+
+            self.assertTrue(state.outbox_waiting_for_bind)
+            self.assertEqual(fake_wechat.sent, [])
+            self.assertEqual(len(state.pending_outbox), 1)
+            self.assertEqual(state.pending_outbox[0]["text"], "REAL_BIND_ONLY")
+
+    def test_prune_stale_rebind_retry_final_after_drop_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(
+                active_session_id="thread-1",
+                active_tmux_session="codex",
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "STALE_REAL_BIND_ONLY",
+                        "created_at": (
+                            datetime.now(UTC) - timedelta(seconds=601)
+                        ).isoformat(),
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                        "thread_id": "thread-1",
+                        "tmux_session": "codex",
+                        "attempt_count": 1,
+                        "last_error": "ret=-2",
+                        "awaiting_rebind_retry": "1",
+                        "rebind_retry_group": "group-1",
+                    }
+                ],
+            )
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+
+            daemon._prune_stale_desktop_mirror_backlog()
+
+            self.assertEqual(fake_wechat.sent, [])
+            self.assertEqual(state.pending_outbox, [])
+
     def test_ambiguous_desktop_mirror_final_retries_after_bind_and_flushes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
