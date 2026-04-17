@@ -395,7 +395,12 @@ class BridgeState:
                 continue
             item[key_text] = str(value)
         self.pending_outbox.append(item)
-        max_items = 1000
+        # Last-resort cap to bound memory; never a routine drop path. Under the
+        # owner's "no message loss" policy, this only fires if the queue is
+        # pathologically large (owner offline for days with heavy mirror
+        # output). Drops are counted in pending_outbox_overflow_dropped so they
+        # surface in /queue and systemd STATUS.
+        max_items = 10000
         overflow = len(self.pending_outbox) - max_items
         if overflow > 0:
             self.pending_outbox_overflow_dropped += overflow

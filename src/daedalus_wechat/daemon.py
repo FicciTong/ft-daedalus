@@ -3994,26 +3994,14 @@ class BridgeDaemon:
         *,
         active_thread_id: str,
     ) -> bool:
-        if str(item.get("origin", "")).strip() != "desktop-mirror":
-            return False
-        if self._pending_item_age_seconds(item) < STALE_DESKTOP_MIRROR_DROP_SECONDS:
-            return False
-        thread_id = str(item.get("thread_id", "")).strip()
-        kind = str(item.get("kind", "message")).strip()
-        last_error = str(item.get("last_error", "")).strip()
-        attempt_count = int(item.get("attempt_count", 1) or 1)
-        if self._pending_item_waits_for_rebind_retry(
-            item=item,
-            kind=kind,
-            origin=str(item.get("origin", "bridge")),
-        ):
-            return True
-        if "ret=-2" in last_error and attempt_count >= 2:
-            return True
-        if thread_id and active_thread_id and thread_id != active_thread_id:
-            if kind == "final":
-                return False
-            return True
+        # Owner policy: never drop pending desktop-mirror items by age or by
+        # inactive-thread status. Switching from single A to single B (or to
+        # group mode) should still cause A's pending finals/plans/progress to
+        # deliver whenever the owner's WeChat context becomes warm again.
+        # Duplication on a delayed delivery is acceptable; silent loss is
+        # not. The only remaining cap is state.pending_outbox's overflow
+        # limit (`max_items` in state.py), which tracks drops explicitly via
+        # pending_outbox_overflow_dropped counter.
         return False
 
     def _sync_mirror_cursor(self, thread_id: str) -> None:
@@ -4166,28 +4154,17 @@ class BridgeDaemon:
         kind: str,
         origin: str,
     ) -> str | None:
+        # Owner policy: never silently drop on ret=-2. Duplication on a
+        # successful-but-API-failed send is preferable to the owner never
+        # seeing a real final/plan. Any ret=-2 stays in pending_outbox and
+        # keeps retrying via the per-item exponential backoff until WeChat
+        # accepts it or the retry loop is stopped.
         if (
             kind == "progress"
             and origin == "desktop-mirror"
             and not self._progress_updates_enabled()
         ):
             return "progress_updates_disabled"
-        # For desktop-mirror finals, ret=-2 is an ambiguous send result:
-        # the message may already be in WeChat even when the API reports a
-        # failure. Fresh items get one retry after the next bind refresh; once
-        # that retry is exhausted, we fail closed to avoid replay storms.
-        if self._is_ambiguous_desktop_mirror_ret_minus_2(
-            kind=kind,
-            origin=origin,
-            error_text=str(item.get("last_error", "")),
-        ):
-            if self._pending_item_waits_for_rebind_retry(
-                item=item,
-                kind=kind,
-                origin=origin,
-            ):
-                return None
-            return "ambiguous_desktop_mirror_ret_minus_2"
         return None
 
     def _effective_send_context(
