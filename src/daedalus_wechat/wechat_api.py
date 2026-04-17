@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 from urllib.request import Request, urlopen
 
 DEFAULT_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c"
@@ -381,8 +381,9 @@ class WeChatClient:
         upload_param = str(upload_resp.get("upload_param") or "").strip()
         if not upload_param:
             raise RuntimeError("WeChat getuploadurl returned empty upload_param")
-        encrypt_query_param = self._cdn_put_encrypted(
+        encrypt_query_param = self._cdn_upload_encrypted(
             upload_param=upload_param,
+            filekey=filekey,
             encrypted=encrypted,
         )
         return _UploadedMediaRef(
@@ -393,35 +394,38 @@ class WeChatClient:
             encrypt_query_param=encrypt_query_param,
         )
 
-    def _cdn_put_encrypted(
-        self, *, upload_param: str, encrypted: bytes
+    def _cdn_upload_encrypted(
+        self, *, upload_param: str, filekey: str, encrypted: bytes
     ) -> str:
+        # iLink CDN protocol: POST (not PUT) with the encrypted blob as the
+        # body, encrypted_query_param carrying the upload_param from
+        # getuploadurl, and the same filekey we sent earlier. No auth
+        # headers — the upload_param itself is the presigned credential.
         cdn = self.account.cdn_base_url.rstrip("/")
-        url = f"{cdn}/upload?upload_param={upload_param}"
+        url = (
+            f"{cdn}/upload"
+            f"?encrypted_query_param={quote(upload_param, safe='')}"
+            f"&filekey={quote(filekey, safe='')}"
+        )
         req = Request(
             url,
             data=encrypted,
-            headers={
-                "Content-Type": "application/octet-stream",
-                "AuthorizationType": "ilink_bot_token",
-                "Authorization": f"Bearer {self.account.token}",
-                "X-WECHAT-UIN": _random_wechat_uin(),
-            },
-            method="PUT",
+            headers={"Content-Type": "application/octet-stream"},
+            method="POST",
         )
         try:
             with urlopen(req, timeout=60.0) as resp:
                 header = resp.headers.get("x-encrypted-param", "").strip()
                 if not header:
                     raise RuntimeError(
-                        "CDN PUT did not return x-encrypted-param header"
+                        "CDN upload did not return x-encrypted-param header"
                     )
                 return header
         except HTTPError as exc:
             detail = exc.read().decode(errors="replace")
-            raise RuntimeError(f"CDN PUT HTTP {exc.code}: {detail}") from exc
+            raise RuntimeError(f"CDN upload HTTP {exc.code}: {detail}") from exc
         except URLError as exc:
-            raise RuntimeError(f"CDN PUT failed: {exc}") from exc
+            raise RuntimeError(f"CDN upload failed: {exc}") from exc
 
 
 @dataclass(frozen=True)

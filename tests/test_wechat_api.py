@@ -149,7 +149,9 @@ class _MediaCapturingClient(WeChatClient):
             return {"upload_param": f"UP_{len(self.posts)}"}
         return {"ret": 0}
 
-    def _cdn_put_encrypted(self, *, upload_param: str, encrypted: bytes) -> str:
+    def _cdn_upload_encrypted(
+        self, *, upload_param: str, filekey: str, encrypted: bytes
+    ) -> str:
         self.cdn_puts.append((upload_param, len(encrypted)))
         return f"QP_{upload_param}"
 
