@@ -98,6 +98,86 @@ def _send_bound_text(
     return 0
 
 
+def _send_bound_media(
+    config,
+    state: BridgeState,
+    *,
+    media_path: Path,
+    kind: str,
+    client: WeChatClient | None = None,
+) -> int:
+    if not state.bound_user_id:
+        raise RuntimeError(
+            "No bound WeChat chat context. Send /status from WeChat first."
+        )
+    path = Path(media_path)
+    if not path.is_file():
+        raise RuntimeError(f"media path does not exist or is not a file: {path}")
+    wechat = client or WeChatClient(
+        WeChatAccount.load(config.account_file),
+        min_send_interval_seconds=config.min_send_interval_seconds,
+    )
+    try:
+        if kind == "image":
+            wechat.send_image(
+                to_user_id=state.bound_user_id,
+                context_token=state.bound_context_token,
+                image_path=path,
+            )
+        elif kind == "video":
+            wechat.send_video(
+                to_user_id=state.bound_user_id,
+                context_token=state.bound_context_token,
+                video_path=path,
+            )
+        else:
+            wechat.send_file(
+                to_user_id=state.bound_user_id,
+                context_token=state.bound_context_token,
+                file_path=path,
+            )
+        event_kind = "relay_outgoing"
+        status = "sent"
+        error: str | None = None
+    except Exception as exc:  # noqa: BLE001
+        event_kind = "relay_failed"
+        status = "failed"
+        error = str(exc)
+    config.state_dir.mkdir(parents=True, exist_ok=True)
+    with config.event_log_file.open("a", encoding="utf-8") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "ts": datetime.now(UTC).isoformat(),
+                    "kind": event_kind,
+                    "payload": {
+                        "to": state.bound_user_id,
+                        "media_kind": kind,
+                        "path": str(path),
+                        "size_bytes": path.stat().st_size if path.exists() else 0,
+                        **({"error": error} if error else {}),
+                    },
+                },
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
+    append_delivery(
+        state=state,
+        ledger_file=config.delivery_ledger_file,
+        to_user_id=state.bound_user_id,
+        text=f"[{kind}] {path.name}",
+        status=status,
+        kind="relay",
+        origin="desktop-direct",
+        thread_id=state.active_session_id,
+        tmux_session=state.active_tmux_session,
+    )
+    if error:
+        raise RuntimeError(error)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="daedalus-wechat")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -116,13 +196,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     send_bound = sub.add_parser(
         "send-bound",
-        help="Send text to the currently bound WeChat chat context",
+        help="Send text / image / file / video to the currently bound WeChat chat",
     )
     send_bound.add_argument("text", nargs="?", help="Text to send")
     send_bound.add_argument(
         "--stdin",
         action="store_true",
         help="Read text from stdin",
+    )
+    send_bound.add_argument(
+        "--image",
+        type=Path,
+        default=None,
+        help="Path to an image file to send as WeChat image.",
+    )
+    send_bound.add_argument(
+        "--file",
+        type=Path,
+        default=None,
+        help="Path to any file to send as WeChat file attachment.",
+    )
+    send_bound.add_argument(
+        "--video",
+        type=Path,
+        default=None,
+        help="Path to a video file to send (requires ffmpeg/ffprobe on PATH).",
     )
     sub.add_parser(
         "auth-ilink",
@@ -260,6 +358,18 @@ def main() -> int:
         return 0 if result.status in {"SUCCESS", "WARN"} else 2
 
     if args.command == "send-bound":
+        media_args = [args.image, args.file, args.video]
+        chosen_media = [m for m in media_args if m is not None]
+        if len(chosen_media) > 1:
+            raise SystemExit("send-bound: --image / --file / --video are mutually exclusive")
+        if chosen_media:
+            media_path = chosen_media[0]
+            kind = (
+                "image" if args.image is not None
+                else "video" if args.video is not None
+                else "file"
+            )
+            return _send_bound_media(config, state, media_path=media_path, kind=kind)
         text = sys.stdin.read() if args.stdin else (args.text or "")
         return _send_bound_text(config, state, text)
 
