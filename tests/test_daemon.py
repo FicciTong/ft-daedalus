@@ -4211,19 +4211,27 @@ class DaemonTests(unittest.TestCase):
             )
             self.assertEqual(state.pending_outbox, [])
 
-    def test_failed_desktop_mirror_waits_for_rebind_before_stale_timeout(self) -> None:
+    def test_desktop_mirror_ret_minus_2_retries_via_backoff_without_rebind(self) -> None:
+        """Under E, a desktop-mirror item explicitly marked for
+        rebind-retry (awaiting_rebind_retry=1) no longer needs a real
+        _bind_peer call to drain: once its exponential backoff elapses the
+        retry loop attempts it on its own, with outbox_waiting_for_bind
+        still True. attempt_count=2 → 4s backoff, last_attempt_at=10s ago
+        → eligible."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            created_at = datetime.now(UTC).isoformat()
+            created_at = (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
+            last_attempt = (datetime.now(UTC) - timedelta(seconds=10)).isoformat()
             state = BridgeState(
                 bound_user_id="user@im.wechat",
                 bound_context_token="ctx-1",
-                outbox_waiting_for_bind=True,
+                outbox_waiting_for_bind=True,  # carryover from prior failure
                 active_tmux_session="codex",
                 pending_outbox=[
                     {
                         "to": "user@im.wechat",
-                        "text": "RETRY_AFTER_REBIND",
+                        "text": "RETRY_NOW_NO_REBIND",
                         "created_at": created_at,
+                        "last_attempt_at": last_attempt,
                         "kind": "final",
                         "origin": "desktop-mirror",
                         "thread_id": "thread-1",
@@ -4245,25 +4253,28 @@ class DaemonTests(unittest.TestCase):
 
             daemon._flush_bound_outbox_if_any()
 
-            self.assertEqual(fake_wechat.sent, [])
-            self.assertEqual(len(state.pending_outbox), 1)
-            self.assertEqual(state.pending_outbox[0]["text"], "RETRY_AFTER_REBIND")
+            self.assertEqual(
+                fake_wechat.sent,
+                [("user@im.wechat", None, "RETRY_NOW_NO_REBIND")],
+            )
+            self.assertEqual(state.pending_outbox, [])
 
-    def test_wait_for_bind_timeout_does_not_consume_rebind_retry(self) -> None:
+    def test_pending_item_within_backoff_is_skipped(self) -> None:
+        """Backoff prevents hammering: attempt_count=1 → 2s minimum between
+        attempts. Item stamped `last_attempt_at` now is skipped on the
+        next retry loop tick and stays in the queue."""
         with tempfile.TemporaryDirectory() as tmpdir:
+            last_attempt = datetime.now(UTC).isoformat()
             state = BridgeState(
                 bound_user_id="user@im.wechat",
                 bound_context_token="ctx-1",
-                outbox_waiting_for_bind=True,
-                outbox_waiting_for_bind_since=(
-                    datetime.now(UTC) - timedelta(seconds=61)
-                ).isoformat(),
                 active_tmux_session="codex",
                 pending_outbox=[
                     {
                         "to": "user@im.wechat",
-                        "text": "REAL_BIND_ONLY",
-                        "created_at": datetime.now(UTC).isoformat(),
+                        "text": "TOO_SOON_TO_RETRY",
+                        "created_at": last_attempt,
+                        "last_attempt_at": last_attempt,
                         "kind": "final",
                         "origin": "desktop-mirror",
                         "thread_id": "thread-1",
@@ -4285,10 +4296,8 @@ class DaemonTests(unittest.TestCase):
 
             daemon._flush_bound_outbox_if_any()
 
-            self.assertTrue(state.outbox_waiting_for_bind)
             self.assertEqual(fake_wechat.sent, [])
             self.assertEqual(len(state.pending_outbox), 1)
-            self.assertEqual(state.pending_outbox[0]["text"], "REAL_BIND_ONLY")
 
     def test_prune_stale_rebind_retry_final_after_drop_timeout(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

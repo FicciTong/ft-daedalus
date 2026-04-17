@@ -5,7 +5,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -2877,6 +2877,13 @@ class BridgeDaemon:
             self.state.bound_context_token = context_token
             self.state.outbox_waiting_for_bind = False
             self.state.outbox_waiting_for_bind_since = ""
+            # A real re-bind means a fresh context just arrived. Clear the
+            # per-item backoff so pending items drain immediately rather than
+            # waiting out the exponential schedule that was set for stale-
+            # token failures.
+            for item in self.state.pending_outbox:
+                if item.get("to") == from_user_id:
+                    item.pop("last_attempt_at", None)
             if self.state.active_session_id and (
                 previous_user_id != from_user_id or not had_binding
             ):
@@ -3633,6 +3640,9 @@ class BridgeDaemon:
                 continue
             # Stale items (old + retried) bypass wait_for_bind so they
             # don't accumulate forever. Fresh items still respect the bind.
+            if self._pending_item_is_within_backoff(item):
+                kept.append(item)
+                continue
             if (
                 self.state.outbox_waiting_for_bind
                 and self._pending_item_requires_rebind_pause(item, origin=origin)
@@ -3805,6 +3815,9 @@ class BridgeDaemon:
                         tmux_session=resolved_tmux_session,
                         error=suppression_reason,
                     )
+                continue
+            if self._pending_item_is_within_backoff(item):
+                kept.append(item)
                 continue
             if (
                 self.state.outbox_waiting_for_bind
@@ -4101,11 +4114,50 @@ class BridgeDaemon:
         *,
         origin: str,
     ) -> bool:
+        # Live-context origins (inbound replies, room routing, etc.) still
+        # truly need a fresh context_token from a re-bind before another
+        # attempt makes sense.
         if self._origin_uses_live_context(origin):
             return True
-        if str(origin or "").strip() not in {"desktop-mirror", "desktop-direct"}:
+        # Desktop-mirror / desktop-direct traffic is tokenless by design:
+        # `_effective_send_context` returns None for these origins, and
+        # `WeChatClient.send_text` now omits the `context_token` field when
+        # None (previously it sent `null`, which WeChat rejected with ret=-2).
+        # So a prior ret=-2 on a desktop-* item no longer implies "token dead,
+        # must wait for owner inbound" — retry with exponential backoff is the
+        # correct behavior, not indefinite pause.
+        return False
+
+    # Per-item retry backoff (seconds). Index = attempt_count - 1; extra
+    # attempts saturate at the last entry. Chosen to drain quickly on
+    # transient failures while avoiding hammering WeChat on persistent ones.
+    _RETRY_BACKOFF_SECONDS: tuple[int, ...] = (2, 4, 8, 30, 60, 300)
+
+    def _pending_item_next_retry_at(
+        self, item: dict[str, str]
+    ) -> datetime | None:
+        """Next time this item is eligible for another send attempt, based on
+        its attempt_count and last_attempt_at. Returns None if the item has
+        never been attempted (first send is always eligible)."""
+        last_attempt = str(item.get("last_attempt_at", "")).strip()
+        if not last_attempt:
+            return None
+        try:
+            dt = datetime.fromisoformat(last_attempt)
+        except ValueError:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        attempt_count = max(int(item.get("attempt_count", 1) or 1), 1)
+        idx = min(attempt_count - 1, len(self._RETRY_BACKOFF_SECONDS) - 1)
+        delay = self._RETRY_BACKOFF_SECONDS[idx]
+        return dt + timedelta(seconds=delay)
+
+    def _pending_item_is_within_backoff(self, item: dict[str, str]) -> bool:
+        next_retry = self._pending_item_next_retry_at(item)
+        if next_retry is None:
             return False
-        return "ret=-2" in str(item.get("last_error", "")).strip()
+        return datetime.now(UTC) < next_retry
 
     def _pending_item_suppression_reason(
         self,

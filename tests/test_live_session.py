@@ -1424,25 +1424,22 @@ class LiveSessionTests(unittest.TestCase):
             os.utime(stale_rollout, (1000, 1000))
             os.utime(fresh_rollout, (2000, 2000))
             self.runner.session_root = session_root
-            with patch.object(self.runner, "_tmux_exists", return_value=True):
-                with patch.object(
-                    self.runner, "_pane_current_command", return_value="codex"
-                ):
-                    with patch.object(
-                        self.runner, "_pane_current_path", return_value="/tmp"
-                    ):
-                        with patch.object(self.runner, "_pane_pid", return_value=None):
-                            with patch.object(
-                                self.runner,
-                                "_capture_clean_text",
-                                return_value=f"old log {stale_thread}",
-                            ):
-                                with patch.object(
-                                    self.runner,
-                                    "find_latest_thread",
-                                    return_value=fresh_thread,
-                                ):
-                                    status = self.runner._runtime_status_for_tmux("codex")
+            with patch.object(self.runner, "_tmux_exists", return_value=True), \
+                 patch.object(self.runner, "_pane_current_command", return_value="codex"), \
+                 patch.object(self.runner, "_pane_current_path", return_value="/tmp"), \
+                 patch.object(self.runner, "_pane_pid", return_value=None), \
+                 patch.object(
+                     self.runner,
+                     "_capture_clean_text",
+                     return_value=f"old log {stale_thread}",
+                 ), \
+                 patch.object(self.runner, "_get_tmux_runtime_id", return_value=None), \
+                 patch.object(
+                     self.runner,
+                     "find_latest_thread",
+                     return_value=fresh_thread,
+                 ):
+                status = self.runner._runtime_status_for_tmux("codex")
         self.assertEqual(status.thread_id, fresh_thread)
 
     def test_find_latest_thread_ignores_spawn_child_when_root_exists(self) -> None:
@@ -1684,20 +1681,17 @@ class LiveSessionTests(unittest.TestCase):
                 conn.close()
             self.runner.session_root = session_root
             self.runner.codex_state_db = db_path
-            with patch.object(self.runner, "_tmux_exists", return_value=True):
-                with patch.object(
-                    self.runner, "_pane_current_command", return_value="codex"
-                ):
-                    with patch.object(
-                        self.runner, "_pane_current_path", return_value="/tmp"
-                    ):
-                        with patch.object(self.runner, "_pane_pid", return_value=None):
-                            with patch.object(
-                                self.runner,
-                                "_capture_clean_text",
-                                return_value=f"stale pane text {stale_thread}",
-                            ):
-                                status = self.runner._runtime_status_for_tmux("codex")
+            with patch.object(self.runner, "_tmux_exists", return_value=True), \
+                 patch.object(self.runner, "_pane_current_command", return_value="codex"), \
+                 patch.object(self.runner, "_pane_current_path", return_value="/tmp"), \
+                 patch.object(self.runner, "_pane_pid", return_value=None), \
+                 patch.object(
+                     self.runner,
+                     "_capture_clean_text",
+                     return_value=f"stale pane text {stale_thread}",
+                 ), \
+                 patch.object(self.runner, "_get_tmux_runtime_id", return_value=None):
+                status = self.runner._runtime_status_for_tmux("codex")
         self.assertEqual(status.thread_id, root_thread)
 
     def test_runtime_status_keeps_pane_thread_outside_workspace(self) -> None:
