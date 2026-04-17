@@ -1205,9 +1205,36 @@ class LiveCodexSessionManager:
 
     def _resolve_codex_thread_id(self, *, tmux_session: str) -> str | None:
         rollout_file = self._current_codex_rollout_file(tmux_session)
-        if rollout_file is None:
-            return None
-        return self._extract_codex_thread_id_from_path(rollout_file)
+        if rollout_file is not None:
+            thread_id = self._extract_codex_thread_id_from_path(rollout_file)
+            if thread_id:
+                # Self-persist: pin this thread_id onto the tmux session so
+                # the next sync can recover it even when codex rotates
+                # rollout files or multiple codex instances share one cwd.
+                hinted = self._get_tmux_runtime_id(tmux_session)
+                if hinted != thread_id:
+                    self._set_tmux_runtime_id(tmux_session, thread_id)
+                return thread_id
+        # Fallback: multi-codex-in-same-cwd (e.g. alpha/beta/gamma workspaces)
+        # breaks rollout-file heuristics. Respect an explicit tmux user option
+        # if it looks like a codex thread_id (UUID-shaped) and is not a
+        # lingering opencode/claude/pending hint.
+        hinted = self._get_tmux_runtime_id(tmux_session)
+        if hinted and self._looks_like_codex_thread_id(hinted):
+            return hinted
+        return None
+
+    @staticmethod
+    def _looks_like_codex_thread_id(value: str) -> bool:
+        if not value:
+            return False
+        if (
+            value.startswith(OPENCODE_SESSION_PREFIX)
+            or value.startswith(CLAUDE_SESSION_PREFIX)
+            or value.startswith(PENDING_RUNTIME_PREFIX)
+        ):
+            return False
+        return bool(THREAD_ID_RE.fullmatch(value))
 
     def _extract_codex_thread_id_from_path(self, path: Path) -> str | None:
         match = CODEX_ROLLOUT_FILE_RE.search(str(path))

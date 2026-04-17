@@ -1070,6 +1070,49 @@ class LiveSessionTests(unittest.TestCase):
 
         self.assertEqual(resolved, "ses_match")
 
+    def test_resolve_codex_thread_id_falls_back_to_tmux_runtime_id(self) -> None:
+        """When codex rollout-file resolution fails (e.g. multiple codex
+        instances share one workspace cwd — alpha/beta/gamma case), the
+        resolver must respect an explicit @daedalus_runtime_id tmux option."""
+        pinned = "019d8ce9-b087-76a1-b0c4-deadbeef0001"
+        with patch.object(
+            self.runner,
+            "_current_codex_rollout_file",
+            return_value=None,
+        ), patch.object(
+            self.runner,
+            "_get_tmux_runtime_id",
+            return_value=pinned,
+        ):
+            resolved = self.runner._resolve_codex_thread_id(tmux_session="gamma")
+        self.assertEqual(resolved, pinned)
+
+    def test_resolve_codex_thread_id_persists_to_tmux_on_success(self) -> None:
+        """After a successful rollout-file resolution, the resolver writes the
+        thread_id back to @daedalus_runtime_id so the next sync is stable
+        even if codex later rotates the rollout file."""
+        thread_id = "019dabcd-0000-72aa-b0c4-cafefeed0001"
+        rollout = Path(f"/tmp/rollout-{thread_id}.jsonl")
+        with patch.object(
+            self.runner,
+            "_current_codex_rollout_file",
+            return_value=rollout,
+        ), patch.object(
+            self.runner,
+            "_extract_codex_thread_id_from_path",
+            return_value=thread_id,
+        ), patch.object(
+            self.runner,
+            "_get_tmux_runtime_id",
+            return_value=None,
+        ), patch.object(
+            self.runner,
+            "_set_tmux_runtime_id",
+        ) as set_mock:
+            resolved = self.runner._resolve_codex_thread_id(tmux_session="alpha")
+        self.assertEqual(resolved, thread_id)
+        set_mock.assert_called_once_with("alpha", thread_id)
+
     def test_resolve_claude_session_id_prefers_open_project_jsonl(self) -> None:
         session_id = "9d39ab4b-c37d-4ff8-8104-e83cdd6c4307"
         session_file = Path(
@@ -1682,10 +1725,17 @@ class LiveSessionTests(unittest.TestCase):
                             ):
                                 with patch.object(
                                     self.runner,
-                                    "find_latest_thread",
-                                    return_value=fresh_thread,
+                                    "_get_tmux_runtime_id",
+                                    return_value=None,
                                 ):
-                                    status = self.runner._runtime_status_for_tmux("codex")
+                                    with patch.object(
+                                        self.runner,
+                                        "find_latest_thread",
+                                        return_value=fresh_thread,
+                                    ):
+                                        status = self.runner._runtime_status_for_tmux(
+                                            "codex"
+                                        )
         self.assertEqual(status.thread_id, stale_thread)
 
 
