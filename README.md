@@ -463,6 +463,50 @@ uv run daedalus-wechat send-bound "hello from desktop"
 Plain text messages are sent to whatever supported live runtime is **currently active
 inside the active live tmux session**.
 
+### Reverse-pushing files, images, or videos
+
+`send-bound` can also push a binary attachment to the currently bound WeChat
+chat. Flags are mutually exclusive (pick one at a time):
+
+```bash
+# file (any mime type): ~/report.pdf delivered as a WeChat file message
+uv run daedalus-wechat send-bound --file ~/report.pdf
+
+# image: ~/chart.png delivered as an inline image
+uv run daedalus-wechat send-bound --image ~/chart.png
+
+# video: ~/demo.mp4 delivered as an inline video (requires ffmpeg + ffprobe)
+uv run daedalus-wechat send-bound --video ~/demo.mp4
+```
+
+Preconditions:
+
+- The chat must have been bound at least once — owner has sent ≥1 inbound to
+  the bot so `bound_user_id` is persisted in `state.json`.
+- `--video` needs `ffmpeg` and `ffprobe` on `PATH` (used to extract the first
+  frame as thumbnail and read the duration in milliseconds).
+
+Pipeline (iLink bot `openclaw-weixin` CDN flow):
+
+1. Read bytes, compute raw MD5, generate a random 16-byte AES-128 key.
+2. AES-128-ECB encrypt locally (via `openssl enc`) with PKCS7 padding.
+3. `POST /ilink/bot/getuploadurl` → presigned `upload_param`.
+4. `POST {cdn}/upload?encrypted_query_param=<upload_param>&filekey=<filekey>`
+   with the ciphertext. WeChat returns the `x-encrypted-param` header.
+5. `POST /ilink/bot/sendmessage` with the corresponding `image_item`,
+   `file_item`, or `video_item` entry.
+
+Observability:
+
+- Every send writes a `relay_outgoing` (or `relay_failed`) entry to
+  `events.jsonl` with `trace_id`, `media_kind`, `path`, `file_name`,
+  `size_bytes`, `md5`, `content_type`, and `latency_ms`. On failure the entry
+  also carries `stage` (one of `local_encrypt`, `getuploadurl`, `cdn_upload`,
+  `sendmessage`, `video_probe`, `unknown`) and the raw `error` string so
+  agents can grep for which pipeline step broke.
+- The delivery ledger (`deliveries.jsonl`) records a human-readable line per
+  send, e.g. `[image] chart.png`.
+
 If you send a WeChat image, the bridge now tries the shortest truthful path in
 this order:
 

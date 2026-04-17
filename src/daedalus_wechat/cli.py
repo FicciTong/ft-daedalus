@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import mimetypes
+import secrets
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -98,6 +102,29 @@ def _send_bound_text(
     return 0
 
 
+def _stream_md5(path: Path) -> str:
+    digest = hashlib.md5(usedforsecurity=False)
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _classify_media_send_stage(error_text: str) -> str:
+    text = str(error_text or "").strip()
+    if text.startswith("WeChat getuploadurl failed"):
+        return "getuploadurl"
+    if text.startswith("CDN upload"):
+        return "cdn_upload"
+    if text.startswith("WeChat media send failed"):
+        return "sendmessage"
+    if text.startswith("openssl encrypt failed"):
+        return "local_encrypt"
+    if text.startswith("ffprobe ") or text.startswith("ffmpeg "):
+        return "video_probe"
+    return "unknown"
+
+
 def _send_bound_media(
     config,
     state: BridgeState,
@@ -113,10 +140,19 @@ def _send_bound_media(
     path = Path(media_path)
     if not path.is_file():
         raise RuntimeError(f"media path does not exist or is not a file: {path}")
+
+    size_bytes = path.stat().st_size
+    content_md5 = _stream_md5(path)
+    content_type, _ = mimetypes.guess_type(path.name)
+    trace_id = secrets.token_hex(8)
+
     wechat = client or WeChatClient(
         WeChatAccount.load(config.account_file),
         min_send_interval_seconds=config.min_send_interval_seconds,
     )
+    started_at = time.monotonic()
+    error: str | None = None
+    stage: str | None = None
     try:
         if kind == "image":
             wechat.send_image(
@@ -136,13 +172,28 @@ def _send_bound_media(
                 context_token=state.bound_context_token,
                 file_path=path,
             )
-        event_kind = "relay_outgoing"
-        status = "sent"
-        error: str | None = None
     except Exception as exc:  # noqa: BLE001
-        event_kind = "relay_failed"
-        status = "failed"
         error = str(exc)
+        stage = _classify_media_send_stage(error)
+    latency_ms = int((time.monotonic() - started_at) * 1000)
+
+    event_kind = "relay_outgoing" if error is None else "relay_failed"
+    status = "sent" if error is None else "failed"
+    payload: dict[str, object] = {
+        "to": state.bound_user_id,
+        "trace_id": trace_id,
+        "media_kind": kind,
+        "path": str(path),
+        "file_name": path.name,
+        "size_bytes": size_bytes,
+        "md5": content_md5,
+        "content_type": content_type,
+        "latency_ms": latency_ms,
+    }
+    if error:
+        payload["error"] = error
+        payload["stage"] = stage
+
     config.state_dir.mkdir(parents=True, exist_ok=True)
     with config.event_log_file.open("a", encoding="utf-8") as fh:
         fh.write(
@@ -150,13 +201,7 @@ def _send_bound_media(
                 {
                     "ts": datetime.now(UTC).isoformat(),
                     "kind": event_kind,
-                    "payload": {
-                        "to": state.bound_user_id,
-                        "media_kind": kind,
-                        "path": str(path),
-                        "size_bytes": path.stat().st_size if path.exists() else 0,
-                        **({"error": error} if error else {}),
-                    },
+                    "payload": payload,
                 },
                 ensure_ascii=False,
             )
@@ -166,15 +211,16 @@ def _send_bound_media(
         state=state,
         ledger_file=config.delivery_ledger_file,
         to_user_id=state.bound_user_id,
-        text=f"[{kind}] {path.name}",
+        text=f"[{kind}] {path.name} md5={content_md5[:12]} size={size_bytes}",
         status=status,
         kind="relay",
         origin="desktop-direct",
         thread_id=state.active_session_id,
         tmux_session=state.active_tmux_session,
+        error=f"[{stage}] {error}" if error else None,
     )
     if error:
-        raise RuntimeError(error)
+        raise RuntimeError(f"[{stage}] {error}")
     return 0
 
 

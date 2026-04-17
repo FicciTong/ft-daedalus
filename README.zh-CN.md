@@ -428,6 +428,46 @@ uv run daedalus-wechat send-bound "hello from desktop"
 
 普通文本消息会送进**当前 active live tmux session** 里正在活着的受支持 runtime。
 
+### 反向推送文件 / 图片 / 视频
+
+`send-bound` 同时支持把二进制附件推回到当前绑定的微信会话。三个 flag 互斥，一次
+只能选一个：
+
+```bash
+# 文件（任意 mime 类型）：~/report.pdf 作为微信文件消息送达
+uv run daedalus-wechat send-bound --file ~/report.pdf
+
+# 图片：~/chart.png 作为聊天窗口里的行内图片送达
+uv run daedalus-wechat send-bound --image ~/chart.png
+
+# 视频：~/demo.mp4 作为聊天窗口里的行内视频送达（需要 ffmpeg + ffprobe）
+uv run daedalus-wechat send-bound --video ~/demo.mp4
+```
+
+前提条件：
+
+- 微信端至少给桥发过 1 条 inbound，`bound_user_id` 已经持久化到 `state.json`
+- `--video` 需要 `PATH` 上有 `ffmpeg` 和 `ffprobe`（取第 1 帧做缩略图 + 读毫秒级时长）
+
+协议链路（iLink bot `openclaw-weixin` CDN 流程）：
+
+1. 读字节 → 算 raw MD5 → 生成随机 16 字节 AES-128 key
+2. 本地 AES-128-ECB + PKCS7 padding 加密（走 `openssl enc` subprocess）
+3. `POST /ilink/bot/getuploadurl` → 拿到预签名 `upload_param`
+4. `POST {cdn}/upload?encrypted_query_param=<upload_param>&filekey=<filekey>`
+   把密文 PUT 到 CDN，响应头 `x-encrypted-param` 是下一步要带的参数
+5. `POST /ilink/bot/sendmessage` 带上对应的 `image_item` / `file_item` /
+   `video_item`
+
+可观测性：
+
+- 每次 send 会在 `events.jsonl` 里记录一条 `relay_outgoing`（失败时 `relay_failed`），
+  payload 含 `trace_id`、`media_kind`、`path`、`file_name`、`size_bytes`、`md5`、
+  `content_type`、`latency_ms`。失败时还会记录 `stage`（`local_encrypt` /
+  `getuploadurl` / `cdn_upload` / `sendmessage` / `video_probe` / `unknown`
+  之一），方便 grep 定位哪一步坏了。
+- `deliveries.jsonl` 里会追加一条人可读的行，形如 `[image] chart.png`。
+
 示例：
 
 ```text
