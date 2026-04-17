@@ -1773,6 +1773,147 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(runner.submitted, [])
             self.assertIn("@agent", fake_wechat.sent[-1][2])
 
+    def test_group_mode_voice_variant_jiama_routes_to_gamma_when_live(self) -> None:
+        """'伽马 你好' (STT of 'Gamma') should route to live tmux 'gamma'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_gamma = "ses_gamma"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_gamma: SessionRecord(
+                        thread_id=thread_gamma, label="gamma", cwd="/tmp",
+                        source="tmux-live", created_at="2026-04-17T00:00:00+00:00",
+                        updated_at="2026-04-17T00:00:00+00:00", tmux_session="gamma",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(tmux_session="gamma", exists=True,
+                    pane_command="node", thread_id=thread_gamma,
+                    pane_cwd="/tmp", backend="codex"),
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat, runner=runner, state=state,
+            )
+            incoming = daemon._parse_incoming({
+                "message_type": 1, "from_user_id": "user@im.wechat",
+                "context_token": "ctx-1", "message_id": "m-1",
+                "item_list": [{"type": 1, "text_item": {"text": "伽马 你好"}}],
+            })
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            self.assertEqual(len(runner.submitted), 1)
+            self.assertEqual(runner.submitted[0][0], thread_gamma)
+
+    def test_group_mode_voice_variant_jiama_noop_when_gamma_not_live(self) -> None:
+        """'伽马' variant must not route to anything when no `gamma` session
+        is live — the template entry is data-driven by the scan result."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_claude = "ses_claude"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_claude: SessionRecord(
+                        thread_id=thread_claude, label="claude", cwd="/tmp",
+                        source="tmux-live", created_at="2026-04-17T00:00:00+00:00",
+                        updated_at="2026-04-17T00:00:00+00:00", tmux_session="claude",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(tmux_session="claude", exists=True,
+                    pane_command="node", thread_id=thread_claude,
+                    pane_cwd="/tmp", backend="claude-code"),
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat, runner=runner, state=state,
+            )
+            incoming = daemon._parse_incoming({
+                "message_type": 1, "from_user_id": "user@im.wechat",
+                "context_token": "ctx-1", "message_id": "m-1",
+                "item_list": [{"type": 1, "text_item": {"text": "伽马 你好"}}],
+            })
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            self.assertEqual(runner.submitted, [])
+            self.assertIn("@agent", fake_wechat.sent[-1][2])
+
+    def test_group_mode_voice_variant_aerfa_routes_to_alpha(self) -> None:
+        """'阿尔法 hello' should route to live tmux 'alpha'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_alpha = "ses_alpha"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_alpha: SessionRecord(
+                        thread_id=thread_alpha, label="alpha", cwd="/tmp",
+                        source="tmux-live", created_at="2026-04-17T00:00:00+00:00",
+                        updated_at="2026-04-17T00:00:00+00:00", tmux_session="alpha",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(tmux_session="alpha", exists=True,
+                    pane_command="node", thread_id=thread_alpha,
+                    pane_cwd="/tmp", backend="codex"),
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat, runner=runner, state=state,
+            )
+            incoming = daemon._parse_incoming({
+                "message_type": 1, "from_user_id": "user@im.wechat",
+                "context_token": "ctx-1", "message_id": "m-1",
+                "item_list": [{"type": 1, "text_item": {"text": "阿尔法 hello"}}],
+            })
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            self.assertEqual(len(runner.submitted), 1)
+            self.assertEqual(runner.submitted[0][0], thread_alpha)
+
+    def test_group_mode_voice_variant_beita_routes_to_beta(self) -> None:
+        """'贝塔' should route to live tmux 'beta'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_beta = "ses_beta"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_beta: SessionRecord(
+                        thread_id=thread_beta, label="beta", cwd="/tmp",
+                        source="tmux-live", created_at="2026-04-17T00:00:00+00:00",
+                        updated_at="2026-04-17T00:00:00+00:00", tmux_session="beta",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(tmux_session="beta", exists=True,
+                    pane_command="node", thread_id=thread_beta,
+                    pane_cwd="/tmp", backend="codex"),
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat, runner=runner, state=state,
+            )
+            incoming = daemon._parse_incoming({
+                "message_type": 1, "from_user_id": "user@im.wechat",
+                "context_token": "ctx-1", "message_id": "m-1",
+                "item_list": [{"type": 1, "text_item": {"text": "贝塔 yo"}}],
+            })
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            self.assertEqual(len(runner.submitted), 1)
+            self.assertEqual(runner.submitted[0][0], thread_beta)
+
     def test_group_mode_plain_text_without_target_prompts_for_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_id = "ses_claude"

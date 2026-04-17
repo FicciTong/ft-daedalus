@@ -77,23 +77,75 @@ def _normalize_voice(text: str) -> str:
     return out
 
 
-# Voice transcription corrections: WeChat STT commonly garbles these.
-# Maps misheard fragments → correct fragment (applied before normalization).
-_VOICE_CORRECTIONS: dict[str, str] = {
-    "eclaudee": "claude", "eclaude": "claude", "claudee": "claude",
-    "克cloud": "claude", "cloud": "claude",
-    "克劳德": "claude", "克洛德": "claude", "克劳": "claude",
-    "claode": "claude", "claud": "claude",
-    "killing": "kimi", "kimmy": "kimi", "keemy": "kimi",
-    "奇米": "kimi", "可米": "kimi",
-    "吉皮提": "gpt", "杰皮提": "gpt",
+# Voice transcription variant templates, keyed by canonical tmux session name.
+# When a live tmux session matches a template key (or its digit-stripped base,
+# e.g. `kimi0` -> `kimi`), its STT variants are injected into the active
+# correction table for the current voice message. Adding a new tmux session
+# that already has a template entry auto-enables its variants with no code
+# change; adding one without a template entry still routes exactly (the name
+# is tried as-is against the fuzzy prefix match).
+_NAME_VARIANT_TEMPLATES: dict[str, tuple[str, ...]] = {
+    # Greek-letter agent names (ft-* universe naming convention)
+    "alpha":   ("阿尔法", "阿法", "阿尔发", "alfa"),
+    "beta":    ("贝塔", "倍塔", "必塔", "beeta"),
+    "gamma":   ("伽马", "嘎玛", "加马", "伽玛", "嘎马", "gama", "gemma"),
+    "delta":   ("德尔塔", "德塔", "达尔塔"),
+    "epsilon": ("伊普西隆", "艾普西龙"),
+    "zeta":    ("泽塔", "齐塔"),
+    "eta":     ("伊塔", "艾塔"),
+    "theta":   ("西塔", "塞塔", "瑟塔"),
+    "iota":    ("约塔", "艾奥塔"),
+    "kappa":   ("卡帕",),
+    "lambda":  ("兰姆达", "拉姆达", "朗姆达"),
+    "mu":      ("谬",),
+    "nu":      ("纽",),
+    "xi":      ("克西",),
+    "omicron": ("奥米克戎",),
+    "pi":      ("派",),
+    "rho":     ("柔",),
+    "sigma":   ("西格玛", "西格马"),
+    "tau":     ("陶",),
+    "upsilon": ("宇普西隆",),
+    "phi":     ("斐",),
+    "chi":     ("柯",),
+    "psi":     ("普赛",),
+    "omega":   ("欧米伽", "欧米茄", "奥米伽"),
+    # Known runtime backends (legacy _VOICE_CORRECTIONS content, relocated so
+    # the variant surface has a single source of truth)
+    "claude":  ("克劳德", "克洛德", "克劳", "cloud", "claud", "claode",
+                "eclaude", "eclaudee", "claudee", "克cloud"),
+    "kimi":    ("奇米", "可米", "killing", "kimmy", "keemy"),
+    "gpt":     ("吉皮提", "杰皮提"),
+    "codex":   ("codec",),
 }
 
 
-def _apply_voice_corrections(text: str) -> str:
-    """Apply known voice transcription corrections before normalization."""
+def _build_active_voice_corrections(live_names: list[str]) -> dict[str, str]:
+    """Compose a variant->canonical-base map from currently live tmux session
+    names. Lookup uses both the full name (e.g. `kimi0`) and its digit-stripped
+    base (`kimi`), so numbered variants inherit the parent template. Sessions
+    without a template entry contribute nothing here but still participate in
+    the fuzzy prefix match via their literal name.
+    """
+    out: dict[str, str] = {}
+    for raw in live_names:
+        lower = str(raw or "").strip().lower()
+        if not lower:
+            continue
+        candidates = {lower}
+        stripped = lower.rstrip("0123456789")
+        if stripped and stripped != lower:
+            candidates.add(stripped)
+        for base in candidates:
+            for variant in _NAME_VARIANT_TEMPLATES.get(base, ()):
+                out[variant] = base
+    return out
+
+
+def _apply_voice_corrections(text: str, mapping: dict[str, str]) -> str:
+    """Apply the given variant->canonical corrections to raw voice text."""
     out = text
-    for wrong, right in sorted(_VOICE_CORRECTIONS.items(), key=lambda x: -len(x[0])):
+    for wrong, right in sorted(mapping.items(), key=lambda x: -len(x[0])):
         idx = out.lower().find(wrong.lower())
         if idx != -1:
             out = out[:idx] + right + out[idx + len(wrong):]
@@ -3004,16 +3056,19 @@ class BridgeDaemon:
         if not text:
             return None, body
 
-        # Apply voice transcription corrections first, then normalize
-        corrected = _apply_voice_corrections(text)
-        normalized = _normalize_voice(corrected)
-        if not normalized:
-            return None, body
-
-        # Get current live session names
+        # Scan live sessions first so the STT variant table is built from the
+        # actual current tmux members. New sessions with a template entry get
+        # their variants auto-enabled; sessions without a template entry still
+        # match via their literal name further down.
         live_records = self.runner.sync_live_sessions(self.state)
         self._save_state()
         live_names = [r.tmux_session for r in live_records if r.tmux_session]
+
+        active_corrections = _build_active_voice_corrections(live_names)
+        corrected = _apply_voice_corrections(text, active_corrections)
+        normalized = _normalize_voice(corrected)
+        if not normalized:
+            return None, body
 
         # Wide matching: owner always tries to say a session name first.
         # Dynamically check if a prefix of the normalized input is a
