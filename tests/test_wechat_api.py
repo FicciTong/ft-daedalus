@@ -65,6 +65,61 @@ class WeChatApiTests(unittest.TestCase):
             client.payloads[1]["msg"]["client_id"],
         )
 
+    def test_send_text_omits_context_token_when_none(self) -> None:
+        """Desktop-mirror traffic passes context_token=None. The first request
+        must omit the field entirely instead of sending `null`, which WeChat
+        treats as an invalid token (ret=-2) and would otherwise leave the
+        pending outbox permanently stuck."""
+
+        class _OkClient(WeChatClient):
+            def __init__(self) -> None:
+                super().__init__(
+                    WeChatAccount(
+                        token="token",
+                        base_url="http://localhost",
+                        cdn_base_url="http://cdn.localhost",
+                        account_id="test-bot",
+                        user_id=None,
+                    )
+                )
+                self.payloads: list[dict] = []
+
+            def _post(self, endpoint: str, payload: dict, timeout: float = 40.0) -> dict:
+                self.payloads.append(payload)
+                return {"ret": 0}
+
+        client = _OkClient()
+        response = client.send_text(
+            to_user_id="user@im.wechat",
+            context_token=None,
+            text="HELLO",
+        )
+        self.assertEqual(response["ret"], 0)
+        self.assertEqual(len(client.payloads), 1)
+        self.assertNotIn("context_token", client.payloads[0]["msg"])
+
+    def test_send_text_omits_context_token_when_empty_string(self) -> None:
+        class _OkClient(WeChatClient):
+            def __init__(self) -> None:
+                super().__init__(
+                    WeChatAccount(
+                        token="token",
+                        base_url="http://localhost",
+                        cdn_base_url="http://cdn.localhost",
+                        account_id="test-bot",
+                        user_id=None,
+                    )
+                )
+                self.payloads: list[dict] = []
+
+            def _post(self, endpoint: str, payload: dict, timeout: float = 40.0) -> dict:
+                self.payloads.append(payload)
+                return {"ret": 0}
+
+        client = _OkClient()
+        client.send_text(to_user_id="user@im.wechat", context_token="", text="HELLO")
+        self.assertNotIn("context_token", client.payloads[0]["msg"])
+
 
 if __name__ == "__main__":
     unittest.main()

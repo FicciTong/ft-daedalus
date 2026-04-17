@@ -112,40 +112,34 @@ class WeChatClient:
                 time.sleep(remaining)
             self._last_send_at = time.monotonic()
 
-            payload = {
-                "msg": {
-                    "from_user_id": "",
-                    "to_user_id": to_user_id,
-                    "client_id": _generate_client_id(),
-                    "message_type": 2,
-                    "message_state": 2,
-                    "item_list": [{"type": 1, "text_item": {"text": text}}],
-                    "context_token": context_token,
-                },
-                "base_info": {},
+            msg: dict[str, Any] = {
+                "from_user_id": "",
+                "to_user_id": to_user_id,
+                "client_id": _generate_client_id(),
+                "message_type": 2,
+                "message_state": 2,
+                "item_list": [{"type": 1, "text_item": {"text": text}}],
             }
+            # Only include context_token when truthy. The official WeChat
+            # server treats `"context_token": null` as an invalid token and
+            # returns `ret=-2`, which would otherwise leave desktop-mirror
+            # traffic (which deliberately sends tokenless) permanently stuck
+            # in the bridge's pending_outbox.
+            if context_token:
+                msg["context_token"] = context_token
+            payload = {"msg": msg, "base_info": {}}
             response = self._post("ilink/bot/sendmessage", payload, timeout=20.0)
             errcode = response.get("errcode")
             ret = response.get("ret")
             if errcode in (None, 0) and ret in (None, 0):
                 return response
-            # Official WeChat chat contexts can expire even when the user/chat binding is
-            # still valid. Retry once without the context token so delivery can continue
-            # instead of forcing a manual rebind.
+            # Official WeChat chat contexts can expire even when the user/chat
+            # binding is still valid. Retry once without the context token so
+            # delivery can continue instead of forcing a manual rebind.
             if ret == -2 and context_token:
-                # Omit context_token entirely (not null) — the official SDK
-                # uses `undefined` which is stripped from JSON.  Sending
-                # `null` may be treated as an invalid token by the server.
-                retry_msg = {
-                    k: v
-                    for k, v in payload["msg"].items()
-                    if k != "context_token"
-                }
+                retry_msg = {k: v for k, v in msg.items() if k != "context_token"}
                 retry_msg["client_id"] = _generate_client_id()
-                retry_payload = {
-                    "msg": retry_msg,
-                    "base_info": payload["base_info"],
-                }
+                retry_payload = {"msg": retry_msg, "base_info": {}}
                 response = self._post("ilink/bot/sendmessage", retry_payload, timeout=20.0)
                 errcode = response.get("errcode")
                 ret = response.get("ret")

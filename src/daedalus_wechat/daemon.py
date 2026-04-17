@@ -175,6 +175,7 @@ HELP_TEXT = """FT bridge 命令总览（支持 `/command` 和 `\\command`）
 /recent after 128  从 seq=128 之后继续看当前 active tmux（高级调试）
 /recent all 10     看所有 session 最近 10 条
 /log 10            看当前 bridge 最近事件/错误日志
+/queue             看当前 pending_outbox 状态（挤压、rebind 等待、stuck）
 
 帮助:
 /help              显示这页
