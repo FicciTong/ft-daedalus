@@ -113,6 +113,40 @@ class WeChatClient:
             timeout=40.0,
         )
 
+    def get_config(self, *, ilink_user_id: str) -> dict[str, Any]:
+        """Fetch bot config including typing_ticket used by sendtyping.
+        The ilink_user_id scopes the config to a specific user chat."""
+        return self._post(
+            "ilink/bot/getconfig",
+            {
+                "ilink_user_id": ilink_user_id,
+                "base_info": {"channel_version": "1.0.0"},
+            },
+            timeout=20.0,
+        )
+
+    def send_typing(
+        self,
+        *,
+        to_user_id: str,
+        typing_ticket: str,
+        status: int = 1,
+    ) -> dict[str, Any]:
+        """Send a typing indicator to the given user. `status=1` starts the
+        "typing" signal, `status=2` cancels it. Protocol level this endpoint
+        does not require a context_token; it uses typing_ticket obtained via
+        get_config()."""
+        return self._post(
+            "ilink/bot/sendtyping",
+            {
+                "ilink_user_id": to_user_id,
+                "typing_ticket": typing_ticket,
+                "status": int(status),
+                "base_info": {"channel_version": "1.0.0"},
+            },
+            timeout=15.0,
+        )
+
     def send_text(self, *, to_user_id: str, context_token: str | None, text: str) -> dict[str, Any]:
         with self._send_lock:
             now = time.monotonic()

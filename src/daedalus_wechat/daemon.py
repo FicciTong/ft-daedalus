@@ -230,6 +230,7 @@ class BridgeDaemon:
         self._bootstrap_runtime()
         self._start_mirror_thread()
         self._start_outbox_thread()
+        self._start_typing_keepalive_thread()
         systemd_notify("READY=1")
         systemd_notify("STATUS=bridge running")
 
@@ -1679,6 +1680,87 @@ class BridgeDaemon:
             daemon=True,
         )
         thread.start()
+
+    def _start_typing_keepalive_thread(self) -> None:
+        if not self.config.typing_keepalive_enabled:
+            self._log_event(
+                "typing_keepalive_disabled",
+                {"reason": "config.typing_keepalive_enabled=False"},
+            )
+            return
+        thread = threading.Thread(
+            target=self._typing_keepalive_loop,
+            name="codex-wechat-typing-keepalive",
+            daemon=True,
+        )
+        thread.start()
+
+    def _typing_keepalive_loop(self) -> None:
+        """Periodically ping sendtyping against the bound user so WeChat
+        keeps the per-chat context_token warm. Live-verified on 2026-04-17:
+        without this, context TTL (~minutes) expires and tokenless
+        desktop-mirror sendmessage returns ret=-2 until the next owner
+        inbound rebinds; with this, the chat stays hot."""
+        typing_ticket: str | None = None
+        consecutive_failures = 0
+        # Refresh the ticket periodically in case WeChat rotates them server-side.
+        TICKET_TTL_SECONDS = 1800.0  # 30 min
+        last_ticket_at = 0.0
+        interval = max(float(self.config.typing_keepalive_interval_seconds), 30.0)
+        while True:
+            time.sleep(interval)
+            try:
+                with self._lock:
+                    bound_user_id = self.state.bound_user_id
+                if not bound_user_id:
+                    continue
+                now = time.monotonic()
+                if (
+                    not typing_ticket
+                    or (now - last_ticket_at) > TICKET_TTL_SECONDS
+                ):
+                    config_resp = self.wechat.get_config(
+                        ilink_user_id=bound_user_id,
+                    )
+                    if config_resp.get("ret") not in (None, 0):
+                        self._log_event(
+                            "typing_keepalive_getconfig_error",
+                            {"ret": config_resp.get("ret"),
+                             "errmsg": str(config_resp.get("errmsg") or "")[:120]},
+                        )
+                        consecutive_failures += 1
+                        continue
+                    typing_ticket = str(
+                        config_resp.get("typing_ticket") or ""
+                    ).strip() or None
+                    if not typing_ticket:
+                        self._log_event(
+                            "typing_keepalive_no_ticket",
+                            {"response_keys": list(config_resp.keys())[:10]},
+                        )
+                        consecutive_failures += 1
+                        continue
+                    last_ticket_at = now
+                # Use status=2 (cancel) so there is no active typing UI
+                # indicator to flash on the owner's phone — the endpoint still
+                # counts as activity and refreshes the context.
+                self.wechat.send_typing(
+                    to_user_id=bound_user_id,
+                    typing_ticket=typing_ticket,
+                    status=2,
+                )
+                consecutive_failures = 0
+            except Exception as exc:  # noqa: BLE001
+                consecutive_failures += 1
+                self._log_event(
+                    "typing_keepalive_error",
+                    {"error": str(exc)[:200],
+                     "consecutive_failures": consecutive_failures},
+                )
+                if consecutive_failures >= 3:
+                    # Force ticket refresh on next tick in case it's stale.
+                    typing_ticket = None
+                    last_ticket_at = 0.0
 
     def _mirror_loop(self) -> None:
         while True:

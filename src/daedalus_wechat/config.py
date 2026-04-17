@@ -23,6 +23,8 @@ class BridgeConfig:
     text_chunk_limit: int = 3500
     min_send_interval_seconds: float = 0.5
     outbox_retry_interval_seconds: float = 1.0
+    typing_keepalive_enabled: bool = True
+    typing_keepalive_interval_seconds: float = 120.0
 
     @property
     def state_file(self) -> Path:
@@ -200,6 +202,20 @@ def load_config() -> BridgeConfig:
         ),
         default=1.0,
     )
+    typing_keepalive_enabled = not _parse_bool(
+        os.environ.get(
+            "DAEDALUS_WECHAT_TYPING_KEEPALIVE_DISABLED",
+            file_env.get("DAEDALUS_WECHAT_TYPING_KEEPALIVE_DISABLED"),
+        ),
+        default=False,
+    )
+    typing_keepalive_interval_seconds = _parse_float(
+        os.environ.get(
+            "DAEDALUS_WECHAT_TYPING_KEEPALIVE_INTERVAL_SECONDS",
+            file_env.get("DAEDALUS_WECHAT_TYPING_KEEPALIVE_INTERVAL_SECONDS"),
+        ),
+        default=120.0,
+    )
     return BridgeConfig(
         codex_bin=codex_bin,
         opencode_bin=opencode_bin,
@@ -215,4 +231,6 @@ def load_config() -> BridgeConfig:
         progress_updates_default=progress_updates_default,
         min_send_interval_seconds=min_send_interval_seconds,
         outbox_retry_interval_seconds=outbox_retry_interval_seconds,
+        typing_keepalive_enabled=typing_keepalive_enabled,
+        typing_keepalive_interval_seconds=typing_keepalive_interval_seconds,
     )
