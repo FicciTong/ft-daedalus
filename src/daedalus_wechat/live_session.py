@@ -1331,7 +1331,11 @@ class LiveCodexSessionManager:
         if not fd_dir.exists():
             return []
         paths: list[str] = []
-        for fd in fd_dir.iterdir():
+        try:
+            entries = list(fd_dir.iterdir())
+        except OSError:
+            return []
+        for fd in entries:
             try:
                 target = os.readlink(fd)
             except OSError:
