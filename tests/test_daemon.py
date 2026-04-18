@@ -1345,9 +1345,7 @@ class DaemonTests(unittest.TestCase):
                     "from_user_id": "user@im.wechat",
                     "context_token": "ctx-1",
                     "message_id": "m-1",
-                    "item_list": [
-                        {"type": 1, "text_item": {"text": "@kimi1 say hi"}}
-                    ],
+                    "item_list": [{"type": 1, "text_item": {"text": "@kimi1 say hi"}}],
                 }
             )
             assert incoming is not None
@@ -1609,37 +1607,61 @@ class DaemonTests(unittest.TestCase):
                 room_mode_enabled=True,
                 sessions={
                     thread_claude: SessionRecord(
-                        thread_id=thread_claude, label="claude", cwd="/tmp",
-                        source="tmux-live", created_at="2026-04-06T00:00:00+00:00",
-                        updated_at="2026-04-06T00:00:00+00:00", tmux_session="claude",
+                        thread_id=thread_claude,
+                        label="claude",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-06T00:00:00+00:00",
+                        updated_at="2026-04-06T00:00:00+00:00",
+                        tmux_session="claude",
                     ),
                     thread_kimi: SessionRecord(
-                        thread_id=thread_kimi, label="kimi0", cwd="/tmp",
-                        source="tmux-live", created_at="2026-04-06T00:00:00+00:00",
-                        updated_at="2026-04-06T00:00:00+00:00", tmux_session="kimi0",
+                        thread_id=thread_kimi,
+                        label="kimi0",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-06T00:00:00+00:00",
+                        updated_at="2026-04-06T00:00:00+00:00",
+                        tmux_session="kimi0",
                     ),
                 },
             )
             runner = _FakeRunner()
             runner.runtime_statuses = [
-                LiveRuntimeStatus(tmux_session="claude", exists=True,
-                    pane_command="node", thread_id=thread_claude,
-                    pane_cwd="/tmp", backend="claude-code"),
-                LiveRuntimeStatus(tmux_session="kimi0", exists=True,
-                    pane_command="node", thread_id=thread_kimi,
-                    pane_cwd="/tmp", backend="opencode"),
+                LiveRuntimeStatus(
+                    tmux_session="claude",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_claude,
+                    pane_cwd="/tmp",
+                    backend="claude-code",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="kimi0",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_kimi,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                ),
             ]
             fake_wechat = _FakeWeChat()
             daemon = _TestDaemon(
                 config=self._make_config(Path(tmpdir), frozenset()),
-                wechat=fake_wechat, runner=runner, state=state,
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
             )
             # "kimi 零 你好" → normalize → "kimi0" → match kimi0
-            incoming = daemon._parse_incoming({
-                "message_type": 1, "from_user_id": "user@im.wechat",
-                "context_token": "ctx-1", "message_id": "m-1",
-                "item_list": [{"type": 1, "text_item": {"text": "kimi 零 你好"}}],
-            })
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-1",
+                    "item_list": [{"type": 1, "text_item": {"text": "kimi 零 你好"}}],
+                }
+            )
             assert incoming is not None
             daemon._handle_incoming(incoming)
             self.assertEqual(len(runner.submitted), 1)
@@ -1653,28 +1675,43 @@ class DaemonTests(unittest.TestCase):
                 room_mode_enabled=True,
                 sessions={
                     thread_claude: SessionRecord(
-                        thread_id=thread_claude, label="claude", cwd="/tmp",
-                        source="tmux-live", created_at="2026-04-06T00:00:00+00:00",
-                        updated_at="2026-04-06T00:00:00+00:00", tmux_session="claude",
+                        thread_id=thread_claude,
+                        label="claude",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-06T00:00:00+00:00",
+                        updated_at="2026-04-06T00:00:00+00:00",
+                        tmux_session="claude",
                     ),
                 },
             )
             runner = _FakeRunner()
             runner.runtime_statuses = [
-                LiveRuntimeStatus(tmux_session="claude", exists=True,
-                    pane_command="node", thread_id=thread_claude,
-                    pane_cwd="/tmp", backend="claude-code"),
+                LiveRuntimeStatus(
+                    tmux_session="claude",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_claude,
+                    pane_cwd="/tmp",
+                    backend="claude-code",
+                ),
             ]
             fake_wechat = _FakeWeChat()
             daemon = _TestDaemon(
                 config=self._make_config(Path(tmpdir), frozenset()),
-                wechat=fake_wechat, runner=runner, state=state,
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
             )
-            incoming = daemon._parse_incoming({
-                "message_type": 1, "from_user_id": "user@im.wechat",
-                "context_token": "ctx-1", "message_id": "m-1",
-                "item_list": [{"type": 1, "text_item": {"text": "cloud 你好"}}],
-            })
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-1",
+                    "item_list": [{"type": 1, "text_item": {"text": "cloud 你好"}}],
+                }
+            )
             assert incoming is not None
             daemon._handle_incoming(incoming)
             self.assertEqual(len(runner.submitted), 1)
@@ -1688,28 +1725,45 @@ class DaemonTests(unittest.TestCase):
                 room_mode_enabled=True,
                 sessions={
                     thread_kimi: SessionRecord(
-                        thread_id=thread_kimi, label="kimi0", cwd="/tmp",
-                        source="tmux-live", created_at="2026-04-06T00:00:00+00:00",
-                        updated_at="2026-04-06T00:00:00+00:00", tmux_session="kimi0",
+                        thread_id=thread_kimi,
+                        label="kimi0",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-06T00:00:00+00:00",
+                        updated_at="2026-04-06T00:00:00+00:00",
+                        tmux_session="kimi0",
                     ),
                 },
             )
             runner = _FakeRunner()
             runner.runtime_statuses = [
-                LiveRuntimeStatus(tmux_session="kimi0", exists=True,
-                    pane_command="node", thread_id=thread_kimi,
-                    pane_cwd="/tmp", backend="opencode"),
+                LiveRuntimeStatus(
+                    tmux_session="kimi0",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_kimi,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                ),
             ]
             fake_wechat = _FakeWeChat()
             daemon = _TestDaemon(
                 config=self._make_config(Path(tmpdir), frozenset()),
-                wechat=fake_wechat, runner=runner, state=state,
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
             )
-            incoming = daemon._parse_incoming({
-                "message_type": 1, "from_user_id": "user@im.wechat",
-                "context_token": "ctx-1", "message_id": "m-1",
-                "item_list": [{"type": 1, "text_item": {"text": "killing 零 你好"}}],
-            })
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-1",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "killing 零 你好"}}
+                    ],
+                }
+            )
             assert incoming is not None
             daemon._handle_incoming(incoming)
             self.assertEqual(len(runner.submitted), 1)
@@ -1723,28 +1777,43 @@ class DaemonTests(unittest.TestCase):
                 room_mode_enabled=True,
                 sessions={
                     thread_claude: SessionRecord(
-                        thread_id=thread_claude, label="claude", cwd="/tmp",
-                        source="tmux-live", created_at="2026-04-06T00:00:00+00:00",
-                        updated_at="2026-04-06T00:00:00+00:00", tmux_session="claude",
+                        thread_id=thread_claude,
+                        label="claude",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-06T00:00:00+00:00",
+                        updated_at="2026-04-06T00:00:00+00:00",
+                        tmux_session="claude",
                     ),
                 },
             )
             runner = _FakeRunner()
             runner.runtime_statuses = [
-                LiveRuntimeStatus(tmux_session="claude", exists=True,
-                    pane_command="node", thread_id=thread_claude,
-                    pane_cwd="/tmp", backend="claude-code"),
+                LiveRuntimeStatus(
+                    tmux_session="claude",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_claude,
+                    pane_cwd="/tmp",
+                    backend="claude-code",
+                ),
             ]
             fake_wechat = _FakeWeChat()
             daemon = _TestDaemon(
                 config=self._make_config(Path(tmpdir), frozenset()),
-                wechat=fake_wechat, runner=runner, state=state,
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
             )
-            incoming = daemon._parse_incoming({
-                "message_type": 1, "from_user_id": "user@im.wechat",
-                "context_token": "ctx-1", "message_id": "m-1",
-                "item_list": [{"type": 1, "text_item": {"text": "claude 你好"}}],
-            })
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-1",
+                    "item_list": [{"type": 1, "text_item": {"text": "claude 你好"}}],
+                }
+            )
             assert incoming is not None
             daemon._handle_incoming(incoming)
             self.assertEqual(len(runner.submitted), 1)
@@ -1761,13 +1830,19 @@ class DaemonTests(unittest.TestCase):
             fake_wechat = _FakeWeChat()
             daemon = _TestDaemon(
                 config=self._make_config(Path(tmpdir), frozenset()),
-                wechat=fake_wechat, runner=runner, state=state,
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
             )
-            incoming = daemon._parse_incoming({
-                "message_type": 1, "from_user_id": "user@im.wechat",
-                "context_token": "ctx-1", "message_id": "m-1",
-                "item_list": [{"type": 1, "text_item": {"text": "你好世界"}}],
-            })
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-1",
+                    "item_list": [{"type": 1, "text_item": {"text": "你好世界"}}],
+                }
+            )
             assert incoming is not None
             daemon._handle_incoming(incoming)
             self.assertEqual(runner.submitted, [])
@@ -1781,28 +1856,43 @@ class DaemonTests(unittest.TestCase):
                 room_mode_enabled=True,
                 sessions={
                     thread_gamma: SessionRecord(
-                        thread_id=thread_gamma, label="gamma", cwd="/tmp",
-                        source="tmux-live", created_at="2026-04-17T00:00:00+00:00",
-                        updated_at="2026-04-17T00:00:00+00:00", tmux_session="gamma",
+                        thread_id=thread_gamma,
+                        label="gamma",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-17T00:00:00+00:00",
+                        updated_at="2026-04-17T00:00:00+00:00",
+                        tmux_session="gamma",
                     ),
                 },
             )
             runner = _FakeRunner()
             runner.runtime_statuses = [
-                LiveRuntimeStatus(tmux_session="gamma", exists=True,
-                    pane_command="node", thread_id=thread_gamma,
-                    pane_cwd="/tmp", backend="codex"),
+                LiveRuntimeStatus(
+                    tmux_session="gamma",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_gamma,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                ),
             ]
             fake_wechat = _FakeWeChat()
             daemon = _TestDaemon(
                 config=self._make_config(Path(tmpdir), frozenset()),
-                wechat=fake_wechat, runner=runner, state=state,
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
             )
-            incoming = daemon._parse_incoming({
-                "message_type": 1, "from_user_id": "user@im.wechat",
-                "context_token": "ctx-1", "message_id": "m-1",
-                "item_list": [{"type": 1, "text_item": {"text": "伽马 你好"}}],
-            })
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-1",
+                    "item_list": [{"type": 1, "text_item": {"text": "伽马 你好"}}],
+                }
+            )
             assert incoming is not None
             daemon._handle_incoming(incoming)
             self.assertEqual(len(runner.submitted), 1)
@@ -1817,28 +1907,43 @@ class DaemonTests(unittest.TestCase):
                 room_mode_enabled=True,
                 sessions={
                     thread_claude: SessionRecord(
-                        thread_id=thread_claude, label="claude", cwd="/tmp",
-                        source="tmux-live", created_at="2026-04-17T00:00:00+00:00",
-                        updated_at="2026-04-17T00:00:00+00:00", tmux_session="claude",
+                        thread_id=thread_claude,
+                        label="claude",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-17T00:00:00+00:00",
+                        updated_at="2026-04-17T00:00:00+00:00",
+                        tmux_session="claude",
                     ),
                 },
             )
             runner = _FakeRunner()
             runner.runtime_statuses = [
-                LiveRuntimeStatus(tmux_session="claude", exists=True,
-                    pane_command="node", thread_id=thread_claude,
-                    pane_cwd="/tmp", backend="claude-code"),
+                LiveRuntimeStatus(
+                    tmux_session="claude",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_claude,
+                    pane_cwd="/tmp",
+                    backend="claude-code",
+                ),
             ]
             fake_wechat = _FakeWeChat()
             daemon = _TestDaemon(
                 config=self._make_config(Path(tmpdir), frozenset()),
-                wechat=fake_wechat, runner=runner, state=state,
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
             )
-            incoming = daemon._parse_incoming({
-                "message_type": 1, "from_user_id": "user@im.wechat",
-                "context_token": "ctx-1", "message_id": "m-1",
-                "item_list": [{"type": 1, "text_item": {"text": "伽马 你好"}}],
-            })
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-1",
+                    "item_list": [{"type": 1, "text_item": {"text": "伽马 你好"}}],
+                }
+            )
             assert incoming is not None
             daemon._handle_incoming(incoming)
             self.assertEqual(runner.submitted, [])
@@ -1852,28 +1957,43 @@ class DaemonTests(unittest.TestCase):
                 room_mode_enabled=True,
                 sessions={
                     thread_alpha: SessionRecord(
-                        thread_id=thread_alpha, label="alpha", cwd="/tmp",
-                        source="tmux-live", created_at="2026-04-17T00:00:00+00:00",
-                        updated_at="2026-04-17T00:00:00+00:00", tmux_session="alpha",
+                        thread_id=thread_alpha,
+                        label="alpha",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-17T00:00:00+00:00",
+                        updated_at="2026-04-17T00:00:00+00:00",
+                        tmux_session="alpha",
                     ),
                 },
             )
             runner = _FakeRunner()
             runner.runtime_statuses = [
-                LiveRuntimeStatus(tmux_session="alpha", exists=True,
-                    pane_command="node", thread_id=thread_alpha,
-                    pane_cwd="/tmp", backend="codex"),
+                LiveRuntimeStatus(
+                    tmux_session="alpha",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_alpha,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                ),
             ]
             fake_wechat = _FakeWeChat()
             daemon = _TestDaemon(
                 config=self._make_config(Path(tmpdir), frozenset()),
-                wechat=fake_wechat, runner=runner, state=state,
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
             )
-            incoming = daemon._parse_incoming({
-                "message_type": 1, "from_user_id": "user@im.wechat",
-                "context_token": "ctx-1", "message_id": "m-1",
-                "item_list": [{"type": 1, "text_item": {"text": "阿尔法 hello"}}],
-            })
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-1",
+                    "item_list": [{"type": 1, "text_item": {"text": "阿尔法 hello"}}],
+                }
+            )
             assert incoming is not None
             daemon._handle_incoming(incoming)
             self.assertEqual(len(runner.submitted), 1)
@@ -1887,28 +2007,43 @@ class DaemonTests(unittest.TestCase):
                 room_mode_enabled=True,
                 sessions={
                     thread_beta: SessionRecord(
-                        thread_id=thread_beta, label="beta", cwd="/tmp",
-                        source="tmux-live", created_at="2026-04-17T00:00:00+00:00",
-                        updated_at="2026-04-17T00:00:00+00:00", tmux_session="beta",
+                        thread_id=thread_beta,
+                        label="beta",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-17T00:00:00+00:00",
+                        updated_at="2026-04-17T00:00:00+00:00",
+                        tmux_session="beta",
                     ),
                 },
             )
             runner = _FakeRunner()
             runner.runtime_statuses = [
-                LiveRuntimeStatus(tmux_session="beta", exists=True,
-                    pane_command="node", thread_id=thread_beta,
-                    pane_cwd="/tmp", backend="codex"),
+                LiveRuntimeStatus(
+                    tmux_session="beta",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_beta,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                ),
             ]
             fake_wechat = _FakeWeChat()
             daemon = _TestDaemon(
                 config=self._make_config(Path(tmpdir), frozenset()),
-                wechat=fake_wechat, runner=runner, state=state,
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
             )
-            incoming = daemon._parse_incoming({
-                "message_type": 1, "from_user_id": "user@im.wechat",
-                "context_token": "ctx-1", "message_id": "m-1",
-                "item_list": [{"type": 1, "text_item": {"text": "贝塔 yo"}}],
-            })
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-1",
+                    "item_list": [{"type": 1, "text_item": {"text": "贝塔 yo"}}],
+                }
+            )
             assert incoming is not None
             daemon._handle_incoming(incoming)
             self.assertEqual(len(runner.submitted), 1)
@@ -2141,7 +2276,9 @@ class DaemonTests(unittest.TestCase):
 
             self.assertEqual(len(state.pending_media_batches), 1)
             batch = state.pending_media_batches[0]
-            self.assertEqual(batch.image_paths, [str(image.path) for image in saved_images])
+            self.assertEqual(
+                batch.image_paths, [str(image.path) for image in saved_images]
+            )
             self.assertIn("当前这批共 3 张图片", fake_wechat.sent[-1][2])
 
             incoming_target = daemon._parse_incoming(
@@ -2240,7 +2377,9 @@ class DaemonTests(unittest.TestCase):
                 daemon._handle_incoming(incoming_file)
             self.assertEqual(runner.submitted, [])
             self.assertEqual(len(state.pending_media_batches), 1)
-            self.assertEqual(state.pending_media_batches[0].file_paths, [str(saved_path)])
+            self.assertEqual(
+                state.pending_media_batches[0].file_paths, [str(saved_path)]
+            )
             self.assertIn("收到 1 个文件。", fake_wechat.sent[-1][2])
             self.assertIn("下一条用 @agent", fake_wechat.sent[-1][2])
 
@@ -2337,7 +2476,9 @@ class DaemonTests(unittest.TestCase):
                 daemon._handle_incoming(incoming_video)
             self.assertEqual(runner.submitted, [])
             self.assertEqual(len(state.pending_media_batches), 1)
-            self.assertEqual(state.pending_media_batches[0].video_paths, [str(saved_path)])
+            self.assertEqual(
+                state.pending_media_batches[0].video_paths, [str(saved_path)]
+            )
             self.assertIn("收到 1 个视频。", fake_wechat.sent[-1][2])
             self.assertIn("下一条用 @agent", fake_wechat.sent[-1][2])
 
@@ -2538,7 +2679,9 @@ class DaemonTests(unittest.TestCase):
 
             self.assertEqual(len(state.pending_media_batches), 1)
             self.assertEqual(state.pending_media_batches[0].batch_id, "new-batch")
-            self.assertEqual(state.pending_media_batches[0].image_paths, [str(new_path)])
+            self.assertEqual(
+                state.pending_media_batches[0].image_paths, [str(new_path)]
+            )
             self.assertNotIn("待分配图片", fake_wechat.sent[-1][2])
 
             incoming_target = daemon._parse_incoming(
@@ -4211,7 +4354,9 @@ class DaemonTests(unittest.TestCase):
             )
             self.assertEqual(state.pending_outbox, [])
 
-    def test_desktop_mirror_ret_minus_2_retries_via_backoff_without_rebind(self) -> None:
+    def test_desktop_mirror_ret_minus_2_retries_via_backoff_without_rebind(
+        self,
+    ) -> None:
         """Under E, a desktop-mirror item explicitly marked for
         rebind-retry (awaiting_rebind_retry=1) no longer needs a real
         _bind_peer call to drain: once its exponential backoff elapses the
@@ -4351,7 +4496,9 @@ class DaemonTests(unittest.TestCase):
             # Both items survive — no more age-based drop for any reason.
             self.assertEqual(len(state.pending_outbox), 2)
 
-    def test_ambiguous_desktop_mirror_final_retries_after_bind_and_flushes(self) -> None:
+    def test_ambiguous_desktop_mirror_final_retries_after_bind_and_flushes(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
                 bound_user_id="user@im.wechat",
@@ -5026,7 +5173,9 @@ class DaemonTests(unittest.TestCase):
                 file_ref.media_aes_key,
                 "MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
             )
-            self.assertEqual(file_ref.media_full_url, "https://cdn.example.com/file.bin")
+            self.assertEqual(
+                file_ref.media_full_url, "https://cdn.example.com/file.bin"
+            )
 
     def test_parse_incoming_video_supports_media_fields(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5065,7 +5214,9 @@ class DaemonTests(unittest.TestCase):
                 video_ref.media_aes_key,
                 "MDAxMTIyMzM0NDU1NjY3Nzg4OTlhYWJiY2NkZGVlZmY=",
             )
-            self.assertEqual(video_ref.media_full_url, "https://cdn.example.com/clip.mp4")
+            self.assertEqual(
+                video_ref.media_full_url, "https://cdn.example.com/clip.mp4"
+            )
 
     def test_incoming_file_is_downloaded_and_submitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5209,7 +5360,9 @@ class DaemonTests(unittest.TestCase):
             assert incoming is not None
             daemon._handle_incoming(incoming)
             self.assertEqual(runner.submitted, [])
-            self.assertIn("收到文件，但当前无法取回可用本地文件", fake_wechat.sent[-1][2])
+            self.assertIn(
+                "收到文件，但当前无法取回可用本地文件", fake_wechat.sent[-1][2]
+            )
 
     def test_recent_replays_latest_outgoing_messages(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

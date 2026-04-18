@@ -55,12 +55,28 @@ ROOM_ROUTE_RE = re.compile(r"^[＠@](?P<target>[A-Za-z0-9_.:-]+)\s*(?P<body>[\s\
 # Digit words → ASCII digits for voice transcript normalization
 _CN_DIGITS: dict[str, str] = {
     # Chinese
-    "零": "0", "一": "1", "二": "2", "三": "3", "四": "4",
-    "五": "5", "六": "6", "七": "7", "八": "8", "九": "9",
+    "零": "0",
+    "一": "1",
+    "二": "2",
+    "三": "3",
+    "四": "4",
+    "五": "5",
+    "六": "6",
+    "七": "7",
+    "八": "8",
+    "九": "9",
     "〇": "0",
     # English (voice may produce these)
-    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
-    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+    "zero": "0",
+    "one": "1",
+    "two": "2",
+    "three": "3",
+    "four": "4",
+    "five": "5",
+    "six": "6",
+    "seven": "7",
+    "eight": "8",
+    "nine": "9",
 }
 
 
@@ -86,37 +102,47 @@ def _normalize_voice(text: str) -> str:
 # is tried as-is against the fuzzy prefix match).
 _NAME_VARIANT_TEMPLATES: dict[str, tuple[str, ...]] = {
     # Greek-letter agent names (ft-* universe naming convention)
-    "alpha":   ("阿尔法", "阿法", "阿尔发", "alfa"),
-    "beta":    ("贝塔", "倍塔", "必塔", "beeta"),
-    "gamma":   ("伽马", "嘎玛", "加马", "伽玛", "嘎马", "gama", "gemma"),
-    "delta":   ("德尔塔", "德塔", "达尔塔"),
+    "alpha": ("阿尔法", "阿法", "阿尔发", "alfa"),
+    "beta": ("贝塔", "倍塔", "必塔", "beeta"),
+    "gamma": ("伽马", "嘎玛", "加马", "伽玛", "嘎马", "gama", "gemma"),
+    "delta": ("德尔塔", "德塔", "达尔塔"),
     "epsilon": ("伊普西隆", "艾普西龙"),
-    "zeta":    ("泽塔", "齐塔"),
-    "eta":     ("伊塔", "艾塔"),
-    "theta":   ("西塔", "塞塔", "瑟塔"),
-    "iota":    ("约塔", "艾奥塔"),
-    "kappa":   ("卡帕",),
-    "lambda":  ("兰姆达", "拉姆达", "朗姆达"),
-    "mu":      ("谬",),
-    "nu":      ("纽",),
-    "xi":      ("克西",),
+    "zeta": ("泽塔", "齐塔"),
+    "eta": ("伊塔", "艾塔"),
+    "theta": ("西塔", "塞塔", "瑟塔"),
+    "iota": ("约塔", "艾奥塔"),
+    "kappa": ("卡帕",),
+    "lambda": ("兰姆达", "拉姆达", "朗姆达"),
+    "mu": ("谬",),
+    "nu": ("纽",),
+    "xi": ("克西",),
     "omicron": ("奥米克戎",),
-    "pi":      ("派",),
-    "rho":     ("柔",),
-    "sigma":   ("西格玛", "西格马"),
-    "tau":     ("陶",),
+    "pi": ("派",),
+    "rho": ("柔",),
+    "sigma": ("西格玛", "西格马"),
+    "tau": ("陶",),
     "upsilon": ("宇普西隆",),
-    "phi":     ("斐",),
-    "chi":     ("柯",),
-    "psi":     ("普赛",),
-    "omega":   ("欧米伽", "欧米茄", "奥米伽"),
+    "phi": ("斐",),
+    "chi": ("柯",),
+    "psi": ("普赛",),
+    "omega": ("欧米伽", "欧米茄", "奥米伽"),
     # Known runtime backends (legacy _VOICE_CORRECTIONS content, relocated so
     # the variant surface has a single source of truth)
-    "claude":  ("克劳德", "克洛德", "克劳", "cloud", "claud", "claode",
-                "eclaude", "eclaudee", "claudee", "克cloud"),
-    "kimi":    ("奇米", "可米", "killing", "kimmy", "keemy"),
-    "gpt":     ("吉皮提", "杰皮提"),
-    "codex":   ("codec",),
+    "claude": (
+        "克劳德",
+        "克洛德",
+        "克劳",
+        "cloud",
+        "claud",
+        "claode",
+        "eclaude",
+        "eclaudee",
+        "claudee",
+        "克cloud",
+    ),
+    "kimi": ("奇米", "可米", "killing", "kimmy", "keemy"),
+    "gpt": ("吉皮提", "杰皮提"),
+    "codex": ("codec",),
 }
 
 
@@ -148,7 +174,7 @@ def _apply_voice_corrections(text: str, mapping: dict[str, str]) -> str:
     for wrong, right in sorted(mapping.items(), key=lambda x: -len(x[0])):
         idx = out.lower().find(wrong.lower())
         if idx != -1:
-            out = out[:idx] + right + out[idx + len(wrong):]
+            out = out[:idx] + right + out[idx + len(wrong) :]
     return out
 
 
@@ -220,8 +246,12 @@ class BridgeDaemon:
         self._last_outbox_watchdog_signature = ""
         self._last_external_state_mtime_ns = 0
         self._send_dedup_cache: dict[int, float] = {}  # hash(text) -> monotonic time
-        self._room_final_dedup: dict[int, float] = {}  # hash((thread,text)) -> mono time
-        self._mirrored_text_dedup: dict[int, float] = {}  # hash((thread,kind,text)) -> mono time
+        self._room_final_dedup: dict[
+            int, float
+        ] = {}  # hash((thread,text)) -> mono time
+        self._mirrored_text_dedup: dict[
+            int, float
+        ] = {}  # hash((thread,kind,text)) -> mono time
         self.config.state_dir.mkdir(parents=True, exist_ok=True)
         rotate_jsonl_if_needed(self.config.delivery_ledger_file)
         rotate_jsonl_if_needed(self.config.event_log_file)
@@ -333,7 +363,12 @@ class BridgeDaemon:
             )
             self._flush_bound_outbox_if_any()
             return
-        if not body and not incoming.images and not incoming.files and not incoming.videos:
+        if (
+            not body
+            and not incoming.images
+            and not incoming.files
+            and not incoming.videos
+        ):
             self._flush_bound_outbox_if_any()
             return
         if (
@@ -363,9 +398,13 @@ class BridgeDaemon:
             # Attachments without @agent become one pending batch for the next explicit
             # room-targeted message from the same sender. Never guess from global files.
             if (incoming.images or incoming.files or incoming.videos) and not body:
-                saved_images, image_failures = self._materialize_incoming_images(incoming)
+                saved_images, image_failures = self._materialize_incoming_images(
+                    incoming
+                )
                 saved_files, file_failures = self._materialize_incoming_files(incoming)
-                saved_videos, video_failures = self._materialize_incoming_videos(incoming)
+                saved_videos, video_failures = self._materialize_incoming_videos(
+                    incoming
+                )
                 if not saved_images and not saved_files and not saved_videos:
                     error_text = self._attachment_unavailable_text(incoming)
                     all_failures = [*image_failures, *file_failures, *video_failures]
@@ -411,15 +450,16 @@ class BridgeDaemon:
                         "待分配附件" if (saved_files or saved_videos) else "待分配图片"
                     )
                     if merged:
-                        batch_label = "附件批次" if (saved_files or saved_videos) else "图片批次"
+                        batch_label = (
+                            "附件批次" if (saved_files or saved_videos) else "图片批次"
+                        )
                         ack_text = (
                             f"已加入当前{batch_label}，当前这批共 {batch_summary}。"
                             "下一条用 @agent 指定谁来看。"
                         )
                     else:
                         ack_text = (
-                            f"收到 {received_summary}。"
-                            "下一条用 @agent 指定谁来看。"
+                            f"收到 {received_summary}。下一条用 @agent 指定谁来看。"
                         )
                     if pending_count > 1:
                         ack_text = (
@@ -456,10 +496,7 @@ class BridgeDaemon:
             self._reply(
                 incoming.from_user_id,
                 incoming.context_token,
-                (
-                    "group 模式下请用 @agent 指定对象。\n"
-                    "未署名消息不会默认路由。"
-                ),
+                ("group 模式下请用 @agent 指定对象。\n未署名消息不会默认路由。"),
                 kind="progress",
                 origin="wechat-room-target",
                 thread_id=None,
@@ -491,9 +528,8 @@ class BridgeDaemon:
         saved_images, image_failures = self._materialize_incoming_images(incoming)
         saved_files, file_failures = self._materialize_incoming_files(incoming)
         saved_videos, video_failures = self._materialize_incoming_videos(incoming)
-        if (
-            (incoming.images or incoming.files or incoming.videos)
-            and not (saved_images or saved_files or saved_videos)
+        if (incoming.images or incoming.files or incoming.videos) and not (
+            saved_images or saved_files or saved_videos
         ):
             error_text = self._attachment_unavailable_text(incoming)
             all_failures = [*image_failures, *file_failures, *video_failures]
@@ -1403,9 +1439,9 @@ class BridgeDaemon:
         focus = self._active_room_focus()
         focus_name = "none"
         if focus is not None:
-            focus_name = str(focus.get("tmux_session", "")).strip() or self._short_thread(
-                str(focus.get("thread_id", "")).strip()
-            )
+            focus_name = str(
+                focus.get("tmux_session", "")
+            ).strip() or self._short_thread(str(focus.get("thread_id", "")).strip())
         lines = [
             f"health={status}",
             "mode=group",
@@ -1438,12 +1474,11 @@ class BridgeDaemon:
             origin=origin,
         )
         rendered = self._render_reply_text(text, kind=kind, origin=origin)
-        if (
-            str(origin or "").strip() == "desktop-mirror"
-            and self._should_tag_desktop_mirror_reply(
-                thread_id=thread_id,
-                tmux_session=tmux_session,
-            )
+        if str(
+            origin or ""
+        ).strip() == "desktop-mirror" and self._should_tag_desktop_mirror_reply(
+            thread_id=thread_id,
+            tmux_session=tmux_session,
         ):
             rendered = self._tag_room_text(
                 rendered,
@@ -1460,10 +1495,17 @@ class BridgeDaemon:
             now_mono = time.monotonic()
             with self._lock:
                 last_sent_at = self._send_dedup_cache.get(chunk_hash)
-                if last_sent_at is not None and (now_mono - last_sent_at) < _SEND_DEDUP_WINDOW_SECONDS:
+                if (
+                    last_sent_at is not None
+                    and (now_mono - last_sent_at) < _SEND_DEDUP_WINDOW_SECONDS
+                ):
                     self._log_event(
                         "send_dedup_suppressed",
-                        {"to": to_user_id, "text": chunk[:200], "age_s": round(now_mono - last_sent_at, 1)},
+                        {
+                            "to": to_user_id,
+                            "text": chunk[:200],
+                            "age_s": round(now_mono - last_sent_at, 1),
+                        },
                     )
                     continue
             try:
@@ -1478,7 +1520,9 @@ class BridgeDaemon:
                     if len(self._send_dedup_cache) > 500:
                         cutoff = now_mono - _SEND_DEDUP_WINDOW_SECONDS * 2
                         self._send_dedup_cache = {
-                            k: v for k, v in self._send_dedup_cache.items() if v > cutoff
+                            k: v
+                            for k, v in self._send_dedup_cache.items()
+                            if v > cutoff
                         }
                     self._log_event("outgoing", {"to": to_user_id, "text": chunk[:400]})
                     append_delivery(
@@ -1530,7 +1574,9 @@ class BridgeDaemon:
                                     "1" if wait_for_rebind_retry else None
                                 ),
                                 "rebind_retry_group": (
-                                    rebind_retry_group if wait_for_rebind_retry else None
+                                    rebind_retry_group
+                                    if wait_for_rebind_retry
+                                    else None
                                 ),
                             },
                         )
@@ -1680,7 +1726,6 @@ class BridgeDaemon:
         )
         thread.start()
 
-
     def _mirror_loop(self) -> None:
         while True:
             time.sleep(0.2)
@@ -1710,7 +1755,9 @@ class BridgeDaemon:
             start_offset = self.state.get_mirror_offset(thread_id) if thread_id else 0
         if not thread_id or not to_user_id:
             return
-        mirror_tmux_session = self._tmux_for_thread(thread_id) or self._live_tmux_for_thread(thread_id)
+        mirror_tmux_session = self._tmux_for_thread(
+            thread_id
+        ) or self._live_tmux_for_thread(thread_id)
         scan = self.runner.latest_mirror_since(
             thread_id=thread_id,
             start_offset=start_offset,
@@ -1824,7 +1871,8 @@ class BridgeDaemon:
             with self._lock:
                 start_offset = self.state.get_mirror_offset(thread_id)
             scan = self.runner.latest_mirror_since(
-                thread_id=thread_id, start_offset=start_offset,
+                thread_id=thread_id,
+                start_offset=start_offset,
             )
             if scan is None or scan.end_offset == start_offset:
                 continue
@@ -1849,9 +1897,13 @@ class BridgeDaemon:
                         self.state.set_last_progress_summary(thread_id, body)
                         self._save_state()
                 self._reply(
-                    to_user_id, bound_context_token, body,
-                    kind=kind, origin="desktop-mirror",
-                    thread_id=thread_id, tmux_session=tmux_session,
+                    to_user_id,
+                    bound_context_token,
+                    body,
+                    kind=kind,
+                    origin="desktop-mirror",
+                    thread_id=thread_id,
+                    tmux_session=tmux_session,
                 )
             # Advance offset
             with self._lock:
@@ -1883,9 +1935,13 @@ class BridgeDaemon:
                     continue
                 self._room_final_dedup[final_key] = now
                 self._reply(
-                    to_user_id, bound_context_token, final_text,
-                    kind="final", origin="desktop-mirror",
-                    thread_id=thread_id, tmux_session=tmux_session,
+                    to_user_id,
+                    bound_context_token,
+                    final_text,
+                    kind="final",
+                    origin="desktop-mirror",
+                    thread_id=thread_id,
+                    tmux_session=tmux_session,
                 )
                 if self._room_mode_enabled():
                     speaker = tmux_session or self._short_thread(thread_id)
@@ -2253,8 +2309,7 @@ class BridgeDaemon:
 
     def _attachment_unavailable_text(self, incoming: IncomingMessage) -> str:
         attachment_type_count = sum(
-            bool(items)
-            for items in (incoming.images, incoming.files, incoming.videos)
+            bool(items) for items in (incoming.images, incoming.files, incoming.videos)
         )
         if attachment_type_count > 1:
             return "收到附件，但当前无法取回可用本地文件。"
@@ -2521,7 +2576,13 @@ class BridgeDaemon:
                 "superseded_count": superseded_count,
             },
         )
-        return (pending_count, batch_image_count, batch_file_count, batch_video_count, merged)
+        return (
+            pending_count,
+            batch_image_count,
+            batch_file_count,
+            batch_video_count,
+            merged,
+        )
 
     def _claim_pending_media_batch(
         self, *, from_user_id: str
@@ -2569,7 +2630,10 @@ class BridgeDaemon:
     def _saved_media_from_pending_batch(
         self, batch: PendingMediaBatch
     ) -> tuple[
-        list[SavedIncomingImage], list[SavedIncomingFile], list[SavedIncomingVideo], list[str]
+        list[SavedIncomingImage],
+        list[SavedIncomingFile],
+        list[SavedIncomingVideo],
+        list[str],
     ]:
         saved_images: list[SavedIncomingImage] = []
         saved_files: list[SavedIncomingFile] = []
@@ -2691,17 +2755,23 @@ class BridgeDaemon:
         if image_failures:
             parts.append(
                 "图片 ingress 备注："
-                + "；".join(self._flatten_prompt_text(reason) for reason in image_failures)
+                + "；".join(
+                    self._flatten_prompt_text(reason) for reason in image_failures
+                )
             )
         if file_failures:
             parts.append(
                 "文件 ingress 备注："
-                + "；".join(self._flatten_prompt_text(reason) for reason in file_failures)
+                + "；".join(
+                    self._flatten_prompt_text(reason) for reason in file_failures
+                )
             )
         if video_failures:
             parts.append(
                 "视频 ingress 备注："
-                + "；".join(self._flatten_prompt_text(reason) for reason in video_failures)
+                + "；".join(
+                    self._flatten_prompt_text(reason) for reason in video_failures
+                )
             )
         if body:
             parts.append("Owner 消息：" + body)
@@ -2957,9 +3027,7 @@ class BridgeDaemon:
                 dt = datetime.fromisoformat(started_at)
                 if dt.tzinfo is None:
                     dt = dt.replace(tzinfo=UTC)
-                age_seconds = (
-                    datetime.now(UTC) - dt.astimezone(UTC)
-                ).total_seconds()
+                age_seconds = (datetime.now(UTC) - dt.astimezone(UTC)).total_seconds()
             except ValueError:
                 age_seconds = 0.0
             if age_seconds >= ROOM_FOCUS_TIMEOUT_SECONDS:
@@ -3261,9 +3329,8 @@ class BridgeDaemon:
         saved_images, image_failures = self._materialize_incoming_images(incoming)
         saved_files, file_failures = self._materialize_incoming_files(incoming)
         saved_videos, video_failures = self._materialize_incoming_videos(incoming)
-        if (
-            (incoming.images or incoming.files or incoming.videos)
-            and not (saved_images or saved_files or saved_videos)
+        if (incoming.images or incoming.files or incoming.videos) and not (
+            saved_images or saved_files or saved_videos
         ):
             error_text = self._attachment_unavailable_text(incoming)
             all_failures = [*image_failures, *file_failures, *video_failures]
@@ -3294,8 +3361,8 @@ class BridgeDaemon:
                 from_user_id=incoming.from_user_id
             )
             if claimed_batch is not None:
-                saved_images, saved_files, saved_videos, claimed_failures = self._saved_media_from_pending_batch(
-                    claimed_batch
+                saved_images, saved_files, saved_videos, claimed_failures = (
+                    self._saved_media_from_pending_batch(claimed_batch)
                 )
                 image_failures.extend(
                     reason for reason in claimed_failures if reason.startswith("image ")
@@ -3346,7 +3413,9 @@ class BridgeDaemon:
                 speaker="owner",
                 direction="inbound",
                 body=f"@{target} {effective_body}".strip(),
-                images=[str(img.path) for img in saved_images] if saved_images else None,
+                images=[str(img.path) for img in saved_images]
+                if saved_images
+                else None,
             )
         self.runner.submit_prompt(record=refreshed, prompt=prompt)
         self._log_event(
@@ -3481,8 +3550,8 @@ class BridgeDaemon:
                 origin=str(item.get("origin", "bridge")),
                 thread_id=thread_id,
                 tmux_session=tmux_session,
-                        error=reason,
-                    )
+                error=reason,
+            )
 
     def _adopt_mirror_tail(self, thread_id: str, *, force: bool = False) -> bool:
         normalized_thread = str(thread_id or "").strip()
@@ -3699,12 +3768,10 @@ class BridgeDaemon:
                         tmux_session=self._tmux_for_thread(thread_id) or tmux_session,
                     )
             except Exception as exc:  # noqa: BLE001
-                ambiguous_desktop_final = (
-                    self._is_ambiguous_desktop_mirror_ret_minus_2(
-                        kind=kind,
-                        origin=origin,
-                        error_text=str(exc),
-                    )
+                ambiguous_desktop_final = self._is_ambiguous_desktop_mirror_ret_minus_2(
+                    kind=kind,
+                    origin=origin,
+                    error_text=str(exc),
                 )
                 waiting_for_rebind_retry = self._pending_item_waits_for_rebind_retry(
                     item=item,
@@ -3718,7 +3785,9 @@ class BridgeDaemon:
                         if rebind_retry_group:
                             for later_item in pending[idx + 1 :]:
                                 if (
-                                    str(later_item.get("rebind_retry_group", "")).strip()
+                                    str(
+                                        later_item.get("rebind_retry_group", "")
+                                    ).strip()
                                     == rebind_retry_group
                                 ):
                                     self._clear_pending_item_rebind_retry(later_item)
@@ -3873,12 +3942,10 @@ class BridgeDaemon:
                         tmux_session=resolved_tmux_session,
                     )
             except Exception as exc:  # noqa: BLE001
-                ambiguous_desktop_final = (
-                    self._is_ambiguous_desktop_mirror_ret_minus_2(
-                        kind=kind,
-                        origin=origin,
-                        error_text=str(exc),
-                    )
+                ambiguous_desktop_final = self._is_ambiguous_desktop_mirror_ret_minus_2(
+                    kind=kind,
+                    origin=origin,
+                    error_text=str(exc),
                 )
                 waiting_for_rebind_retry = self._pending_item_waits_for_rebind_retry(
                     item=item,
@@ -3892,7 +3959,9 @@ class BridgeDaemon:
                         if rebind_retry_group:
                             for later_item in pending[idx + 1 :]:
                                 if (
-                                    str(later_item.get("rebind_retry_group", "")).strip()
+                                    str(
+                                        later_item.get("rebind_retry_group", "")
+                                    ).strip()
                                     == rebind_retry_group
                                 ):
                                     self._clear_pending_item_rebind_retry(later_item)
@@ -4070,11 +4139,14 @@ class BridgeDaemon:
         kind: str,
         origin: str,
     ) -> bool:
-        return self._is_ambiguous_desktop_mirror_ret_minus_2(
-            kind=kind,
-            origin=origin,
-            error_text=str(item.get("last_error", "")),
-        ) and str(item.get("awaiting_rebind_retry", "")).strip() == "1"
+        return (
+            self._is_ambiguous_desktop_mirror_ret_minus_2(
+                kind=kind,
+                origin=origin,
+                error_text=str(item.get("last_error", "")),
+            )
+            and str(item.get("awaiting_rebind_retry", "")).strip() == "1"
+        )
 
     def _new_rebind_retry_group(self) -> str:
         return f"rebind-{time.monotonic_ns()}"
@@ -4122,9 +4194,7 @@ class BridgeDaemon:
     # transient failures while avoiding hammering WeChat on persistent ones.
     _RETRY_BACKOFF_SECONDS: tuple[int, ...] = (2, 4, 8, 30, 60, 300)
 
-    def _pending_item_next_retry_at(
-        self, item: dict[str, str]
-    ) -> datetime | None:
+    def _pending_item_next_retry_at(self, item: dict[str, str]) -> datetime | None:
         """Next time this item is eligible for another send attempt, based on
         its attempt_count and last_attempt_at. Returns None if the item has
         never been attempted (first send is always eligible)."""
@@ -4197,9 +4267,7 @@ class BridgeDaemon:
                 "stale_auto_flush_blocked_count": 0,
             }
         visible_items = [
-            item
-            for item in self.state.pending_outbox
-            if item.get("to") == to_user_id
+            item for item in self.state.pending_outbox if item.get("to") == to_user_id
         ]
         blocked_for_rebind_count = 0
         if self.state.outbox_waiting_for_bind:
