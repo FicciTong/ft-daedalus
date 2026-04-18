@@ -4006,7 +4006,8 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("当前可切换的 live tmux 列表", help_text)
             self.assertIn("当前 active live tmux session", help_text)
             self.assertIn("group 路由与个人默认对象隔离", help_text)
-            self.assertIn("无需 /queue /catchup", help_text)
+            self.assertIn("/catchup [n]", help_text)
+            self.assertIn("/flush", help_text)
 
     def test_queue_text_summarizes_pending_outbox(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -5872,7 +5873,7 @@ class DaemonTests(unittest.TestCase):
                 ],
             )
 
-    def test_queue_and_catchup_commands_are_retired(self) -> None:
+    def test_queue_command_is_retired(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             daemon = _TestDaemon(
                 config=self._make_config(Path(tmpdir), frozenset()),
@@ -5881,7 +5882,92 @@ class DaemonTests(unittest.TestCase):
                 state=BridgeState(),
             )
             self.assertIn("queue=retired", daemon._handle_command("/queue"))
-            self.assertIn("catchup=retired", daemon._handle_command("/catchup 5"))
+
+    def test_catchup_command_routes_to_catchup_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            text = daemon._handle_command("/catchup 5")
+            self.assertNotIn("catchup=retired", text)
+            self.assertIn("catchup=blocked", text)
+
+    def test_flush_command_blocks_without_bound_user(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            text = daemon._handle_command("/flush")
+            self.assertIn("flush=blocked", text)
+
+    def test_flush_command_empty_when_nothing_pending(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    bound_user_id="user@im.wechat",
+                    bound_context_token="ctx-1",
+                ),
+            )
+            text = daemon._handle_command("/flush")
+            self.assertIn("flush=empty", text)
+
+    def test_flush_command_drains_pending_across_scopes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+            state = BridgeState(
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "msg-codex",
+                        "created_at": past,
+                        "kind": "message",
+                        "origin": "bridge",
+                        "thread_id": "",
+                        "tmux_session": "codex",
+                        "attempt_count": 1,
+                        "last_attempt_at": past,
+                        "last_error": "",
+                    },
+                    {
+                        "to": "user@im.wechat",
+                        "text": "msg-alpha",
+                        "created_at": past,
+                        "kind": "message",
+                        "origin": "bridge",
+                        "thread_id": "",
+                        "tmux_session": "alpha",
+                        "attempt_count": 1,
+                        "last_attempt_at": past,
+                        "last_error": "",
+                    },
+                ],
+            )
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+            text = daemon._handle_command("/flush")
+            self.assertIn("flush=ok", text)
+            self.assertIn("before=2", text)
+            self.assertIn("after=0", text)
+            sent_texts = [entry[2] for entry in fake_wechat.sent]
+            self.assertIn("msg-codex", sent_texts)
+            self.assertIn("msg-alpha", sent_texts)
+            self.assertEqual(daemon.state.pending_outbox, [])
 
     def test_mirror_follows_current_tmux_thread(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
