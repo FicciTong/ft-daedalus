@@ -88,6 +88,131 @@ class LiveSessionTests(unittest.TestCase):
         self.assertEqual(kind, "progress")
         self.assertIn("working", text)
 
+    def test_extract_kimi_text_text_only_is_final(self) -> None:
+        event = {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "done"}],
+        }
+        self.assertEqual(self.runner._extract_kimi_text(event), ("final", "done"))
+
+    def test_extract_kimi_text_with_tool_calls_is_progress(self) -> None:
+        event = {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "checking logs"}],
+            "tool_calls": [{"id": "call_1", "function": {"name": "Shell"}}],
+        }
+        kind, text = self.runner._extract_kimi_text(event)
+        self.assertEqual(kind, "progress")
+        self.assertIn("checking", text)
+
+    def test_extract_kimi_text_think_only_is_empty(self) -> None:
+        event = {
+            "role": "assistant",
+            "content": [{"type": "think", "think": "internal reasoning"}],
+            "tool_calls": [{"id": "call_1"}],
+        }
+        self.assertEqual(self.runner._extract_kimi_text(event), ("", ""))
+
+    def test_extract_kimi_text_skips_non_assistant(self) -> None:
+        self.assertEqual(
+            self.runner._extract_kimi_text({"role": "user", "content": "hi"}),
+            ("", ""),
+        )
+        self.assertEqual(
+            self.runner._extract_kimi_text({"role": "tool", "content": "x"}),
+            ("", ""),
+        )
+
+    def test_resolve_kimi_session_id_picks_banner_session_when_panes_share_cwd(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cwd = Path(tmpdir) / "workspace"
+            cwd.mkdir()
+            import hashlib
+
+            workspace_hash = hashlib.md5(
+                str(cwd.resolve()).encode("utf-8")
+            ).hexdigest()
+            sessions_root = Path(tmpdir) / ".kimi" / "sessions" / workspace_hash
+            older_id = "11111111-2222-3333-4444-555555555555"
+            newer_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+            for sid, mtime in ((older_id, 1_000_000), (newer_id, 2_000_000)):
+                (sessions_root / sid).mkdir(parents=True)
+                ctx = sessions_root / sid / "context.jsonl"
+                ctx.write_text("{}\n")
+                os.utime(ctx, (mtime, mtime))
+            self.runner.kimi_sessions_root = Path(tmpdir) / ".kimi" / "sessions"
+            with (
+                patch.object(self.runner, "_pane_current_path", return_value=str(cwd)),
+                patch.object(self.runner, "_tmux_exists", return_value=True),
+                patch.object(
+                    self.runner,
+                    "_scrape_kimi_banner_session_id",
+                    return_value=older_id,
+                ),
+            ):
+                resolved = self.runner._resolve_kimi_session_id(tmux_session="gamma")
+            # With a banner telling us 'older_id', the newer-mtime session must
+            # not win by default — panes sharing a workspace must be kept
+            # distinct.
+            self.assertEqual(resolved, f"kimi:{older_id}")
+
+    def test_resolve_kimi_session_id_picks_latest_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cwd = Path(tmpdir) / "workspace"
+            cwd.mkdir()
+            import hashlib
+
+            workspace_hash = hashlib.md5(
+                str(cwd.resolve()).encode("utf-8")
+            ).hexdigest()
+            sessions_root = Path(tmpdir) / ".kimi" / "sessions" / workspace_hash
+            old_id = "11111111-2222-3333-4444-555555555555"
+            new_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+            (sessions_root / old_id).mkdir(parents=True)
+            (sessions_root / new_id).mkdir(parents=True)
+            (sessions_root / old_id / "context.jsonl").write_text(
+                '{"role":"assistant","content":[{"type":"text","text":"old"}]}\n'
+            )
+            (sessions_root / new_id / "context.jsonl").write_text(
+                '{"role":"assistant","content":[{"type":"text","text":"new"}]}\n'
+            )
+            os.utime(
+                sessions_root / old_id / "context.jsonl",
+                (1_000_000, 1_000_000),
+            )
+            os.utime(
+                sessions_root / new_id / "context.jsonl",
+                (2_000_000, 2_000_000),
+            )
+            self.runner.kimi_sessions_root = Path(tmpdir) / ".kimi" / "sessions"
+            with patch.object(
+                self.runner, "_pane_current_path", return_value=str(cwd)
+            ):
+                resolved = self.runner._resolve_kimi_session_id(tmux_session="kimi")
+            self.assertEqual(resolved, f"kimi:{new_id}")
+
+    def test_latest_mirror_since_reads_kimi_final_text(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            session_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+            workspace_hash = "0" * 32
+            session_dir = (
+                Path(tmpdir) / ".kimi" / "sessions" / workspace_hash / session_id
+            )
+            session_dir.mkdir(parents=True)
+            context_path = session_dir / "context.jsonl"
+            context_path.write_text(
+                '{"role":"assistant","content":[{"type":"think","think":"..."}],"tool_calls":[{"id":"c1"}]}\n'
+                '{"role":"assistant","content":[{"type":"text","text":"all set"}]}\n'
+            )
+            self.runner.kimi_sessions_root = Path(tmpdir) / ".kimi" / "sessions"
+            scan = self.runner.latest_mirror_since(
+                thread_id=f"kimi:{session_id}", start_offset=0
+            )
+            self.assertIsNotNone(scan)
+            self.assertEqual(scan.final_texts, ["all set"])
+
     def test_extract_progress_text_keeps_full_commentary_block(self) -> None:
         event = {
             "type": "event_msg",
@@ -1126,6 +1251,42 @@ class LiveSessionTests(unittest.TestCase):
             resolved = self.runner._resolve_claude_session_id(tmux_session="claude")
 
         self.assertEqual(resolved, f"claude:{session_id}")
+
+    def test_current_claude_session_file_uses_pid_metadata(self) -> None:
+        """Two claude panes in the same project must not collapse onto the
+        same session file just because its mtime is newest globally — claude
+        writes ~/.claude/sessions/<pid>.json with the per-process sessionId,
+        which is the authoritative per-pane signal."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_home = Path(tmpdir)
+            projects = fake_home / ".claude" / "projects" / "-tmp"
+            projects.mkdir(parents=True)
+            older_id = "11111111-2222-3333-4444-555555555555"
+            newer_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+            older_path = projects / f"{older_id}.jsonl"
+            newer_path = projects / f"{newer_id}.jsonl"
+            older_path.write_text("{}\n")
+            newer_path.write_text("{}\n")
+            os.utime(older_path, (1_000_000, 1_000_000))
+            os.utime(newer_path, (2_000_000, 2_000_000))
+            sessions_meta = fake_home / ".claude" / "sessions"
+            sessions_meta.mkdir(parents=True)
+            (sessions_meta / "4242.json").write_text(
+                json.dumps({"pid": 4242, "sessionId": older_id})
+            )
+            with (
+                patch.object(Path, "home", return_value=fake_home),
+                patch.object(self.runner, "_pane_pid", return_value=4242),
+                patch.object(self.runner, "_proc_descendants", return_value=[]),
+                patch.object(
+                    self.runner,
+                    "_claude_project_dir",
+                    return_value=projects,
+                ),
+            ):
+                resolved = self.runner._current_claude_session_file("beta")
+            # Must pick the pid's own session file, NOT the globally newest.
+            self.assertEqual(resolved, older_path)
 
     def test_ensure_resumed_session_routes_opencode_thread_to_opencode_tmux(
         self,

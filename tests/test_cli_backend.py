@@ -9,6 +9,32 @@ def test_detect_claude_by_command():
     assert detect_backend(pane_command="claude") == CliBackend.CLAUDE
 
 
+def test_detect_kimi_by_command():
+    assert detect_backend(pane_command="kimi") == CliBackend.KIMI
+
+
+def test_detect_kimi_by_proc_comm():
+    with patch(
+        "daedalus_wechat.cli_backend._detect_backend_from_proc",
+        return_value=CliBackend.KIMI,
+    ):
+        assert (
+            detect_backend(pane_command="bash", pane_pid=4321) == CliBackend.KIMI
+        )
+
+
+def test_detect_node_with_kimi_screen():
+    screen = "▐█▛█▛█▌  Welcome to Kimi Code CLI!"
+    assert detect_backend(pane_command="node", screen_text=screen) == CliBackend.KIMI
+
+
+def test_detect_node_prefers_kimi_start_command():
+    assert (
+        detect_backend(pane_command="node", pane_start_command="kimi --yolo")
+        == CliBackend.KIMI
+    )
+
+
 def test_detect_codex_by_command():
     assert detect_backend(pane_command="codex") == CliBackend.CODEX
 

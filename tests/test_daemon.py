@@ -8,7 +8,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from daedalus_wechat.config import BridgeConfig
-from daedalus_wechat.daemon import BridgeDaemon, IncomingMessage
+from daedalus_wechat.daemon import (
+    BridgeDaemon,
+    IncomingMessage,
+    _apply_voice_corrections,
+    _build_active_voice_corrections,
+)
 from daedalus_wechat.incoming_media import (
     SavedIncomingFile,
     SavedIncomingImage,
@@ -1595,6 +1600,38 @@ class DaemonTests(unittest.TestCase):
                 ("user@im.wechat", None, "[claude] ✅ NEW"),
             )
             self.assertEqual(state.get_mirror_offset(thread_id), 200)
+
+    def test_apply_voice_corrections_does_not_mangle_canonical_prefix(self) -> None:
+        """Typing the correct name must not be expanded by its own variant.
+
+        ``"claud"`` is a registered STT variant of ``"claude"``; without
+        word-boundary awareness the correction pass would turn ``"claude …"``
+        into ``"claudee …"`` because it finds ``"claud"`` as a substring
+        starting at position 0.
+        """
+        mapping = _build_active_voice_corrections(["claude"])
+        self.assertEqual(
+            _apply_voice_corrections("claude 你变成了 beta", mapping),
+            "claude 你变成了 beta",
+        )
+
+    def test_apply_voice_corrections_still_fixes_genuine_stt_variant(
+        self,
+    ) -> None:
+        """A standalone variant must still be corrected to its canonical form."""
+        mapping = _build_active_voice_corrections(["claude"])
+        self.assertEqual(
+            _apply_voice_corrections("claud 你好", mapping),
+            "claude 你好",
+        )
+
+    def test_apply_voice_corrections_respects_trailing_word_boundary(self) -> None:
+        """A variant embedded inside a larger token must not be rewritten."""
+        mapping = _build_active_voice_corrections(["codex"])
+        self.assertEqual(
+            _apply_voice_corrections("codecs 做个总结", mapping),
+            "codecs 做个总结",
+        )
 
     def test_group_mode_voice_fuzzy_match_session_name(self) -> None:
         """Voice transcript 'kimi 零 你好' should match tmux session 'kimi0'."""

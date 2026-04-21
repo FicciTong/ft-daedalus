@@ -169,12 +169,34 @@ def _build_active_voice_corrections(live_names: list[str]) -> dict[str, str]:
 
 
 def _apply_voice_corrections(text: str, mapping: dict[str, str]) -> str:
-    """Apply the given variant->canonical corrections to raw voice text."""
+    """Apply variant → canonical corrections to raw voice text.
+
+    Matches only on ASCII-word-boundary positions so that a variant which is
+    a literal prefix of its canonical (e.g. ``"claud"`` → ``"claude"``) does
+    not mangle an already-correct input — typing ``"claude"`` would otherwise
+    match ``"claud"`` inside it and expand to ``"claudee"``.
+    """
     out = text
     for wrong, right in sorted(mapping.items(), key=lambda x: -len(x[0])):
-        idx = out.lower().find(wrong.lower())
-        if idx != -1:
-            out = out[:idx] + right + out[idx + len(wrong) :]
+        needle = wrong.lower()
+        if not needle:
+            continue
+        start = 0
+        while True:
+            lower = out.lower()
+            idx = lower.find(needle, start)
+            if idx == -1:
+                break
+            end = idx + len(needle)
+            prev_char = out[idx - 1] if idx > 0 else ""
+            next_char = out[end] if end < len(out) else ""
+            prev_is_alnum = bool(prev_char) and prev_char.isascii() and prev_char.isalnum()
+            next_is_alnum = bool(next_char) and next_char.isascii() and next_char.isalnum()
+            if prev_is_alnum or next_is_alnum:
+                start = idx + 1
+                continue
+            out = out[:idx] + right + out[end:]
+            start = idx + len(right)
     return out
 
 
@@ -1274,7 +1296,7 @@ class BridgeDaemon:
                 "status=tmux_no_cli\n"
                 f"tmux={runtime.tmux_session}\n"
                 f"pane={runtime.pane_command or 'unknown'}\n"
-                "hint=attach 后启动 Codex、OpenCode 或 Claude"
+                "hint=attach 后启动 Codex、OpenCode、Claude 或 Kimi"
             )
         if conflict_reason is not None:
             lines = [
@@ -1291,6 +1313,8 @@ class BridgeDaemon:
                 no_thread_hint = "hint=attach 后进入 live session；OpenCode 首条 prompt 后会绑定 session"
             elif runtime.backend == CliBackend.CLAUDE.value:
                 no_thread_hint = "hint=attach 后确认 Claude Code 已进入当前项目会话"
+            elif runtime.backend == CliBackend.KIMI.value:
+                no_thread_hint = "hint=attach 后确认 Kimi Code CLI 已进入当前项目会话"
             return (
                 "status=no_thread\n"
                 f"tmux={runtime.tmux_session}\n"

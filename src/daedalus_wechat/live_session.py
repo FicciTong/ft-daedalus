@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -26,12 +27,19 @@ PLAN_MARKER = "__DAEDALUS_PLAN__\n"
 TMUX_RUNTIME_ID_OPTION = "@daedalus_runtime_id"
 OPENCODE_SESSION_PREFIX = "ses_"
 CLAUDE_SESSION_PREFIX = "claude:"
+KIMI_SESSION_PREFIX = "kimi:"
 PENDING_RUNTIME_PREFIX = "pending:"
 CLAUDE_SESSION_FILE_RE = re.compile(
     r"/\.claude/projects/[^/]+/(?P<session_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?: \(deleted\))?$"
 )
 CODEX_ROLLOUT_FILE_RE = re.compile(
     r"/\.codex/sessions/[\s\S]*/rollout-[^/]*-(?P<thread_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?: \(deleted\))?$"
+)
+KIMI_SESSION_FILE_RE = re.compile(
+    r"/\.kimi/sessions/(?P<workspace_hash>[0-9a-f]{32})/(?P<session_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/context\.jsonl(?: \(deleted\))?$"
+)
+KIMI_SESSION_BANNER_RE = re.compile(
+    r"Session:\s+(?P<session_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
 )
 
 
@@ -94,6 +102,7 @@ class LiveCodexSessionManager:
         self.opencode_state_db = opencode_state_db or default_opencode_state_db()
         self.session_root = Path.home() / ".codex" / "sessions"
         self.claude_projects_root = Path.home() / ".claude" / "projects"
+        self.kimi_sessions_root = Path.home() / ".kimi" / "sessions"
 
     def find_latest_thread(self) -> str | None:
         state_db = self.codex_state_db
@@ -149,6 +158,8 @@ class LiveCodexSessionManager:
         session_name = self.canonical_tmux_session.strip().lower()
         if "claude" in session_name:
             return CliBackend.CLAUDE.value
+        if "kimi" in session_name:
+            return CliBackend.KIMI.value
         if "opencode" in session_name or session_name.startswith("oc-"):
             return CliBackend.OPENCODE.value
         return CliBackend.CODEX.value
@@ -161,6 +172,8 @@ class LiveCodexSessionManager:
                 return expected_backend
         if self._is_claude_runtime_id(runtime_id):
             return CliBackend.CLAUDE.value
+        if self._is_kimi_runtime_id(runtime_id):
+            return CliBackend.KIMI.value
         if self._is_opencode_runtime_id(runtime_id):
             return CliBackend.OPENCODE.value
         return CliBackend.CODEX.value
@@ -178,6 +191,8 @@ class LiveCodexSessionManager:
             return self._preferred_canonical_backend()
         if "claude" in name:
             return CliBackend.CLAUDE.value
+        if "kimi" in name:
+            return CliBackend.KIMI.value
         if "opencode" in name or name.startswith("oc-"):
             return CliBackend.OPENCODE.value
         if "codex" in name:
@@ -248,6 +263,8 @@ class LiveCodexSessionManager:
             return default_label
         if status.backend == CliBackend.CLAUDE.value and "claude" not in current_lower:
             return default_label
+        if status.backend == CliBackend.KIMI.value and "kimi" not in current_lower:
+            return default_label
         return existing.label
 
     def ensure_attached_latest(self, state: BridgeState) -> SessionRecord | None:
@@ -266,6 +283,10 @@ class LiveCodexSessionManager:
             thread_id = self.find_latest_opencode_session(
                 pane_cwd=canonical_status.pane_cwd,
                 tmux_session=canonical_status.tmux_session,
+            )
+        elif backend == CliBackend.KIMI.value:
+            thread_id = self.find_latest_kimi_session(
+                pane_cwd=canonical_status.pane_cwd,
             )
         else:
             thread_id = self.find_latest_thread()
@@ -495,12 +516,17 @@ class LiveCodexSessionManager:
                     "当前没有 canonical Claude tmux。请先启动一个固定窗口，例如：\n"
                     f"tmux new -s {self.canonical_tmux_session} 'claude --resume'"
                 )
+            elif backend == CliBackend.KIMI.value:
+                start_hint = (
+                    "当前没有 canonical Kimi tmux。请先启动一个固定窗口，例如：\n"
+                    f"tmux new -s {self.canonical_tmux_session} 'kimi --yolo'"
+                )
             raise RuntimeError(start_hint)
         if status.backend == "unknown":
             raise RuntimeError(
                 f"`tmux {status.tmux_session}` 已存在，但里面当前不是受支持的 live runtime "
                 f"(pane_current_command={status.pane_command or 'unknown'})。"
-                "\n请先 attach 进去并启动 Codex、OpenCode 或 Claude。"
+                "\n请先 attach 进去并启动 Codex、OpenCode、Claude 或 Kimi。"
             )
         conflict_reason = self.runtime_conflict_reason(status)
         if conflict_reason is not None:
@@ -535,6 +561,11 @@ class LiveCodexSessionManager:
                 raise RuntimeError(
                     f"`tmux {status.tmux_session}` 已打开，但还没有识别到可用的 Claude session。"
                     "\n请先 attach 进去，确认 Claude Code 已经进入当前项目会话。"
+                )
+            if status.backend == CliBackend.KIMI.value:
+                raise RuntimeError(
+                    f"`tmux {status.tmux_session}` 已打开，但还没有识别到可用的 Kimi session。"
+                    "\n请先 attach 进去，确认 Kimi Code CLI 已经进入当前项目会话。"
                 )
             raise RuntimeError(
                 f"`tmux {status.tmux_session}` 已打开，但还没有进入任何 Codex thread。"
@@ -652,7 +683,9 @@ class LiveCodexSessionManager:
             return 0
         if self._is_opencode_runtime_id(thread_id):
             return self._opencode_latest_part_rowid(thread_id)
-        if self._is_claude_runtime_id(thread_id):
+        if self._is_claude_runtime_id(thread_id) or self._is_kimi_runtime_id(
+            thread_id
+        ):
             session_file = self._resolve_rollout_file(thread_id)
             if session_file and session_file.exists():
                 return int(session_file.stat().st_size)
@@ -671,6 +704,10 @@ class LiveCodexSessionManager:
             )
         if self._is_claude_runtime_id(thread_id):
             return self._claude_mirror_since(
+                thread_id=thread_id, start_offset=start_offset
+            )
+        if self._is_kimi_runtime_id(thread_id):
+            return self._kimi_mirror_since(
                 thread_id=thread_id, start_offset=start_offset
             )
         rollout_file = self._resolve_rollout_file(thread_id)
@@ -1094,6 +1131,16 @@ class LiveCodexSessionManager:
                 reverse=True,
             )
             return matches[0] if matches else None
+        if self._is_kimi_runtime_id(thread_id):
+            session_id = thread_id[len(KIMI_SESSION_PREFIX) :]
+            if not self.kimi_sessions_root.exists():
+                return None
+            matches = sorted(
+                self.kimi_sessions_root.glob(f"*/{session_id}/context.jsonl"),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            return matches[0] if matches else None
         if not self.session_root.exists():
             return None
         matches = sorted(
@@ -1124,6 +1171,8 @@ class LiveCodexSessionManager:
             )
         if backend == CliBackend.CLAUDE.value:
             return self._resolve_claude_session_id(tmux_session=tmux_session)
+        if backend == CliBackend.KIMI.value:
+            return self._resolve_kimi_session_id(tmux_session=tmux_session)
         codex_thread_id = self._resolve_codex_thread_id(tmux_session=tmux_session)
         if codex_thread_id:
             return codex_thread_id
@@ -1183,6 +1232,9 @@ class LiveCodexSessionManager:
     def _is_claude_runtime_id(self, runtime_id: str | None) -> bool:
         return bool(runtime_id and runtime_id.startswith(CLAUDE_SESSION_PREFIX))
 
+    def _is_kimi_runtime_id(self, runtime_id: str | None) -> bool:
+        return bool(runtime_id and runtime_id.startswith(KIMI_SESSION_PREFIX))
+
     def _is_pending_runtime_id(self, runtime_id: str | None) -> bool:
         return bool(runtime_id and runtime_id.startswith(PENDING_RUNTIME_PREFIX))
 
@@ -1191,6 +1243,9 @@ class LiveCodexSessionManager:
 
     def _claude_runtime_id(self, session_id: str) -> str:
         return f"{CLAUDE_SESSION_PREFIX}{session_id}"
+
+    def _kimi_runtime_id(self, session_id: str) -> str:
+        return f"{KIMI_SESSION_PREFIX}{session_id}"
 
     def _resolve_claude_session_id(self, *, tmux_session: str) -> str | None:
         session_file = self._current_claude_session_file(tmux_session)
@@ -1231,6 +1286,7 @@ class LiveCodexSessionManager:
         if (
             value.startswith(OPENCODE_SESSION_PREFIX)
             or value.startswith(CLAUDE_SESSION_PREFIX)
+            or value.startswith(KIMI_SESSION_PREFIX)
             or value.startswith(PENDING_RUNTIME_PREFIX)
         ):
             return False
@@ -1270,13 +1326,26 @@ class LiveCodexSessionManager:
 
     def _current_claude_session_file(self, tmux_session: str) -> Path | None:
         pane_pid = self._pane_pid(tmux_session)
+        # Authoritative per-pane lookup: claude writes ~/.claude/sessions/<pid>.json
+        # for every live claude process, with the current sessionId inside.
+        # This is the only reliable disambiguator when multiple claude panes
+        # share a project directory — claude does not hold the .jsonl fd open,
+        # so the /proc fd scan below always misses, and the mtime glob used as
+        # last resort collapses every pane onto whichever session was most
+        # recently written to.
+        project_dir = self._claude_project_dir(tmux_session)
+        if pane_pid is not None and project_dir is not None:
+            session_id = self._claude_session_id_from_pid_metadata(pane_pid)
+            if session_id:
+                candidate = project_dir / f"{session_id}.jsonl"
+                if candidate.exists():
+                    return candidate
         if pane_pid is not None:
             for pid in [pane_pid, *self._proc_descendants(pane_pid)]:
                 for raw_path in self._proc_open_paths(pid):
                     match = CLAUDE_SESSION_FILE_RE.search(raw_path)
                     if match:
                         return Path(raw_path.replace(" (deleted)", ""))
-        project_dir = self._claude_project_dir(tmux_session)
         if project_dir is None or not project_dir.exists():
             return None
         matches = sorted(
@@ -1286,6 +1355,23 @@ class LiveCodexSessionManager:
         )
         return matches[0] if matches else None
 
+    def _claude_session_id_from_pid_metadata(self, pane_pid: int) -> str | None:
+        sessions_root = Path.home() / ".claude" / "sessions"
+        if not sessions_root.is_dir():
+            return None
+        for pid in [pane_pid, *self._proc_descendants(pane_pid)]:
+            meta_file = sessions_root / f"{pid}.json"
+            if not meta_file.is_file():
+                continue
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            session_id = str(meta.get("sessionId") or "").strip()
+            if session_id:
+                return session_id
+        return None
+
     def _claude_project_dir(self, tmux_session: str) -> Path | None:
         pane_cwd = self._pane_current_path(tmux_session) or str(self.default_cwd)
         try:
@@ -1294,6 +1380,104 @@ class LiveCodexSessionManager:
             return None
         slug = "-" + "-".join(part for part in resolved.parts if part and part != "/")
         return self.claude_projects_root / slug
+
+    def _kimi_workspace_hash(self, pane_cwd: str | None) -> str | None:
+        raw = pane_cwd or str(self.default_cwd)
+        try:
+            resolved = str(Path(raw).resolve(strict=False))
+        except OSError:
+            resolved = raw
+        if not resolved:
+            return None
+        return hashlib.md5(resolved.encode("utf-8")).hexdigest()
+
+    def _kimi_workspace_dir(
+        self, *, tmux_session: str | None = None, pane_cwd: str | None = None
+    ) -> Path | None:
+        cwd = pane_cwd
+        if cwd is None and tmux_session is not None:
+            cwd = self._pane_current_path(tmux_session)
+        workspace_hash = self._kimi_workspace_hash(cwd)
+        if not workspace_hash:
+            return None
+        return self.kimi_sessions_root / workspace_hash
+
+    def _extract_kimi_session_id_from_path(self, path: Path) -> str | None:
+        match = KIMI_SESSION_FILE_RE.search(str(path))
+        if not match:
+            return None
+        return str(match.group("session_id"))
+
+    def _current_kimi_context_file(self, tmux_session: str) -> Path | None:
+        workspace_dir = self._kimi_workspace_dir(tmux_session=tmux_session)
+        if workspace_dir is None or not workspace_dir.exists():
+            return None
+        # Kimi prints a startup banner "Session: <uuid>" in the pane for every
+        # session it enters; the last banner in scrollback identifies the pane's
+        # currently-active session. This disambiguates multiple kimi panes in
+        # the same workspace (which would otherwise share a workspace hash).
+        banner_session_id = self._scrape_kimi_banner_session_id(tmux_session)
+        if banner_session_id:
+            context_path = workspace_dir / banner_session_id / "context.jsonl"
+            if context_path.exists():
+                return context_path
+        matches = sorted(
+            workspace_dir.glob("*/context.jsonl"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        return matches[0] if matches else None
+
+    def _scrape_kimi_banner_session_id(self, tmux_session: str) -> str | None:
+        if not self._tmux_exists(tmux_session):
+            return None
+        try:
+            proc = subprocess.run(
+                [
+                    "tmux",
+                    "capture-pane",
+                    "-p",
+                    "-J",
+                    "-t",
+                    f"{tmux_session}:0.0",
+                    "-S",
+                    "-3000",
+                ],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return None
+        text = ANSI_RE.sub("", proc.stdout.decode(errors="replace")).replace("\r", "")
+        matches = KIMI_SESSION_BANNER_RE.findall(text)
+        return matches[-1] if matches else None
+
+    def _resolve_kimi_session_id(self, *, tmux_session: str) -> str | None:
+        context_file = self._current_kimi_context_file(tmux_session)
+        if context_file is not None:
+            session_id = self._extract_kimi_session_id_from_path(context_file)
+            if session_id:
+                return self._kimi_runtime_id(session_id)
+        hinted = self._get_tmux_runtime_id(tmux_session)
+        if hinted and self._is_kimi_runtime_id(hinted):
+            return hinted
+        return None
+
+    def find_latest_kimi_session(self, *, pane_cwd: str | None = None) -> str | None:
+        workspace_dir = self._kimi_workspace_dir(pane_cwd=pane_cwd)
+        if workspace_dir is None or not workspace_dir.exists():
+            return None
+        matches = sorted(
+            workspace_dir.glob("*/context.jsonl"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        for context_file in matches:
+            session_id = self._extract_kimi_session_id_from_path(context_file)
+            if session_id:
+                return self._kimi_runtime_id(session_id)
+        return None
 
     def _proc_children(self, pid: int) -> list[int]:
         children_file = Path(f"/proc/{pid}/task/{pid}/children")
@@ -1600,6 +1784,80 @@ class LiveCodexSessionManager:
             return ("progress", self._normalize_progress_text(combined))
         # Text-only message without end_turn — progress.
         return ("progress", self._normalize_progress_text(combined))
+
+    def _kimi_mirror_since(
+        self, *, thread_id: str, start_offset: int
+    ) -> MirrorScan | None:
+        context_file = self._resolve_rollout_file(thread_id)
+        if context_file is None or not context_file.exists():
+            return None
+        offset = int(start_offset)
+        size = context_file.stat().st_size
+        if size < offset:
+            offset = 0
+        if size == offset:
+            return MirrorScan(progress_texts=[], final_texts=[], end_offset=offset)
+        with context_file.open("r", encoding="utf-8") as fh:
+            fh.seek(offset)
+            chunk = fh.read()
+            end_offset = fh.tell()
+        progress_texts: list[str] = []
+        final_texts: list[str] = []
+        lines = chunk.splitlines()
+        # A trailing partial line means the record is still being flushed —
+        # rewind so the next tick re-reads it atomically.
+        if chunk and not chunk.endswith("\n") and lines:
+            partial = lines.pop()
+            end_offset -= len(partial.encode("utf-8"))
+        for raw in lines:
+            try:
+                event = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            kind, text = self._extract_kimi_text(event)
+            if kind == "final":
+                final_texts.append(text)
+            elif kind == "progress":
+                progress_texts.append(text)
+        return MirrorScan(
+            progress_texts=progress_texts,
+            final_texts=final_texts,
+            end_offset=end_offset,
+        )
+
+    def _extract_kimi_text(self, event: dict) -> tuple[str, str]:
+        """Extract mirror text from a kimi context.jsonl event.
+
+        Kimi records assistant turns as role=assistant with `content` being a
+        list of parts ({type=text|think|...}). The final assistant message in
+        a turn carries text and no `tool_calls`; intermediate ones carry
+        `tool_calls` (and usually only `think` parts).
+        """
+        if str(event.get("role", "")).strip() != "assistant":
+            return ("", "")
+        content = event.get("content")
+        parts: list[str] = []
+        if isinstance(content, str):
+            text = content.strip()
+            if text:
+                parts.append(text)
+        elif isinstance(content, list):
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                item_type = str(item.get("type", "")).strip()
+                # Skip internal reasoning; only surface user-visible text.
+                if item_type != "text":
+                    continue
+                text = str(item.get("text", "")).strip()
+                if text:
+                    parts.append(text)
+        if not parts:
+            return ("", "")
+        combined = "\n\n".join(parts).strip()
+        if event.get("tool_calls"):
+            return ("progress", self._normalize_progress_text(combined))
+        return ("final", combined)
 
     def _extract_opencode_final_text(self, *, part: dict, message: dict) -> str:
         if str(message.get("role", "")).strip() != "assistant":

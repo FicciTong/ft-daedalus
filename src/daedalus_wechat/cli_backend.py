@@ -15,6 +15,9 @@ OPENCODE_HINT_RE = re.compile(
     r"\bOpenCode\b|\bAsk anything\b|\bBuild\b.*\bgpt-", re.IGNORECASE
 )
 CLAUDE_HINT_RE = re.compile(r"\bClaude Code\b|\bclaude-(opus|sonnet)\b", re.IGNORECASE)
+KIMI_HINT_RE = re.compile(
+    r"\bKimi Code CLI\b|\bkimi-cli\b|\bKimi-k\d", re.IGNORECASE
+)
 
 # /proc/*/comm values that identify each backend.
 _COMM_TO_BACKEND: dict[str, CliBackend] = {}  # populated after CliBackend defined
@@ -24,6 +27,7 @@ class CliBackend(Enum):
     CODEX = "codex"
     OPENCODE = "opencode"
     CLAUDE = "claude"
+    KIMI = "kimi"
     UNKNOWN = "unknown"
 
 
@@ -32,6 +36,8 @@ _COMM_TO_BACKEND.update({
     ".opencode": CliBackend.OPENCODE,
     "codex": CliBackend.CODEX,
     "claude": CliBackend.CLAUDE,
+    "kimi": CliBackend.KIMI,
+    "kimi code": CliBackend.KIMI,
 })
 
 
@@ -91,6 +97,9 @@ def detect_backend(
     if cmd == "claude":
         return CliBackend.CLAUDE
 
+    if cmd == "kimi":
+        return CliBackend.KIMI
+
     if cmd == "node":
         child_backend = _detect_backend_from_proc(pane_pid)
         if child_backend != CliBackend.UNKNOWN:
@@ -101,12 +110,16 @@ def detect_backend(
             return CliBackend.CODEX
         if screen_text and CLAUDE_HINT_RE.search(screen_text):
             return CliBackend.CLAUDE
+        if screen_text and KIMI_HINT_RE.search(screen_text):
+            return CliBackend.KIMI
         if "opencode" in start_cmd:
             return CliBackend.OPENCODE
         if "codex" in start_cmd:
             return CliBackend.CODEX
         if "claude" in start_cmd:
             return CliBackend.CLAUDE
+        if "kimi" in start_cmd:
+            return CliBackend.KIMI
         return CliBackend.UNKNOWN
 
     if not cmd or cmd in {"bash", "zsh", "sh", "fish"}:
