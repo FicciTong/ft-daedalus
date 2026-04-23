@@ -261,6 +261,15 @@ class LiveCodexSessionManager:
             and "codex" not in current_lower
         ):
             return default_label
+        # Probe/debug labels can be auto-derived from temporary sibling panes
+        # (for example "codex-probe" after switching back to canonical
+        # "codex"). Keep this bounded so owner-set labels such as
+        # "codex-live" are not collapsed to the tmux default.
+        stale_suffixes = {"probe", "debug"}
+        if tmux_lower and current_lower.startswith(f"{tmux_lower}-"):
+            suffix = current_lower[len(tmux_lower) + 1 :]
+            if suffix in stale_suffixes:
+                return default_label
         if status.backend == CliBackend.CLAUDE.value and "claude" not in current_lower:
             return default_label
         if status.backend == CliBackend.KIMI.value and "kimi" not in current_lower:
@@ -350,9 +359,16 @@ class LiveCodexSessionManager:
                 f"当前 `tmux {tmux_session}` 不存在。"
                 "\nbridge 不会自动创建 session；请先在你自己的 shell 里启动/恢复它。"
             )
+        resolved_label = label
+        if runtime_status is not None:
+            resolved_existing = state.sessions.get(effective_thread_id) or existing
+            resolved_label = self._resolved_live_label(
+                existing=resolved_existing,
+                status=runtime_status,
+            )
         return state.touch_session(
             effective_thread_id,
-            label=label,
+            label=resolved_label,
             cwd=str(self.default_cwd),
             source=source,
             tmux_session=tmux_session,
@@ -402,7 +418,10 @@ class LiveCodexSessionManager:
                 )
                 continue
             conflict_reason = self.runtime_conflict_reason(status)
-            if conflict_reason is not None and conflict_reason != "duplicate-runtime-id":
+            if (
+                conflict_reason is not None
+                and conflict_reason != "duplicate-runtime-id"
+            ):
                 reason = conflict_reason
                 switchable = False
             elif status.backend == "unknown":
@@ -683,9 +702,7 @@ class LiveCodexSessionManager:
             return 0
         if self._is_opencode_runtime_id(thread_id):
             return self._opencode_latest_part_rowid(thread_id)
-        if self._is_claude_runtime_id(thread_id) or self._is_kimi_runtime_id(
-            thread_id
-        ):
+        if self._is_claude_runtime_id(thread_id) or self._is_kimi_runtime_id(thread_id):
             session_file = self._resolve_rollout_file(thread_id)
             if session_file and session_file.exists():
                 return int(session_file.stat().st_size)
@@ -754,7 +771,9 @@ class LiveCodexSessionManager:
                 if extracted:
                     final_texts.append(extracted)
         return MirrorScan(
-            progress_texts=progress_texts, final_texts=final_texts, end_offset=end_offset
+            progress_texts=progress_texts,
+            final_texts=final_texts,
+            end_offset=end_offset,
         )
 
     def latest_final_since(
@@ -1180,6 +1199,16 @@ class LiveCodexSessionManager:
         pane_candidate = candidates[-1] if candidates else None
         if backend != "codex" or not self._is_workspace_tmux(pane_cwd):
             return pane_candidate
+
+        # Non-canonical codex panes with no direct pane evidence (no /proc
+        # rollout fd, no scrollback thread id, no tmux runtime hint) must not
+        # fabricate a thread_id via find_latest_thread(). That DB heuristic
+        # returns the *canonical* pane's current thread, which then collides
+        # with it in runtime_conflict_reason and falsely blocks the bridge —
+        # e.g. a parked `tmux codex-probe` pane making canonical `tmux codex`
+        # look like a duplicate-runtime-id conflict.
+        if not candidates and tmux_session != self.canonical_tmux_session:
+            return None
 
         latest_thread = self.find_latest_thread()
         if latest_thread and latest_thread not in candidates:
@@ -1717,7 +1746,9 @@ class LiveCodexSessionManager:
                 if normalized:
                     progress_texts.append(normalized)
         return MirrorScan(
-            progress_texts=progress_texts, final_texts=final_texts, end_offset=end_offset
+            progress_texts=progress_texts,
+            final_texts=final_texts,
+            end_offset=end_offset,
         )
 
     def _claude_mirror_since(

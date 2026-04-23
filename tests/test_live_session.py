@@ -131,9 +131,7 @@ class LiveSessionTests(unittest.TestCase):
             cwd.mkdir()
             import hashlib
 
-            workspace_hash = hashlib.md5(
-                str(cwd.resolve()).encode("utf-8")
-            ).hexdigest()
+            workspace_hash = hashlib.md5(str(cwd.resolve()).encode("utf-8")).hexdigest()
             sessions_root = Path(tmpdir) / ".kimi" / "sessions" / workspace_hash
             older_id = "11111111-2222-3333-4444-555555555555"
             newer_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -164,9 +162,7 @@ class LiveSessionTests(unittest.TestCase):
             cwd.mkdir()
             import hashlib
 
-            workspace_hash = hashlib.md5(
-                str(cwd.resolve()).encode("utf-8")
-            ).hexdigest()
+            workspace_hash = hashlib.md5(str(cwd.resolve()).encode("utf-8")).hexdigest()
             sessions_root = Path(tmpdir) / ".kimi" / "sessions" / workspace_hash
             old_id = "11111111-2222-3333-4444-555555555555"
             new_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
@@ -187,9 +183,7 @@ class LiveSessionTests(unittest.TestCase):
                 (2_000_000, 2_000_000),
             )
             self.runner.kimi_sessions_root = Path(tmpdir) / ".kimi" / "sessions"
-            with patch.object(
-                self.runner, "_pane_current_path", return_value=str(cwd)
-            ):
+            with patch.object(self.runner, "_pane_current_path", return_value=str(cwd)):
                 resolved = self.runner._resolve_kimi_session_id(tmux_session="kimi")
             self.assertEqual(resolved, f"kimi:{new_id}")
 
@@ -254,20 +248,22 @@ class LiveSessionTests(unittest.TestCase):
     def test_inject_prompt_uses_send_keys_for_opencode_runtime_even_in_codex_tmux(
         self,
     ) -> None:
-        with patch.object(
-            self.runner,
-            "_runtime_status_for_tmux",
-            return_value=LiveRuntimeStatus(
-                tmux_session="codex",
-                exists=True,
-                pane_command="node",
-                thread_id="ses_demo",
-                pane_cwd="/tmp",
-                backend=CliBackend.OPENCODE.value,
+        with (
+            patch.object(
+                self.runner,
+                "_runtime_status_for_tmux",
+                return_value=LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id="ses_demo",
+                    pane_cwd="/tmp",
+                    backend=CliBackend.OPENCODE.value,
+                ),
             ),
-        ), patch("daedalus_wechat.live_session.time.sleep", lambda _: None), patch(
-            "daedalus_wechat.live_session.subprocess.run"
-        ) as run_mock:
+            patch("daedalus_wechat.live_session.time.sleep", lambda _: None),
+            patch("daedalus_wechat.live_session.subprocess.run") as run_mock,
+        ):
             self.runner._inject_prompt("codex", "line one\nline two")
 
         self.assertEqual(
@@ -289,20 +285,22 @@ class LiveSessionTests(unittest.TestCase):
         )
 
     def test_inject_prompt_uses_send_keys_for_codex_runtime(self) -> None:
-        with patch.object(
-            self.runner,
-            "_runtime_status_for_tmux",
-            return_value=LiveRuntimeStatus(
-                tmux_session="codex",
-                exists=True,
-                pane_command="codex",
-                thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
-                pane_cwd="/tmp",
-                backend=CliBackend.CODEX.value,
+        with (
+            patch.object(
+                self.runner,
+                "_runtime_status_for_tmux",
+                return_value=LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="codex",
+                    thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                    pane_cwd="/tmp",
+                    backend=CliBackend.CODEX.value,
+                ),
             ),
-        ), patch("daedalus_wechat.live_session.time.sleep", lambda _: None), patch(
-            "daedalus_wechat.live_session.subprocess.run"
-        ) as run_mock:
+            patch("daedalus_wechat.live_session.time.sleep", lambda _: None),
+            patch("daedalus_wechat.live_session.subprocess.run") as run_mock,
+        ):
             self.runner._inject_prompt("codex", "line one\nline two")
 
         self.assertEqual(
@@ -324,20 +322,22 @@ class LiveSessionTests(unittest.TestCase):
         )
 
     def test_inject_prompt_uses_paste_buffer_for_claude_runtime(self) -> None:
-        with patch.object(
-            self.runner,
-            "_runtime_status_for_tmux",
-            return_value=LiveRuntimeStatus(
-                tmux_session="claude",
-                exists=True,
-                pane_command="claude",
-                thread_id="claude:demo",
-                pane_cwd="/tmp",
-                backend=CliBackend.CLAUDE.value,
+        with (
+            patch.object(
+                self.runner,
+                "_runtime_status_for_tmux",
+                return_value=LiveRuntimeStatus(
+                    tmux_session="claude",
+                    exists=True,
+                    pane_command="claude",
+                    thread_id="claude:demo",
+                    pane_cwd="/tmp",
+                    backend=CliBackend.CLAUDE.value,
+                ),
             ),
-        ), patch("daedalus_wechat.live_session.time.sleep", lambda _: None), patch(
-            "daedalus_wechat.live_session.subprocess.run"
-        ) as run_mock:
+            patch("daedalus_wechat.live_session.time.sleep", lambda _: None),
+            patch("daedalus_wechat.live_session.subprocess.run") as run_mock,
+        ):
             self.runner._inject_prompt("claude", "line one\nline two")
 
         self.assertEqual(
@@ -365,7 +365,9 @@ class LiveSessionTests(unittest.TestCase):
             ],
         )
 
-    def test_current_runtime_status_falls_back_when_active_tmux_is_missing(self) -> None:
+    def test_current_runtime_status_falls_back_when_active_tmux_is_missing(
+        self,
+    ) -> None:
         missing = LiveRuntimeStatus(
             tmux_session="gpt",
             exists=False,
@@ -383,14 +385,17 @@ class LiveSessionTests(unittest.TestCase):
             backend=CliBackend.CODEX.value,
         )
 
-        with patch.object(
-            self.runner,
-            "_runtime_status_for_tmux",
-            side_effect=lambda tmux: missing if tmux == "gpt" else codex,
-        ), patch.object(
-            self.runner,
-            "list_live_runtime_statuses",
-            return_value=[codex],
+        with (
+            patch.object(
+                self.runner,
+                "_runtime_status_for_tmux",
+                side_effect=lambda tmux: missing if tmux == "gpt" else codex,
+            ),
+            patch.object(
+                self.runner,
+                "list_live_runtime_statuses",
+                return_value=[codex],
+            ),
         ):
             status = self.runner.current_runtime_status(
                 active_session_id="stale-thread",
@@ -966,8 +971,10 @@ class LiveSessionTests(unittest.TestCase):
                                             "find_latest_thread",
                                             return_value=latest_thread,
                                         ):
-                                            status = self.runner._runtime_status_for_tmux(
-                                                "codex"
+                                            status = (
+                                                self.runner._runtime_status_for_tmux(
+                                                    "codex"
+                                                )
                                             )
         self.assertEqual(status.backend, "codex")
         self.assertEqual(status.thread_id, latest_thread)
@@ -1006,11 +1013,129 @@ class LiveSessionTests(unittest.TestCase):
                                             "find_latest_thread",
                                             return_value=latest_thread,
                                         ):
-                                            status = self.runner._runtime_status_for_tmux(
-                                                "gpt"
+                                            status = (
+                                                self.runner._runtime_status_for_tmux(
+                                                    "codex"
+                                                )
                                             )
         self.assertEqual(status.backend, "codex")
         self.assertEqual(status.thread_id, latest_thread)
+
+    def test_resolve_runtime_thread_id_skips_latest_thread_for_non_canonical_pane(
+        self,
+    ) -> None:
+        """Non-canonical codex panes (e.g. `codex-probe`) with no direct pane
+        evidence must NOT fall back to find_latest_thread() — that DB lookup
+        returns the canonical pane's current thread, which then falsely fires
+        `duplicate-runtime-id` against the canonical bridge pane."""
+        canonical_thread = "019dadf7-816a-7542-ac28-a2f9f9fdf1b0"
+        with (
+            patch.object(self.runner, "_current_codex_rollout_file", return_value=None),
+            patch.object(self.runner, "_get_tmux_runtime_id", return_value=None),
+            patch.object(
+                self.runner, "find_latest_thread", return_value=canonical_thread
+            ),
+        ):
+            resolved = self.runner._resolve_runtime_thread_id(
+                tmux_session="codex-probe",
+                pane_cwd="/tmp",
+                screen_text="",
+                backend="codex",
+            )
+        self.assertIsNone(resolved)
+
+    def test_runtime_conflict_reason_skips_non_canonical_codex_probe(
+        self,
+    ) -> None:
+        """End-to-end: canonical `tmux codex` must not see a
+        duplicate-runtime-id conflict just because a non-canonical pane
+        (e.g. `codex-probe`) has no direct pane evidence. Previously the
+        non-canonical pane's thread_id was fabricated via find_latest_thread,
+        making it look like a duplicate of the canonical pane."""
+        canonical_thread = "019dadf7-816a-7542-ac28-a2f9f9fdf1b0"
+        canonical_status = LiveRuntimeStatus(
+            tmux_session="codex",
+            exists=True,
+            pane_command="codex",
+            thread_id=canonical_thread,
+            pane_cwd="/tmp",
+            backend="codex",
+        )
+        probe_status = LiveRuntimeStatus(
+            tmux_session="codex-probe",
+            exists=True,
+            pane_command="node",
+            thread_id=None,
+            pane_cwd="/tmp",
+            backend="codex",
+        )
+
+        def fake_status(tmux_session: str) -> LiveRuntimeStatus:
+            if tmux_session == "codex":
+                return canonical_status
+            if tmux_session == "codex-probe":
+                return probe_status
+            raise AssertionError(f"unexpected tmux session {tmux_session!r}")
+
+        with (
+            patch.object(
+                self.runner,
+                "_list_tmux_sessions",
+                return_value=["codex", "codex-probe"],
+            ),
+            patch.object(
+                self.runner,
+                "_runtime_status_for_tmux",
+                side_effect=fake_status,
+            ),
+        ):
+            self.assertIsNone(self.runner.runtime_conflict_reason(canonical_status))
+
+    def test_runtime_conflict_reason_still_detects_real_duplicate(self) -> None:
+        """The fix must not mask real duplicates: when two panes both report
+        the same thread_id (e.g. both `codex resume <thread_id>`), the
+        conflict still fires."""
+        shared_thread = "019dadf7-816a-7542-ac28-a2f9f9fdf1b0"
+        canonical_status = LiveRuntimeStatus(
+            tmux_session="codex",
+            exists=True,
+            pane_command="codex",
+            thread_id=shared_thread,
+            pane_cwd="/tmp",
+            backend="codex",
+        )
+        other_status = LiveRuntimeStatus(
+            tmux_session="alpha",
+            exists=True,
+            pane_command="codex",
+            thread_id=shared_thread,
+            pane_cwd="/tmp",
+            backend="codex",
+        )
+
+        def fake_status(tmux_session: str) -> LiveRuntimeStatus:
+            if tmux_session == "codex":
+                return canonical_status
+            if tmux_session == "alpha":
+                return other_status
+            raise AssertionError(f"unexpected tmux session {tmux_session!r}")
+
+        with (
+            patch.object(
+                self.runner,
+                "_list_tmux_sessions",
+                return_value=["codex", "alpha"],
+            ),
+            patch.object(
+                self.runner,
+                "_runtime_status_for_tmux",
+                side_effect=fake_status,
+            ),
+        ):
+            self.assertEqual(
+                self.runner.runtime_conflict_reason(canonical_status),
+                "duplicate-runtime-id",
+            )
 
     def test_resolve_opencode_session_prefers_db_truth_over_pending_tmux_hint(
         self,
@@ -1200,14 +1325,17 @@ class LiveSessionTests(unittest.TestCase):
         instances share one workspace cwd — alpha/beta/gamma case), the
         resolver must respect an explicit @daedalus_runtime_id tmux option."""
         pinned = "019d8ce9-b087-76a1-b0c4-deadbeef0001"
-        with patch.object(
-            self.runner,
-            "_current_codex_rollout_file",
-            return_value=None,
-        ), patch.object(
-            self.runner,
-            "_get_tmux_runtime_id",
-            return_value=pinned,
+        with (
+            patch.object(
+                self.runner,
+                "_current_codex_rollout_file",
+                return_value=None,
+            ),
+            patch.object(
+                self.runner,
+                "_get_tmux_runtime_id",
+                return_value=pinned,
+            ),
         ):
             resolved = self.runner._resolve_codex_thread_id(tmux_session="gamma")
         self.assertEqual(resolved, pinned)
@@ -1218,22 +1346,27 @@ class LiveSessionTests(unittest.TestCase):
         even if codex later rotates the rollout file."""
         thread_id = "019dabcd-0000-72aa-b0c4-cafefeed0001"
         rollout = Path(f"/tmp/rollout-{thread_id}.jsonl")
-        with patch.object(
-            self.runner,
-            "_current_codex_rollout_file",
-            return_value=rollout,
-        ), patch.object(
-            self.runner,
-            "_extract_codex_thread_id_from_path",
-            return_value=thread_id,
-        ), patch.object(
-            self.runner,
-            "_get_tmux_runtime_id",
-            return_value=None,
-        ), patch.object(
-            self.runner,
-            "_set_tmux_runtime_id",
-        ) as set_mock:
+        with (
+            patch.object(
+                self.runner,
+                "_current_codex_rollout_file",
+                return_value=rollout,
+            ),
+            patch.object(
+                self.runner,
+                "_extract_codex_thread_id_from_path",
+                return_value=thread_id,
+            ),
+            patch.object(
+                self.runner,
+                "_get_tmux_runtime_id",
+                return_value=None,
+            ),
+            patch.object(
+                self.runner,
+                "_set_tmux_runtime_id",
+            ) as set_mock,
+        ):
             resolved = self.runner._resolve_codex_thread_id(tmux_session="alpha")
         self.assertEqual(resolved, thread_id)
         set_mock.assert_called_once_with("alpha", thread_id)
@@ -1376,6 +1509,45 @@ class LiveSessionTests(unittest.TestCase):
         self.assertEqual(record.tmux_session, "opencode")
         set_hint.assert_called_with("opencode", "pending:opencode")
 
+    def test_ensure_resumed_session_refreshes_stale_switch_label(self) -> None:
+        thread_id = "019dadf7-816a-7542-ac28-a2f9f9fdf1b0"
+        state = BridgeState(
+            sessions={
+                thread_id: SessionRecord(
+                    thread_id=thread_id,
+                    label="codex-probe",
+                    cwd="/tmp",
+                    source="tmux-live",
+                    created_at="2026-04-23T00:00:00+00:00",
+                    updated_at="2026-04-23T00:00:00+00:00",
+                    tmux_session="codex",
+                )
+            }
+        )
+        status = LiveRuntimeStatus(
+            tmux_session="codex",
+            exists=True,
+            pane_command="node",
+            thread_id=thread_id,
+            pane_cwd="/tmp",
+            backend="codex",
+        )
+        with (
+            patch.object(self.runner, "_find_live_runtime_status", return_value=status),
+            patch.object(self.runner, "_tmux_exists", return_value=True),
+            patch.object(self.runner, "_runtime_status_for_tmux", return_value=status),
+            patch.object(self.runner, "_set_tmux_runtime_id"),
+        ):
+            record = self.runner.ensure_resumed_session(
+                thread_id=thread_id,
+                state=state,
+                label="codex-probe",
+                source="tmux-live",
+            )
+
+        self.assertEqual(record.label, "codex")
+        self.assertEqual(state.sessions[thread_id].label, "codex")
+
     def test_ensure_resumed_session_does_not_create_missing_tmux(self) -> None:
         state = BridgeState(
             sessions={
@@ -1503,6 +1675,39 @@ class LiveSessionTests(unittest.TestCase):
             state.sessions["11111111-2222-3333-4444-555555555555"].cwd, "/tmp/ft-kairos"
         )
 
+    def test_sync_live_sessions_rewrites_stale_codex_probe_label(self) -> None:
+        thread_id = "019dadf7-816a-7542-ac28-a2f9f9fdf1b0"
+        state = BridgeState(
+            sessions={
+                thread_id: SessionRecord(
+                    thread_id=thread_id,
+                    label="codex-probe",
+                    cwd="/tmp",
+                    source="tmux-live",
+                    created_at="2026-04-23T00:00:00+00:00",
+                    updated_at="2026-04-23T00:00:00+00:00",
+                    tmux_session="codex",
+                )
+            }
+        )
+        with patch.object(
+            self.runner,
+            "list_live_runtime_statuses",
+            return_value=[
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                )
+            ],
+        ):
+            records = self.runner.sync_live_sessions(state)
+        self.assertEqual(records[0].label, "codex")
+        self.assertEqual(state.sessions[thread_id].label, "codex")
+
     def test_sync_live_sessions_rewrites_legacy_codex_label_for_opencode(self) -> None:
         state = BridgeState(
             sessions={
@@ -1572,6 +1777,205 @@ class LiveSessionTests(unittest.TestCase):
             "opencode-debug-20260404",
         )
 
+    def test_sync_live_sessions_rewrites_stale_kimi_probe_label(self) -> None:
+        """Generalized case: label auto-derived from a sibling kimi pane
+        (e.g. 'kimi-probe') must refresh to the current canonical tmux
+        name when that sibling is gone."""
+        thread_id = "kimi:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        state = BridgeState(
+            sessions={
+                thread_id: SessionRecord(
+                    thread_id=thread_id,
+                    label="kimi-probe",
+                    cwd="/tmp",
+                    source="tmux-live",
+                    created_at="2026-04-23T00:00:00+00:00",
+                    updated_at="2026-04-23T00:00:00+00:00",
+                    tmux_session="kimi",
+                )
+            }
+        )
+        with patch.object(
+            self.runner,
+            "list_live_runtime_statuses",
+            return_value=[
+                LiveRuntimeStatus(
+                    tmux_session="kimi",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="kimi",
+                )
+            ],
+        ):
+            records = self.runner.sync_live_sessions(state)
+        self.assertEqual(records[0].label, "kimi")
+        self.assertEqual(state.sessions[thread_id].label, "kimi")
+
+    def test_sync_live_sessions_rewrites_stale_claude_probe_label(self) -> None:
+        thread_id = "claude:aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        state = BridgeState(
+            sessions={
+                thread_id: SessionRecord(
+                    thread_id=thread_id,
+                    label="claude-probe",
+                    cwd="/tmp",
+                    source="tmux-live",
+                    created_at="2026-04-23T00:00:00+00:00",
+                    updated_at="2026-04-23T00:00:00+00:00",
+                    tmux_session="claude",
+                )
+            }
+        )
+        with patch.object(
+            self.runner,
+            "list_live_runtime_statuses",
+            return_value=[
+                LiveRuntimeStatus(
+                    tmux_session="claude",
+                    exists=True,
+                    pane_command="claude",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="claude",
+                )
+            ],
+        ):
+            records = self.runner.sync_live_sessions(state)
+        self.assertEqual(records[0].label, "claude")
+        self.assertEqual(state.sessions[thread_id].label, "claude")
+
+    def test_sync_live_sessions_preserves_opencode_alpha_label(self) -> None:
+        """Only bounded probe/debug labels are cleaned up. Other
+        '<tmux>-suffix' labels may be user-owned and must be preserved."""
+        thread_id = "ses_opencode_demo"
+        state = BridgeState(
+            sessions={
+                thread_id: SessionRecord(
+                    thread_id=thread_id,
+                    label="opencode-alpha",
+                    cwd="/tmp",
+                    source="tmux-live",
+                    created_at="2026-04-23T00:00:00+00:00",
+                    updated_at="2026-04-23T00:00:00+00:00",
+                    tmux_session="opencode",
+                )
+            }
+        )
+        with patch.object(
+            self.runner,
+            "list_live_runtime_statuses",
+            return_value=[
+                LiveRuntimeStatus(
+                    tmux_session="opencode",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                )
+            ],
+        ):
+            records = self.runner.sync_live_sessions(state)
+        self.assertEqual(records[0].label, "opencode-alpha")
+        self.assertEqual(state.sessions[thread_id].label, "opencode-alpha")
+
+    def test_sync_live_sessions_preserves_main_live_when_tmux_is_codex(self) -> None:
+        """Owner-set labels like 'main-live' share no root with the current
+        tmux name and must be preserved across sync calls."""
+        thread_id = "019dadf7-816a-7542-ac28-a2f9f9fdf1b0"
+        state = BridgeState(
+            sessions={
+                thread_id: SessionRecord(
+                    thread_id=thread_id,
+                    label="main-live",
+                    cwd="/tmp",
+                    source="tmux-live",
+                    created_at="2026-04-23T00:00:00+00:00",
+                    updated_at="2026-04-23T00:00:00+00:00",
+                    tmux_session="codex",
+                )
+            }
+        )
+        with patch.object(
+            self.runner,
+            "list_live_runtime_statuses",
+            return_value=[
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                )
+            ],
+        ):
+            records = self.runner.sync_live_sessions(state)
+        self.assertEqual(records[0].label, "main-live")
+        self.assertEqual(state.sessions[thread_id].label, "main-live")
+
+    def test_sync_live_sessions_preserves_codex_live_when_tmux_is_codex(self) -> None:
+        """Owner-set labels that share the current tmux prefix still must not
+        be collapsed unless the suffix is a bounded stale probe/debug name."""
+        thread_id = "019dadf7-816a-7542-ac28-a2f9f9fdf1b0"
+        state = BridgeState(
+            sessions={
+                thread_id: SessionRecord(
+                    thread_id=thread_id,
+                    label="codex-live",
+                    cwd="/tmp",
+                    source="tmux-live",
+                    created_at="2026-04-23T00:00:00+00:00",
+                    updated_at="2026-04-23T00:00:00+00:00",
+                    tmux_session="codex",
+                )
+            }
+        )
+        with patch.object(
+            self.runner,
+            "list_live_runtime_statuses",
+            return_value=[
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_id,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                )
+            ],
+        ):
+            records = self.runner.sync_live_sessions(state)
+        self.assertEqual(records[0].label, "codex-live")
+        self.assertEqual(state.sessions[thread_id].label, "codex-live")
+
+    def test_resolved_live_label_preserves_tick_tock_custom_label(self) -> None:
+        """Sanity: a label with a different dashed form is treated as
+        user-set and preserved."""
+        record = SessionRecord(
+            thread_id="019dadf7-816a-7542-ac28-a2f9f9fdf1b0",
+            label="tick-tock",
+            cwd="/tmp",
+            source="tmux-live",
+            created_at="2026-04-23T00:00:00+00:00",
+            updated_at="2026-04-23T00:00:00+00:00",
+            tmux_session="codex",
+        )
+        status = LiveRuntimeStatus(
+            tmux_session="codex",
+            exists=True,
+            pane_command="codex",
+            thread_id=record.thread_id,
+            pane_cwd="/tmp",
+            backend="codex",
+        )
+        self.assertEqual(
+            self.runner._resolved_live_label(existing=record, status=status),
+            "tick-tock",
+        )
+
     def test_runtime_status_prefers_latest_thread_with_fresher_rollout(self) -> None:
         stale_thread = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
         fresh_thread = "019d332d-1bc8-7151-a874-ab0fbc493747"
@@ -1585,21 +1989,25 @@ class LiveSessionTests(unittest.TestCase):
             os.utime(stale_rollout, (1000, 1000))
             os.utime(fresh_rollout, (2000, 2000))
             self.runner.session_root = session_root
-            with patch.object(self.runner, "_tmux_exists", return_value=True), \
-                 patch.object(self.runner, "_pane_current_command", return_value="codex"), \
-                 patch.object(self.runner, "_pane_current_path", return_value="/tmp"), \
-                 patch.object(self.runner, "_pane_pid", return_value=None), \
-                 patch.object(
-                     self.runner,
-                     "_capture_clean_text",
-                     return_value=f"old log {stale_thread}",
-                 ), \
-                 patch.object(self.runner, "_get_tmux_runtime_id", return_value=None), \
-                 patch.object(
-                     self.runner,
-                     "find_latest_thread",
-                     return_value=fresh_thread,
-                 ):
+            with (
+                patch.object(self.runner, "_tmux_exists", return_value=True),
+                patch.object(
+                    self.runner, "_pane_current_command", return_value="codex"
+                ),
+                patch.object(self.runner, "_pane_current_path", return_value="/tmp"),
+                patch.object(self.runner, "_pane_pid", return_value=None),
+                patch.object(
+                    self.runner,
+                    "_capture_clean_text",
+                    return_value=f"old log {stale_thread}",
+                ),
+                patch.object(self.runner, "_get_tmux_runtime_id", return_value=None),
+                patch.object(
+                    self.runner,
+                    "find_latest_thread",
+                    return_value=fresh_thread,
+                ),
+            ):
                 status = self.runner._runtime_status_for_tmux("codex")
         self.assertEqual(status.thread_id, fresh_thread)
 
@@ -1842,16 +2250,20 @@ class LiveSessionTests(unittest.TestCase):
                 conn.close()
             self.runner.session_root = session_root
             self.runner.codex_state_db = db_path
-            with patch.object(self.runner, "_tmux_exists", return_value=True), \
-                 patch.object(self.runner, "_pane_current_command", return_value="codex"), \
-                 patch.object(self.runner, "_pane_current_path", return_value="/tmp"), \
-                 patch.object(self.runner, "_pane_pid", return_value=None), \
-                 patch.object(
-                     self.runner,
-                     "_capture_clean_text",
-                     return_value=f"stale pane text {stale_thread}",
-                 ), \
-                 patch.object(self.runner, "_get_tmux_runtime_id", return_value=None):
+            with (
+                patch.object(self.runner, "_tmux_exists", return_value=True),
+                patch.object(
+                    self.runner, "_pane_current_command", return_value="codex"
+                ),
+                patch.object(self.runner, "_pane_current_path", return_value="/tmp"),
+                patch.object(self.runner, "_pane_pid", return_value=None),
+                patch.object(
+                    self.runner,
+                    "_capture_clean_text",
+                    return_value=f"stale pane text {stale_thread}",
+                ),
+                patch.object(self.runner, "_get_tmux_runtime_id", return_value=None),
+            ):
                 status = self.runner._runtime_status_for_tmux("codex")
         self.assertEqual(status.thread_id, root_thread)
 
