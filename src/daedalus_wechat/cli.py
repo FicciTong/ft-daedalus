@@ -338,7 +338,7 @@ def main() -> int:
             + (
                 ",".join(sorted(config.allowed_users))
                 if config.allowed_users
-                else "ALL (no allowlist configured)"
+                else "FAIL_CLOSED (no allowed users configured)"
             )
         )
         print(f"codex_bin={config.codex_bin}")

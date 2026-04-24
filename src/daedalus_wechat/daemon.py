@@ -1450,7 +1450,7 @@ class BridgeDaemon:
         access = (
             f"locked:{len(self.config.allowed_users)}"
             if self.config.allowed_users
-            else "open"
+            else "fail_closed:no_allowed_users"
         )
         wechat_account = getattr(
             getattr(self.wechat, "account", None), "account_id", "unknown"
@@ -1490,7 +1490,7 @@ class BridgeDaemon:
         access = (
             f"locked:{len(self.config.allowed_users)}"
             if self.config.allowed_users
-            else "open"
+            else "fail_closed:no_allowed_users"
         )
         wechat_account = getattr(
             getattr(self.wechat, "account", None), "account_id", "unknown"

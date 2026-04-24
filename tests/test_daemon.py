@@ -564,6 +564,21 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("wechat=test-bot", text)
             self.assertIn("access=locked:1", text)
 
+    def test_health_text_reports_empty_allowlist_as_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(
+                active_session_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                sessions={},
+            )
+            daemon = BridgeDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=state,
+            )
+            text = daemon._health_text()
+            self.assertIn("access=fail_closed:no_allowed_users", text)
+
     def test_status_text_is_mobile_short(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_id = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
