@@ -158,13 +158,23 @@ class _FakeRunner:
         items = []
         for status in self._live_statuses():
             conflict_reason = self.runtime_conflict_reason(status)
+            has_thread = bool(status.thread_id)
+            in_workspace = bool(status.pane_cwd)
             switchable = (
                 status.exists
                 and status.pane_command in {"node", "codex"}
-                and bool(status.thread_id)
-                and bool(status.pane_cwd)
+                and has_thread
+                and in_workspace
                 and conflict_reason is None
             )
+            if conflict_reason is not None:
+                reason = conflict_reason
+            elif not has_thread:
+                reason = "no-thread"
+            elif not in_workspace:
+                reason = "outside-workspace"
+            else:
+                reason = "live"
             items.append(
                 TmuxRuntimeInventoryItem(
                     tmux_session=status.tmux_session,
@@ -172,8 +182,8 @@ class _FakeRunner:
                     thread_id=status.thread_id,
                     pane_cwd=status.pane_cwd,
                     switchable=switchable,
-                    reason=conflict_reason
-                    or ("live" if switchable else "outside-workspace"),
+                    reason=reason,
+                    backend=getattr(status, "backend", "") or "codex",
                 )
             )
         return items
@@ -929,7 +939,50 @@ class DaemonTests(unittest.TestCase):
             text = daemon._handle_command("/sessions")
             self.assertIn("sessions=2", text)
             self.assertIn("excluded=1", text)
-            self.assertIn("x stray-shell | outside-workspace", text)
+            self.assertIn("stray-shell", text)
+            self.assertIn("outside-workspace", text)
+
+    def test_sessions_text_excluded_entry_tags_backend_when_pane_name_differs(
+        self,
+    ) -> None:
+        # A tmux session named after a brand (e.g. `gpt`) running an actual
+        # backend (e.g. codex) must surface that in /sessions excluded output;
+        # otherwise `x gpt | no-thread` is opaque to the owner.
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_a = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            state = BridgeState(active_session_id=thread_a, sessions={})
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_a,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="gpt",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=None,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                ),
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+            text = daemon._handle_command("/sessions")
+            self.assertIn("excluded=1", text)
+            self.assertIn("x gpt (codex) | no-thread", text)
+            # Should NOT double-tag when the tmux session name already equals
+            # the backend identity.
+            self.assertNotIn("(codex) | live", text)
+            self.assertNotIn("codex (codex)", text)
 
     def test_sessions_text_lists_multiple_live_tmux_sessions(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

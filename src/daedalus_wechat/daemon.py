@@ -27,7 +27,12 @@ from .incoming_media import (
     download_incoming_image,
     download_incoming_video,
 )
-from .live_session import OPENCODE_SESSION_PREFIX, PLAN_MARKER, LiveCodexSessionManager
+from .live_session import (
+    OPENCODE_SESSION_PREFIX,
+    PLAN_MARKER,
+    LiveCodexSessionManager,
+    TmuxRuntimeInventoryItem,
+)
 from .room_transcript import (
     append_room_message,
 )
@@ -1407,7 +1412,7 @@ class BridgeDaemon:
                 if excluded:
                     lines.append(f"excluded={len(excluded)}")
                     for item in excluded[:5]:
-                        lines.append(f"x {item.tmux_session} | {item.reason}")
+                        lines.append(self._format_excluded_entry(item))
                 return "\n".join(lines)
             return "sessions=0"
         live_thread_ids = {record.thread_id for record in (live_records or [])}
@@ -1423,8 +1428,21 @@ class BridgeDaemon:
         if excluded:
             lines.append(f"excluded={len(excluded)}")
             for item in excluded[:5]:
-                lines.append(f"x {item.tmux_session} | {item.reason}")
+                lines.append(self._format_excluded_entry(item))
         return "\n".join(lines) + "\nuse=/switch 1"
+
+    @staticmethod
+    def _format_excluded_entry(item: TmuxRuntimeInventoryItem) -> str:
+        name = str(item.tmux_session or "").strip()
+        backend = str(getattr(item, "backend", "") or "").strip()
+        reason = str(item.reason or "").strip()
+        # Mirror the /members convention: append " (backend)" only when the
+        # backend identity differs from the tmux session name. This makes
+        # `x gpt | no-thread` self-explanatory as `x gpt (codex) | no-thread`
+        # so the owner can see what runtime is actually sitting in the pane.
+        if backend and backend != "unknown" and backend != name:
+            return f"x {name} ({backend}) | {reason}"
+        return f"x {name} | {reason}"
 
     def _health_text(self) -> str:
         live_records = self.runner.sync_live_sessions(self.state)
