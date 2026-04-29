@@ -195,8 +195,12 @@ def _apply_voice_corrections(text: str, mapping: dict[str, str]) -> str:
             end = idx + len(needle)
             prev_char = out[idx - 1] if idx > 0 else ""
             next_char = out[end] if end < len(out) else ""
-            prev_is_alnum = bool(prev_char) and prev_char.isascii() and prev_char.isalnum()
-            next_is_alnum = bool(next_char) and next_char.isascii() and next_char.isalnum()
+            prev_is_alnum = (
+                bool(prev_char) and prev_char.isascii() and prev_char.isalnum()
+            )
+            next_is_alnum = (
+                bool(next_char) and next_char.isascii() and next_char.isalnum()
+            )
             if prev_is_alnum or next_is_alnum:
                 start = idx + 1
                 continue
@@ -1616,10 +1620,6 @@ class BridgeDaemon:
                     )
             except Exception as exc:  # noqa: BLE001
                 remaining = chunks[idx:]
-                is_mirror = str(origin or "").strip() in {
-                    "desktop-mirror",
-                    "desktop-direct",
-                }
                 wait_for_rebind_retry = self._is_ambiguous_desktop_mirror_ret_minus_2(
                     kind=kind,
                     origin=origin,
@@ -1628,13 +1628,13 @@ class BridgeDaemon:
                 rebind_retry_group = (
                     self._new_rebind_retry_group() if wait_for_rebind_retry else ""
                 )
+                delivery_group_id = (
+                    self._new_delivery_group_id() if len(remaining) > 1 else ""
+                )
                 with self._lock:
-                    # Record in dedup cache even on failure — the API may have
-                    # delivered despite returning an error (ret=-2).
-                    self._send_dedup_cache[chunk_hash] = now_mono
-                    if self._should_wait_for_bind(exc) and (
-                        not is_mirror or wait_for_rebind_retry
-                    ):
+                    if self._should_wait_for_bind(
+                        exc
+                    ) and self._origin_uses_live_context(origin):
                         self.state.outbox_waiting_for_bind = True
                         self.state.outbox_waiting_for_bind_since = now_iso()
                     for pending_chunk in remaining:
@@ -1655,6 +1655,7 @@ class BridgeDaemon:
                                     if wait_for_rebind_retry
                                     else None
                                 ),
+                                "delivery_group_id": delivery_group_id or None,
                             },
                         )
                     self._save_state()
@@ -3704,6 +3705,10 @@ class BridgeDaemon:
             systemd_notify(
                 f"STATUS=bridge backlog waiting-bind pending={stats['visible_count']}"
             )
+        elif stats["backoff_blocked_count"] > 0 and stats["deliverable_now_count"] <= 0:
+            systemd_notify(
+                f"STATUS=bridge backlog backoff pending={stats['visible_count']}"
+            )
         else:
             systemd_notify(
                 "STATUS="
@@ -3727,6 +3732,7 @@ class BridgeDaemon:
                 "visible_count": stats["visible_count"],
                 "deliverable_now_count": stats["deliverable_now_count"],
                 "blocked_for_rebind_count": stats["blocked_for_rebind_count"],
+                "backoff_blocked_count": stats["backoff_blocked_count"],
                 "oldest_age_s": int(oldest_age_s),
                 "tmux_session": active_tmux_session or "",
             },
@@ -3748,9 +3754,14 @@ class BridgeDaemon:
         if not pending:
             return
         kept: list[dict[str, str]] = []
+        blocked_delivery_groups: set[str] = set()
         for idx, item in enumerate(pending):
             text = item.get("text", "").strip()
             if not text:
+                continue
+            delivery_group_id = self._pending_delivery_group_id(item)
+            if delivery_group_id and delivery_group_id in blocked_delivery_groups:
+                kept.append(item)
                 continue
             kind = str(item.get("kind", "message"))
             origin = str(item.get("origin", "bridge"))
@@ -3879,8 +3890,9 @@ class BridgeDaemon:
                 item["last_attempt_at"] = now_iso()
                 item["attempt_count"] = int(item.get("attempt_count", 1) or 1) + 1
                 item["last_error"] = str(exc)
+                if delivery_group_id:
+                    blocked_delivery_groups.add(delivery_group_id)
                 kept.append(item)
-                kept.extend(pending[idx + 1 :])
                 with self._lock:
                     if self._should_wait_for_bind(exc) and (
                         self._origin_uses_live_context(origin)
@@ -3905,7 +3917,7 @@ class BridgeDaemon:
                         tmux_session=self._tmux_for_thread(thread_id) or tmux_session,
                         error=str(exc),
                     )
-                break
+                continue
         with self._lock:
             self.state.pending_outbox = kept + self.state.pending_outbox
             self._save_state()
@@ -3921,9 +3933,14 @@ class BridgeDaemon:
         if not pending:
             return
         kept: list[dict[str, str]] = []
+        blocked_delivery_groups: set[str] = set()
         for idx, item in enumerate(pending):
             text = item.get("text", "").strip()
             if not text:
+                continue
+            delivery_group_id = self._pending_delivery_group_id(item)
+            if delivery_group_id and delivery_group_id in blocked_delivery_groups:
+                kept.append(item)
                 continue
             kind = str(item.get("kind", "message"))
             origin = str(item.get("origin", "bridge"))
@@ -4053,8 +4070,9 @@ class BridgeDaemon:
                 item["last_attempt_at"] = now_iso()
                 item["attempt_count"] = int(item.get("attempt_count", 1) or 1) + 1
                 item["last_error"] = str(exc)
+                if delivery_group_id:
+                    blocked_delivery_groups.add(delivery_group_id)
                 kept.append(item)
-                kept.extend(pending[idx + 1 :])
                 with self._lock:
                     if self._should_wait_for_bind(exc) and (
                         self._origin_uses_live_context(origin)
@@ -4079,7 +4097,7 @@ class BridgeDaemon:
                         tmux_session=resolved_tmux_session,
                         error=str(exc),
                     )
-                break
+                continue
         with self._lock:
             self.state.pending_outbox = kept + self.state.pending_outbox
             self._save_state()
@@ -4228,6 +4246,13 @@ class BridgeDaemon:
     def _new_rebind_retry_group(self) -> str:
         return f"rebind-{time.monotonic_ns()}"
 
+    def _new_delivery_group_id(self) -> str:
+        return f"delivery-{time.monotonic_ns()}"
+
+    @staticmethod
+    def _pending_delivery_group_id(item: dict[str, str]) -> str:
+        return str(item.get("delivery_group_id", "")).strip()
+
     @staticmethod
     def _mark_pending_item_for_rebind_retry(
         item: dict[str, str],
@@ -4243,8 +4268,7 @@ class BridgeDaemon:
         item.pop("rebind_retry_group", None)
 
     def _origin_uses_live_context(self, origin: str) -> bool:
-        normalized = str(origin or "").strip()
-        return normalized not in {"desktop-mirror", "desktop-direct"}
+        return True
 
     def _pending_item_requires_rebind_pause(
         self,
@@ -4252,19 +4276,10 @@ class BridgeDaemon:
         *,
         origin: str,
     ) -> bool:
-        # Live-context origins (inbound replies, room routing, etc.) still
-        # truly need a fresh context_token from a re-bind before another
-        # attempt makes sense.
-        if self._origin_uses_live_context(origin):
-            return True
-        # Desktop-mirror / desktop-direct traffic is tokenless by design:
-        # `_effective_send_context` returns None for these origins, and
-        # `WeChatClient.send_text` now omits the `context_token` field when
-        # None (previously it sent `null`, which WeChat rejected with ret=-2).
-        # So a prior ret=-2 on a desktop-* item no longer implies "token dead,
-        # must wait for owner inbound" — retry with exponential backoff is the
-        # correct behavior, not indefinite pause.
-        return False
+        # All sendmessage paths now use the latest bound inbound context token.
+        # If that token is missing or stale, waiting for the next inbound
+        # message is the only known way to get a fresh send context.
+        return self._origin_uses_live_context(origin)
 
     # Per-item retry backoff (seconds). Index = attempt_count - 1; extra
     # attempts saturate at the last entry. Chosen to drain quickly on
@@ -4324,13 +4339,9 @@ class BridgeDaemon:
     ) -> str | None:
         if not use_context_token:
             return None
-        # Desktop mirror traffic must stay context-free. Older bound contexts can
-        # be accepted by the API while still failing to surface the delayed live
-        # reply in the owner's visible chat lane.
-        if str(origin or "").strip() == "desktop-mirror":
-            return None
-        # Other live/inbound-originated replies still prefer the latest bound
-        # context and rely on the client-side ret=-2 fallback when needed.
+        # iLink sendmessage is context-token based; use the latest bound
+        # inbound token for both immediate replies and delayed desktop mirror
+        # pushes. A missing or stale token fails into pending/backoff.
         return context_token
 
     def _scope_pending_delivery_stats(
@@ -4341,37 +4352,36 @@ class BridgeDaemon:
                 "visible_count": 0,
                 "deliverable_now_count": 0,
                 "blocked_for_rebind_count": 0,
+                "backoff_blocked_count": 0,
                 "stale_auto_flush_blocked_count": 0,
             }
         visible_items = [
             item for item in self.state.pending_outbox if item.get("to") == to_user_id
         ]
         blocked_for_rebind_count = 0
-        if self.state.outbox_waiting_for_bind:
-            blocked_for_rebind_count = sum(
-                1
-                for item in visible_items
-                if self._pending_item_requires_rebind_pause(
-                    item,
-                    origin=str(item.get("origin", "bridge")),
-                )
-            )
-        # Stale items bypass wait_for_bind, so they are deliverable even
-        # when the bind flag is set.
-        stale_bypass_count = sum(
-            1
-            for item in visible_items
-            if self._is_stale_pending_for_auto_flush(item)
-            and self._origin_uses_live_context(str(item.get("origin", "bridge")))
-        )
-        effective_blocked = max(blocked_for_rebind_count - stale_bypass_count, 0)
+        backoff_blocked_count = 0
+        stale_bypass_count = 0
+        deliverable_now_count = 0
+        for item in visible_items:
+            origin = str(item.get("origin", "bridge"))
+            if self._pending_item_is_within_backoff(item):
+                backoff_blocked_count += 1
+                continue
+            if (
+                self.state.outbox_waiting_for_bind
+                and self._pending_item_requires_rebind_pause(item, origin=origin)
+            ):
+                if self._is_stale_pending_for_auto_flush(item):
+                    stale_bypass_count += 1
+                else:
+                    blocked_for_rebind_count += 1
+                    continue
+            deliverable_now_count += 1
         return {
             "visible_count": len(visible_items),
-            "deliverable_now_count": max(
-                len(visible_items) - effective_blocked,
-                0,
-            ),
-            "blocked_for_rebind_count": effective_blocked,
+            "deliverable_now_count": deliverable_now_count,
+            "blocked_for_rebind_count": blocked_for_rebind_count,
+            "backoff_blocked_count": backoff_blocked_count,
             "stale_bypass_count": stale_bypass_count,
         }
 
@@ -4411,8 +4421,28 @@ class BridgeDaemon:
                 self.state.delivery_seq = external.delivery_seq
             if not self.state.bound_user_id and external.bound_user_id:
                 self.state.bound_user_id = external.bound_user_id
-            if not self.state.bound_context_token and external.bound_context_token:
-                self.state.bound_context_token = external.bound_context_token
+            external_bound_user_id = str(external.bound_user_id or "").strip()
+            state_bound_user_id = str(self.state.bound_user_id or "").strip()
+            external_context_token = str(external.bound_context_token or "").strip()
+            same_binding_user = bool(external_bound_user_id) and (
+                external_bound_user_id == state_bound_user_id
+            )
+            refreshed_binding = False
+            if external_context_token and (
+                not self.state.bound_context_token
+                or (
+                    same_binding_user
+                    and external_context_token != self.state.bound_context_token
+                )
+            ):
+                self.state.bound_context_token = external_context_token
+                if same_binding_user:
+                    refreshed_binding = True
+                    self.state.outbox_waiting_for_bind = False
+                    self.state.outbox_waiting_for_bind_since = ""
+                    for item in self.state.pending_outbox:
+                        if item.get("to") == external_bound_user_id:
+                            item.pop("last_attempt_at", None)
             if not self.state.active_session_id and external.active_session_id:
                 self.state.active_session_id = external.active_session_id
             if not self.state.active_tmux_session and external.active_tmux_session:
@@ -4422,6 +4452,7 @@ class BridgeDaemon:
             if (
                 external.outbox_waiting_for_bind
                 and not self.state.outbox_waiting_for_bind
+                and not refreshed_binding
             ):
                 self.state.outbox_waiting_for_bind = True
                 self.state.outbox_waiting_for_bind_since = (
@@ -4464,6 +4495,10 @@ class BridgeDaemon:
                 cur_created = str(current.get("created_at", "")).strip()
                 if ext_created and (not cur_created or ext_created < cur_created):
                     current["created_at"] = ext_created
+            if refreshed_binding:
+                for item in self.state.pending_outbox:
+                    if item.get("to") == external_bound_user_id:
+                        item.pop("last_attempt_at", None)
             self._last_external_state_mtime_ns = mtime_ns
 
     def _save_state(self) -> None:
@@ -4524,6 +4559,7 @@ class BridgeDaemon:
         active_visible_count = 0
         waiting_count = 0
         blocked_for_rebind_count = 0
+        backoff_blocked_count = 0
         stale_auto_flush_blocked_count = 0
         for item in items:
             kind = str(item.get("kind", "message"))
@@ -4540,6 +4576,8 @@ class BridgeDaemon:
             tmux_threads.setdefault(item_tmux, set()).add(thread_id)
             if not item_tmux or item_tmux == "unscoped" or item_tmux == active_tmux:
                 active_visible_count += 1
+                if self._pending_item_is_within_backoff(item):
+                    backoff_blocked_count += 1
                 if (
                     self.state.outbox_waiting_for_bind
                     and self._origin_uses_live_context(
@@ -4574,10 +4612,14 @@ class BridgeDaemon:
             )
         if self.state.outbox_waiting_for_bind:
             lines.append("wait=next-wechat-message")
-        deliverable_now_count = active_visible_count - blocked_for_rebind_count
+        deliverable_now_count = (
+            active_visible_count - blocked_for_rebind_count - backoff_blocked_count
+        )
         lines.append(f"deliverable_now={max(deliverable_now_count, 0)}")
         if blocked_for_rebind_count:
             lines.append(f"blocked_for_rebind={blocked_for_rebind_count}")
+        if backoff_blocked_count:
+            lines.append(f"backoff_blocked={backoff_blocked_count}")
         if stale_auto_flush_blocked_count:
             lines.append(f"stale_auto_flush_blocked={stale_auto_flush_blocked_count}")
         if self.state.active_tmux_session:

@@ -20,8 +20,8 @@ class BridgeConfig:
     opencode_state_db: Path = field(default_factory=lambda: default_opencode_state_db())
     opencode_state_db_source: str = "default_resolved"
     poll_timeout_ms: int = 35_000
-    text_chunk_limit: int = 3500
-    min_send_interval_seconds: float = 0.5
+    text_chunk_limit: int = 1800
+    min_send_interval_seconds: float = 1.5
     outbox_retry_interval_seconds: float = 1.0
 
     @property
@@ -43,6 +43,7 @@ class BridgeConfig:
     @property
     def room_transcript_file(self) -> Path:
         return self.state_dir / "room_transcript.jsonl"
+
 
 def _parse_allowed_users(raw: str) -> frozenset[str]:
     entries = []
@@ -87,6 +88,15 @@ def _parse_float(raw: str | None, *, default: float) -> float:
         return default
 
 
+def _parse_int(raw: str | None, *, default: int) -> int:
+    if raw is None:
+        return default
+    try:
+        return int(raw.strip())
+    except ValueError:
+        return default
+
+
 def _default_workspace_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
@@ -97,9 +107,7 @@ def default_codex_state_db() -> Path:
     if canonical.exists():
         return canonical
 
-    candidates = sorted(
-        p for p in codex_root.glob("state*.sqlite") if p.is_file()
-    )
+    candidates = sorted(p for p in codex_root.glob("state*.sqlite") if p.is_file())
     if candidates:
         return max(candidates, key=lambda p: (p.stat().st_mtime, p.name))
 
@@ -112,9 +120,7 @@ def default_opencode_state_db() -> Path:
 
 def load_config() -> BridgeConfig:
     env_file = Path(
-        os.environ.get(
-            "DAEDALUS_WECHAT_ENV_FILE", "~/.config/daedalus-wechat.env"
-        )
+        os.environ.get("DAEDALUS_WECHAT_ENV_FILE", "~/.config/daedalus-wechat.env")
     ).expanduser()
     file_env = _load_env_file(env_file)
     default_cwd = Path(
@@ -127,9 +133,7 @@ def load_config() -> BridgeConfig:
         )
     ).expanduser()
     state_dir = Path(
-        os.environ.get(
-            "DAEDALUS_WECHAT_STATE_DIR", "~/.local/state/daedalus-wechat"
-        )
+        os.environ.get("DAEDALUS_WECHAT_STATE_DIR", "~/.local/state/daedalus-wechat")
     ).expanduser()
     account_file = Path(
         os.environ.get("DAEDALUS_WECHAT_ACCOUNT_FILE", str(state_dir / "account.json"))
@@ -186,12 +190,19 @@ def load_config() -> BridgeConfig:
         ),
         default=False,
     )
+    text_chunk_limit = _parse_int(
+        os.environ.get(
+            "DAEDALUS_WECHAT_TEXT_CHUNK_LIMIT",
+            file_env.get("DAEDALUS_WECHAT_TEXT_CHUNK_LIMIT"),
+        ),
+        default=1800,
+    )
     min_send_interval_seconds = _parse_float(
         os.environ.get(
             "DAEDALUS_WECHAT_MIN_SEND_INTERVAL_SECONDS",
             file_env.get("DAEDALUS_WECHAT_MIN_SEND_INTERVAL_SECONDS"),
         ),
-        default=0.5,
+        default=1.5,
     )
     outbox_retry_interval_seconds = _parse_float(
         os.environ.get(
@@ -213,6 +224,7 @@ def load_config() -> BridgeConfig:
         canonical_tmux_session=canonical_tmux_session,
         allowed_users=allowed_users,
         progress_updates_default=progress_updates_default,
+        text_chunk_limit=max(1, text_chunk_limit),
         min_send_interval_seconds=min_send_interval_seconds,
         outbox_retry_interval_seconds=outbox_retry_interval_seconds,
     )

@@ -15,7 +15,7 @@ from daedalus_wechat.wechat_api import (
 )
 
 
-class _RetryClient(WeChatClient):
+class _RetMinus2Client(WeChatClient):
     def __init__(self) -> None:
         super().__init__(
             WeChatAccount(
@@ -42,39 +42,30 @@ class WeChatApiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "account.json"
             path.write_text(
-                '{\n'
+                "{\n"
                 '  "token": "tok",\n'
                 '  "baseUrl": "https://ilinkai.weixin.qq.com",\n'
                 '  "accountId": "bot",\n'
                 '  "userId": "u@im.wechat"\n'
-                '}\n',
+                "}\n",
                 encoding="utf-8",
             )
             account = WeChatAccount.load(path)
             self.assertEqual(account.cdn_base_url, DEFAULT_CDN_BASE_URL)
 
-    def test_send_text_retries_without_context_token_on_ret_minus_2(self) -> None:
-        client = _RetryClient()
-        response = client.send_text(
-            to_user_id="user@im.wechat",
-            context_token="ctx-1",
-            text="HELLO",
-        )
-        self.assertEqual(response["ret"], 0)
-        self.assertEqual(len(client.payloads), 2)
+    def test_send_text_does_not_retry_tokenless_on_ret_minus_2(self) -> None:
+        client = _RetMinus2Client()
+        with self.assertRaisesRegex(RuntimeError, "ret=-2"):
+            client.send_text(
+                to_user_id="user@im.wechat",
+                context_token="ctx-1",
+                text="HELLO",
+            )
+        self.assertEqual(len(client.payloads), 1)
         self.assertEqual(client.payloads[0]["msg"]["context_token"], "ctx-1")
-        self.assertNotIn("context_token", client.payloads[1]["msg"])
-        self.assertNotEqual(
-            client.payloads[0]["msg"]["client_id"],
-            client.payloads[1]["msg"]["client_id"],
-        )
+        self.assertIn("channel_version", client.payloads[0]["base_info"])
 
     def test_send_text_omits_context_token_when_none(self) -> None:
-        """Desktop-mirror traffic passes context_token=None. The first request
-        must omit the field entirely instead of sending `null`, which WeChat
-        treats as an invalid token (ret=-2) and would otherwise leave the
-        pending outbox permanently stuck."""
-
         class _OkClient(WeChatClient):
             def __init__(self) -> None:
                 super().__init__(
@@ -88,7 +79,9 @@ class WeChatApiTests(unittest.TestCase):
                 )
                 self.payloads: list[dict] = []
 
-            def _post(self, endpoint: str, payload: dict, timeout: float = 40.0) -> dict:
+            def _post(
+                self, endpoint: str, payload: dict, timeout: float = 40.0
+            ) -> dict:
                 self.payloads.append(payload)
                 return {"ret": 0}
 
@@ -101,6 +94,7 @@ class WeChatApiTests(unittest.TestCase):
         self.assertEqual(response["ret"], 0)
         self.assertEqual(len(client.payloads), 1)
         self.assertNotIn("context_token", client.payloads[0]["msg"])
+        self.assertIn("channel_version", client.payloads[0]["base_info"])
 
     def test_send_text_omits_context_token_when_empty_string(self) -> None:
         class _OkClient(WeChatClient):
@@ -116,7 +110,9 @@ class WeChatApiTests(unittest.TestCase):
                 )
                 self.payloads: list[dict] = []
 
-            def _post(self, endpoint: str, payload: dict, timeout: float = 40.0) -> dict:
+            def _post(
+                self, endpoint: str, payload: dict, timeout: float = 40.0
+            ) -> dict:
                 self.payloads.append(payload)
                 return {"ret": 0}
 
@@ -162,8 +158,8 @@ class OutboundMediaTests(unittest.TestCase):
         # tests don't depend on the host's openssl being installed.
         self._aes_patch = patch(
             "daedalus_wechat.wechat_api._aes_128_ecb_encrypt",
-            side_effect=lambda raw, *, key_bytes: raw + b"\x00" * (
-                16 - (len(raw) % 16 or 16)
+            side_effect=lambda raw, *, key_bytes: (
+                raw + b"\x00" * (16 - (len(raw) % 16 or 16))
             ),
         )
         self._aes_patch.start()
@@ -226,12 +222,15 @@ class OutboundMediaTests(unittest.TestCase):
             video_path = Path(tmpdir) / "clip.mp4"
             video_path.write_bytes(b"FAKE-VIDEO-BYTES" * 10)
             client = _MediaCapturingClient()
-            with patch(
-                "daedalus_wechat.wechat_api._probe_video_duration_ms",
-                return_value=18320,
-            ), patch(
-                "daedalus_wechat.wechat_api._probe_video_thumb_jpeg",
-                return_value=b"\xff\xd8\xffTHUMB",
+            with (
+                patch(
+                    "daedalus_wechat.wechat_api._probe_video_duration_ms",
+                    return_value=18320,
+                ),
+                patch(
+                    "daedalus_wechat.wechat_api._probe_video_thumb_jpeg",
+                    return_value=b"\xff\xd8\xffTHUMB",
+                ),
             ):
                 client.send_video(
                     to_user_id="user@im.wechat",
@@ -242,7 +241,11 @@ class OutboundMediaTests(unittest.TestCase):
         endpoints = [ep for ep, _ in client.posts]
         self.assertEqual(
             endpoints,
-            ["ilink/bot/getuploadurl", "ilink/bot/getuploadurl", "ilink/bot/sendmessage"],
+            [
+                "ilink/bot/getuploadurl",
+                "ilink/bot/getuploadurl",
+                "ilink/bot/sendmessage",
+            ],
         )
         self.assertEqual(client.posts[0][1]["media_type"], MEDIA_TYPE_VIDEO)
         self.assertFalse(client.posts[0][1]["no_need_thumb"])
@@ -254,13 +257,15 @@ class OutboundMediaTests(unittest.TestCase):
         self.assertIn("thumb_media", video_item)
         self.assertEqual(video_item["thumb_media"]["encrypt_type"], 1)
 
-    def test_send_file_retries_without_context_token_on_ret_minus_2(self) -> None:
-        class _RetryMediaClient(_MediaCapturingClient):
+    def test_send_file_does_not_retry_tokenless_on_ret_minus_2(self) -> None:
+        class _RetMinus2MediaClient(_MediaCapturingClient):
             def __init__(self) -> None:
                 super().__init__()
                 self._send_calls = 0
 
-            def _post(self, endpoint: str, payload: dict, timeout: float = 40.0) -> dict:
+            def _post(
+                self, endpoint: str, payload: dict, timeout: float = 40.0
+            ) -> dict:
                 self.posts.append((endpoint, payload))
                 if endpoint == "ilink/bot/getuploadurl":
                     return {"upload_param": f"UP_{len(self.posts)}"}
@@ -272,19 +277,20 @@ class OutboundMediaTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "doc.txt"
             path.write_bytes(b"hello")
-            client = _RetryMediaClient()
-            client.send_file(
-                to_user_id="user@im.wechat",
-                context_token="ctx-1",
-                file_path=path,
-            )
-        # Expect getuploadurl + sendmessage(fail) + sendmessage(retry without token)
+            client = _RetMinus2MediaClient()
+            with self.assertRaisesRegex(RuntimeError, "ret=-2"):
+                client.send_file(
+                    to_user_id="user@im.wechat",
+                    context_token="ctx-1",
+                    file_path=path,
+                )
+        # Expect getuploadurl + one sendmessage failure; daemon outbox owns retry.
         endpoints = [ep for ep, _ in client.posts]
         self.assertEqual(endpoints[0], "ilink/bot/getuploadurl")
         self.assertEqual(endpoints[1], "ilink/bot/sendmessage")
-        self.assertEqual(endpoints[2], "ilink/bot/sendmessage")
+        self.assertEqual(len(endpoints), 2)
         self.assertEqual(client.posts[1][1]["msg"].get("context_token"), "ctx-1")
-        self.assertNotIn("context_token", client.posts[2][1]["msg"])
+        self.assertIn("channel_version", client.posts[1][1]["base_info"])
 
 
 if __name__ == "__main__":

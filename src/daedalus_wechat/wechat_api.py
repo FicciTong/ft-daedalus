@@ -9,6 +9,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -22,6 +23,30 @@ MEDIA_TYPE_IMAGE = 1
 MEDIA_TYPE_VIDEO = 2
 MEDIA_TYPE_FILE = 3
 MEDIA_TYPE_VOICE = 4
+
+
+def _channel_version() -> str:
+    try:
+        return version("daedalus-wechat")
+    except PackageNotFoundError:
+        return "0.1.0"
+
+
+CHANNEL_VERSION = _channel_version()
+
+
+def _base_info() -> dict[str, str]:
+    return {"channel_version": CHANNEL_VERSION}
+
+
+def _with_base_info(payload: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(payload)
+    base_info = dict(enriched.get("base_info") or {})
+    base_info["channel_version"] = str(
+        base_info.get("channel_version") or CHANNEL_VERSION
+    )
+    enriched["base_info"] = base_info
+    return enriched
 
 
 def _random_wechat_uin() -> str:
@@ -84,8 +109,10 @@ class WeChatClient:
         self._send_lock = threading.Lock()
         self._last_send_at = 0.0
 
-    def _post(self, endpoint: str, payload: dict[str, Any], timeout: float = 40.0) -> dict[str, Any]:
-        body = json.dumps(payload).encode()
+    def _post(
+        self, endpoint: str, payload: dict[str, Any], timeout: float = 40.0
+    ) -> dict[str, Any]:
+        body = json.dumps(_with_base_info(payload)).encode()
         req = Request(
             urljoin(self.account.base_url.rstrip("/") + "/", endpoint),
             data=body,
@@ -109,12 +136,13 @@ class WeChatClient:
     def get_updates(self, get_updates_buf: str) -> dict[str, Any]:
         return self._post(
             "ilink/bot/getupdates",
-            {"get_updates_buf": get_updates_buf, "base_info": {}},
+            {"get_updates_buf": get_updates_buf, "base_info": _base_info()},
             timeout=40.0,
         )
 
-
-    def send_text(self, *, to_user_id: str, context_token: str | None, text: str) -> dict[str, Any]:
+    def send_text(
+        self, *, to_user_id: str, context_token: str | None, text: str
+    ) -> dict[str, Any]:
         with self._send_lock:
             now = time.monotonic()
             remaining = self.min_send_interval_seconds - (now - self._last_send_at)
@@ -130,35 +158,17 @@ class WeChatClient:
                 "message_state": 2,
                 "item_list": [{"type": 1, "text_item": {"text": text}}],
             }
-            # Only include context_token when truthy. The official WeChat
-            # server treats `"context_token": null` as an invalid token and
-            # returns `ret=-2`, which would otherwise leave desktop-mirror
-            # traffic (which deliberately sends tokenless) permanently stuck
-            # in the bridge's pending_outbox.
             if context_token:
                 msg["context_token"] = context_token
-            payload = {"msg": msg, "base_info": {}}
+            payload = {"msg": msg, "base_info": _base_info()}
             response = self._post("ilink/bot/sendmessage", payload, timeout=20.0)
             errcode = response.get("errcode")
             ret = response.get("ret")
             if errcode in (None, 0) and ret in (None, 0):
                 return response
-            # Official WeChat chat contexts can expire even when the user/chat
-            # binding is still valid. Retry once without the context token so
-            # delivery can continue instead of forcing a manual rebind.
-            if ret == -2 and context_token:
-                retry_msg = {k: v for k, v in msg.items() if k != "context_token"}
-                retry_msg["client_id"] = _generate_client_id()
-                retry_payload = {"msg": retry_msg, "base_info": {}}
-                response = self._post("ilink/bot/sendmessage", retry_payload, timeout=20.0)
-                errcode = response.get("errcode")
-                ret = response.get("ret")
-                if errcode in (None, 0) and ret in (None, 0):
-                    return response
             raise RuntimeError(
                 f"WeChat send failed: ret={ret} errcode={errcode} errmsg={response.get('errmsg')}"
             )
-
 
     # ------------------------------------------------------------------
     # Outbound media (image / file / video) — iLink bot protocol
@@ -313,25 +323,13 @@ class WeChatClient:
             msg["context_token"] = context_token
         response = self._post(
             "ilink/bot/sendmessage",
-            {"msg": msg, "base_info": {}},
+            {"msg": msg, "base_info": _base_info()},
             timeout=30.0,
         )
         errcode = response.get("errcode")
         ret = response.get("ret")
         if errcode in (None, 0) and ret in (None, 0):
             return response
-        if ret == -2 and context_token:
-            retry_msg = {k: v for k, v in msg.items() if k != "context_token"}
-            retry_msg["client_id"] = _generate_client_id()
-            response = self._post(
-                "ilink/bot/sendmessage",
-                {"msg": retry_msg, "base_info": {}},
-                timeout=30.0,
-            )
-            errcode = response.get("errcode")
-            ret = response.get("ret")
-            if errcode in (None, 0) and ret in (None, 0):
-                return response
         raise RuntimeError(
             f"WeChat media send failed: ret={ret} errcode={errcode} "
             f"errmsg={response.get('errmsg')}"
@@ -365,7 +363,7 @@ class WeChatClient:
             "filesize": encrypted_size,
             "no_need_thumb": bool(no_need_thumb),
             "aeskey": aes_key_hex,
-            "base_info": {"channel_version": "1.0.0"},
+            "base_info": _base_info(),
         }
         upload_resp = self._post(
             "ilink/bot/getuploadurl",

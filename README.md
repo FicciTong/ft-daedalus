@@ -272,14 +272,15 @@ The bridge now has four built-in reliability layers:
    - long-poll failures are logged as `poll_error` and retried in-process
    - the service still runs under `systemd` with `Restart=always`, but we no
      longer use a watchdog that can misread healthy long-polls as hangs
-2. **stale context retry**
-   - if WeChat rejects a send with `ret=-2`, the bridge retries once without
-     `context_token`
+2. **context-bound outbound protocol**
+   - `sendmessage` requests include `base_info.channel_version`
+   - outbound text/media uses the latest bound inbound `context_token` instead
+     of deliberately sending tokenless desktop mirror traffic
+   - `ret=-2` is treated as an application-layer rejection, not a plain network
+     retry signal
 3. **bound-context-first mirroring**
    - mirrored desktop `progress / plan / final` now prefer the latest bound
      inbound `context_token` first
-   - the WeChat client still falls back through its retry logic when the token
-     has gone stale
    - immediate command replies (for example `/status`) still use the live
      inbound context when available
 4. **runtime-native final capture + pending outbox**
@@ -312,10 +313,11 @@ The bridge now has four built-in reliability layers:
 You can also pace outbound delivery more conservatively with:
 
 ```bash
-DAEDALUS_WECHAT_MIN_SEND_INTERVAL_SECONDS=0.5
+DAEDALUS_WECHAT_MIN_SEND_INTERVAL_SECONDS=1.5
+DAEDALUS_WECHAT_TEXT_CHUNK_LIMIT=1800
 ```
 
-That value defaults to `0.5` seconds and applies to all WeChat sends.
+Those values default to `1.5` seconds and `1800` Unicode characters.
 
 Last-resort operator recovery is still:
 
