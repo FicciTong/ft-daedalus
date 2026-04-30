@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+PENDING_OUTBOX_KEEP_LAST = 3
+
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
@@ -112,7 +114,7 @@ class BridgeState:
                     else None
                 ),
             )
-        return cls(
+        state = cls(
             active_session_id=raw.get("active_session_id"),
             active_tmux_session=raw.get("active_tmux_session"),
             room_mode_enabled=bool(raw.get("room_mode_enabled", False)),
@@ -183,6 +185,8 @@ class BridgeState:
             ],
             sessions=sessions,
         )
+        state.trim_pending_for_all_users()
+        return state
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -261,7 +265,9 @@ class BridgeState:
             updated_at=str(created_at or now_iso()),
             image_paths=[str(path) for path in image_paths if str(path).strip()],
             file_paths=[str(path) for path in (file_paths or []) if str(path).strip()],
-            video_paths=[str(path) for path in (video_paths or []) if str(path).strip()],
+            video_paths=[
+                str(path) for path in (video_paths or []) if str(path).strip()
+            ],
         )
         self.pending_media_batches = [
             batch
@@ -353,7 +359,7 @@ class BridgeState:
             str(resolved_tmux_session or ""),
         )
         now = now_iso()
-        for item in self.pending_outbox:
+        for index, item in enumerate(self.pending_outbox):
             item_key = (
                 str(item.get("to", "")),
                 str(item.get("text", "")).strip(),
@@ -376,6 +382,9 @@ class BridgeState:
                     item.pop(key_text, None)
                     continue
                 item[key_text] = str(value)
+            self.pending_outbox.pop(index)
+            self.pending_outbox.append(item)
+            self.trim_pending_for_user(to_user_id=to_user_id)
             return
         item = {
             "to": str(to_user_id),
@@ -395,16 +404,7 @@ class BridgeState:
                 continue
             item[key_text] = str(value)
         self.pending_outbox.append(item)
-        # Last-resort cap to bound memory; never a routine drop path. Under the
-        # owner's "no message loss" policy, this only fires if the queue is
-        # pathologically large (owner offline for days with heavy mirror
-        # output). Drops are counted in pending_outbox_overflow_dropped so they
-        # surface in /queue and systemd STATUS.
-        max_items = 10000
-        overflow = len(self.pending_outbox) - max_items
-        if overflow > 0:
-            self.pending_outbox_overflow_dropped += overflow
-            self.pending_outbox = self.pending_outbox[-max_items:]
+        self.trim_pending_for_user(to_user_id=to_user_id)
 
     def has_pending_for_scope(
         self, *, to_user_id: str, tmux_session: str | None
@@ -451,6 +451,55 @@ class BridgeState:
                 kept.append(item)
         self.pending_outbox = kept
         return matched
+
+    def trim_pending_for_user(
+        self, *, to_user_id: str, keep_last: int = PENDING_OUTBOX_KEEP_LAST
+    ) -> tuple[int, int]:
+        if keep_last < 0:
+            keep_last = 0
+        target_user = str(to_user_id or "").strip()
+        if not target_user:
+            return (0, 0)
+        target_indexes = [
+            index
+            for index, item in enumerate(self.pending_outbox)
+            if str(item.get("to", "")).strip() == target_user
+        ]
+        if not target_indexes:
+            return (0, 0)
+        retained_indexes = set(target_indexes[-keep_last:] if keep_last else [])
+        dropped = max(0, len(target_indexes) - len(retained_indexes))
+        if dropped <= 0:
+            return (0, len(target_indexes))
+        self.pending_outbox_overflow_dropped += dropped
+        self.pending_outbox = [
+            item
+            for index, item in enumerate(self.pending_outbox)
+            if index not in target_indexes or index in retained_indexes
+        ]
+        return (dropped, len(retained_indexes))
+
+    def trim_pending_for_all_users(
+        self, *, keep_last: int = PENDING_OUTBOX_KEEP_LAST
+    ) -> tuple[int, int]:
+        users: list[str] = []
+        seen: set[str] = set()
+        for item in self.pending_outbox:
+            user = str(item.get("to", "")).strip()
+            if not user or user in seen:
+                continue
+            seen.add(user)
+            users.append(user)
+        total_dropped = 0
+        total_retained = 0
+        for user in users:
+            dropped, retained = self.trim_pending_for_user(
+                to_user_id=user,
+                keep_last=keep_last,
+            )
+            total_dropped += dropped
+            total_retained += retained
+        return (total_dropped, total_retained)
 
     def trim_pending_for_scope(
         self, *, to_user_id: str, tmux_session: str | None, keep_last: int

@@ -4432,7 +4432,7 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("head_waiting=CODEX ONLY", text)
             self.assertNotIn("head=CODEX ONLY", text)
 
-    def test_catchup_trims_visible_scope_only(self) -> None:
+    def test_catchup_trims_bound_user_backlog(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             daemon = _TestDaemon(
                 config=self._make_config(Path(tmpdir), frozenset()),
@@ -4485,14 +4485,14 @@ class DaemonTests(unittest.TestCase):
             text = daemon._catchup_text("1")
             self.assertIn("catchup=ok", text)
             self.assertIn("scope=daedalus", text)
-            self.assertIn("dropped=2", text)
+            self.assertIn("dropped=3", text)
             self.assertIn("kept=1", text)
             self.assertEqual(
                 [item["text"] for item in daemon.state.pending_outbox],
-                ["OTHER SESSION", "KEEP ME"],
+                ["OTHER SESSION"],
             )
 
-    def test_catchup_reports_empty_when_no_visible_scope_backlog(self) -> None:
+    def test_catchup_reports_bound_user_backlog_across_scopes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             daemon = _TestDaemon(
                 config=self._make_config(Path(tmpdir), frozenset()),
@@ -4516,8 +4516,9 @@ class DaemonTests(unittest.TestCase):
             )
             daemon.state.active_tmux_session = "daedalus"
             text = daemon._catchup_text("")
-            self.assertIn("catchup=empty", text)
+            self.assertIn("catchup=ok", text)
             self.assertIn("scope=daedalus", text)
+            self.assertIn("backlog_kept=1", text)
 
     def test_duplicate_pending_message_is_not_appended_twice(self) -> None:
         state = BridgeState()
@@ -4695,11 +4696,8 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(fake_wechat.sent, [])
             self.assertEqual(len(state.pending_outbox), 1)
 
-    def test_prune_stale_desktop_mirror_backlog_never_drops_finals(self) -> None:
-        """Owner policy: pending desktop-mirror items are never dropped by
-        age, regardless of ret=-2 history, awaiting_rebind_retry flag, or
-        inactive-thread status. _prune_stale_desktop_mirror_backlog is now
-        a no-op."""
+    def test_prune_stale_desktop_mirror_backlog_does_not_age_drop(self) -> None:
+        """Age/thread pruning is not the drop path; the queue cap handles backlog."""
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
                 active_session_id="thread-active",
@@ -4744,7 +4742,6 @@ class DaemonTests(unittest.TestCase):
             daemon._prune_stale_desktop_mirror_backlog()
 
             self.assertEqual(fake_wechat.sent, [])
-            # Both items survive — no more age-based drop for any reason.
             self.assertEqual(len(state.pending_outbox), 2)
 
     def test_ambiguous_desktop_mirror_final_retries_after_bind_and_flushes(
@@ -4798,11 +4795,8 @@ class DaemonTests(unittest.TestCase):
             )
             self.assertEqual(state.pending_outbox, [])
 
-    def test_ret_minus_2_items_keep_retrying_instead_of_suppressed(self) -> None:
-        """Owner policy: desktop-mirror finals with prior ret=-2 retry
-        indefinitely via backoff instead of being dropped via
-        ambiguous_desktop_mirror_ret_minus_2 suppression. Duplication on
-        eventual success is acceptable; silent loss is not."""
+    def test_ret_minus_2_tail_item_retries_instead_of_suppressed(self) -> None:
+        """A retained tail item with prior ret=-2 can still retry normally."""
         old_attempt = (datetime.now(UTC) - timedelta(seconds=400)).isoformat()
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
@@ -6234,7 +6228,7 @@ class DaemonTests(unittest.TestCase):
             text = daemon._handle_command("/flush")
             self.assertIn("flush=empty", text)
 
-    def test_flush_command_drains_pending_across_scopes(self) -> None:
+    def test_flush_command_sends_only_latest_three_across_scopes(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
             state = BridgeState(
@@ -6243,7 +6237,7 @@ class DaemonTests(unittest.TestCase):
                 pending_outbox=[
                     {
                         "to": "user@im.wechat",
-                        "text": "msg-codex",
+                        "text": "old-1",
                         "created_at": past,
                         "kind": "message",
                         "origin": "bridge",
@@ -6255,7 +6249,43 @@ class DaemonTests(unittest.TestCase):
                     },
                     {
                         "to": "user@im.wechat",
-                        "text": "msg-alpha",
+                        "text": "old-2",
+                        "created_at": past,
+                        "kind": "message",
+                        "origin": "bridge",
+                        "thread_id": "",
+                        "tmux_session": "alpha",
+                        "attempt_count": 1,
+                        "last_attempt_at": past,
+                        "last_error": "",
+                    },
+                    {
+                        "to": "user@im.wechat",
+                        "text": "tail-1",
+                        "created_at": past,
+                        "kind": "message",
+                        "origin": "bridge",
+                        "thread_id": "",
+                        "tmux_session": "codex",
+                        "attempt_count": 1,
+                        "last_attempt_at": past,
+                        "last_error": "",
+                    },
+                    {
+                        "to": "user@im.wechat",
+                        "text": "tail-2",
+                        "created_at": past,
+                        "kind": "message",
+                        "origin": "bridge",
+                        "thread_id": "",
+                        "tmux_session": "alpha",
+                        "attempt_count": 1,
+                        "last_attempt_at": past,
+                        "last_error": "",
+                    },
+                    {
+                        "to": "user@im.wechat",
+                        "text": "tail-3",
                         "created_at": past,
                         "kind": "message",
                         "origin": "bridge",
@@ -6276,11 +6306,11 @@ class DaemonTests(unittest.TestCase):
             )
             text = daemon._handle_command("/flush")
             self.assertIn("flush=ok", text)
-            self.assertIn("before=2", text)
+            self.assertIn("before=5", text)
+            self.assertIn("dropped_old=2", text)
             self.assertIn("after=0", text)
             sent_texts = [entry[2] for entry in fake_wechat.sent]
-            self.assertIn("msg-codex", sent_texts)
-            self.assertIn("msg-alpha", sent_texts)
+            self.assertEqual(sent_texts, ["tail-1", "tail-2", "tail-3"])
             self.assertEqual(daemon.state.pending_outbox, [])
 
     def test_mirror_follows_current_tmux_thread(self) -> None:
@@ -6837,7 +6867,7 @@ class DaemonTests(unittest.TestCase):
                 [("user@im.wechat", "ctx-1", "✅ FINAL_OK")],
             )
 
-    def test_desktop_progress_pending_queue_preserves_backlog_for_thread(self) -> None:
+    def test_pending_queue_keeps_latest_three_for_user(self) -> None:
         state = BridgeState()
         state.enqueue_pending_with_meta(
             to_user_id="user@im.wechat",
@@ -6863,21 +6893,27 @@ class DaemonTests(unittest.TestCase):
             thread_id="thread-1",
             tmux_session="codex",
         )
+        state.enqueue_pending_with_meta(
+            to_user_id="user@im.wechat",
+            text="tail progress",
+            kind="progress",
+            origin="desktop-mirror",
+            thread_id="thread-1",
+            tmux_session="codex",
+        )
         self.assertEqual(
             [(item["origin"], item["text"]) for item in state.pending_outbox],
             [
-                ("desktop-mirror", "old progress"),
                 ("wechat-prompt-submitted", "system ack"),
                 ("desktop-mirror", "new progress"),
+                ("desktop-mirror", "tail progress"),
             ],
         )
 
-    def test_pending_outbox_tracks_overflow_drop_count(self) -> None:
-        """pending_outbox caps at max_items (10000 under owner 'no loss'
-        policy) and records overflow in pending_outbox_overflow_dropped.
-        Oldest items are dropped first so the owner sees the freshest state."""
+    def test_pending_outbox_tracks_latest_three_drop_count(self) -> None:
+        """pending_outbox is a lossy tail buffer: oldest user items drop first."""
         state = BridgeState()
-        for idx in range(10005):
+        for idx in range(6):
             state.enqueue_pending_with_meta(
                 to_user_id="user@im.wechat",
                 text=f"msg-{idx}",
@@ -6886,9 +6922,11 @@ class DaemonTests(unittest.TestCase):
                 thread_id="thread-1",
                 tmux_session="codex",
             )
-        self.assertEqual(len(state.pending_outbox), 10000)
-        self.assertEqual(state.pending_outbox_overflow_dropped, 5)
-        self.assertEqual(state.pending_outbox[0]["text"], "msg-5")
+        self.assertEqual(len(state.pending_outbox), 3)
+        self.assertEqual(state.pending_outbox_overflow_dropped, 3)
+        self.assertEqual(
+            [item["text"] for item in state.pending_outbox], ["msg-3", "msg-4", "msg-5"]
+        )
 
     def test_reply_failure_queues_remaining_chunks(self) -> None:
         """Non-mirror origins queue remaining chunks on failure."""

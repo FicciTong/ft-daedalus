@@ -37,6 +37,7 @@ from .room_transcript import (
     append_room_message,
 )
 from .state import (
+    PENDING_OUTBOX_KEEP_LAST,
     BridgeState,
     PendingMediaBatch,
     SessionRecord,
@@ -234,8 +235,8 @@ HELP_TEXT = """FT bridge 命令总览（支持 `/command` 和 `\\command`）
 /log 10            看当前 bridge 最近事件/错误日志
 
 backlog:
-/catchup [n]       裁当前 active tmux 的旧 backlog，只保留最近 n 条（默认 5，上限 20），并补看最近有效消息
-/flush             把当前绑定用户所有 scope 的 pending backlog 一次性冲出
+/catchup [n]       裁当前绑定用户旧 backlog，只保留最近 n 条（默认/上限 3），并补看最近有效消息
+/flush             只冲当前绑定用户最后 3 条 pending backlog，老的直接丢弃
 
 帮助:
 /help              显示这页
@@ -246,7 +247,7 @@ group 模式下只认显式 `@agent 消息` 定向；无论 single/group，桌�
 如果当前 active tmux 还没打开受支持的 live runtime，bridge 会明确提示你先启动/恢复。
 /sessions 只显示当前 workspace 下、看起来像 live runtime 的 tmux。
 group 路由与个人默认对象隔离；退出 group 后个人 /switch 仍按 single 模式生效。
-bridge 会后台定期自动冲洗 pending backlog；/catchup 用来丢旧留新，/flush 用来强制立即全冲。
+bridge 不是完整日志同步通道；pending backlog 始终只保留最后 3 条，旧消息会直接丢弃。
 """
 
 
@@ -851,22 +852,21 @@ class BridgeDaemon:
         )
 
     def _catchup_text(self, arg: str) -> str:
-        keep_last = 5
+        keep_last = PENDING_OUTBOX_KEEP_LAST
         normalized = arg.strip()
         if normalized:
             if not normalized.isdigit():
                 return (
                     "用法: /catchup [n]\n"
-                    "说明: 先裁当前 active tmux 的旧 backlog，再补看最近/新增的有效消息"
+                    "说明: 先裁当前绑定用户旧 backlog，只保留最后 3 条以内，再补看最近/新增的有效消息"
                 )
-            keep_last = max(1, min(int(normalized), 20))
+            keep_last = max(1, min(int(normalized), PENDING_OUTBOX_KEEP_LAST))
         target_user = self.state.bound_user_id
         if not target_user:
             return "catchup=blocked\nhint=先发 /status 绑定当前微信会话"
         active_tmux = self.state.active_tmux_session
-        dropped, kept = self.state.trim_pending_for_scope(
+        dropped, kept = self.state.trim_pending_for_user(
             to_user_id=target_user,
-            tmux_session=active_tmux,
             keep_last=keep_last,
         )
         scope_key = self._recent_cursor_scope_key(
@@ -923,8 +923,7 @@ class BridgeDaemon:
         if arg.strip():
             return (
                 "用法: /flush\n"
-                "说明: 把当前绑定用户所有 scope 的 pending backlog 一次性冲出；"
-                "backoff / wait-for-bind / rebind-retry 中的项目仍按安全路径处理"
+                "说明: 只冲当前绑定用户最后 3 条 pending backlog；老积压先丢弃"
             )
         target_user = self.state.bound_user_id
         if not target_user:
@@ -933,6 +932,12 @@ class BridgeDaemon:
             before = sum(
                 1 for item in self.state.pending_outbox if item.get("to") == target_user
             )
+            dropped, retained = self._trim_pending_backlog_for_user_locked(target_user)
+            retained_before_flush = sum(
+                1 for item in self.state.pending_outbox if item.get("to") == target_user
+            )
+            if dropped:
+                self._save_state()
         if before == 0:
             return "flush=empty\nhint=当前 pending_outbox 没有待冲消息"
         context_token = self.state.bound_context_token
@@ -946,6 +951,9 @@ class BridgeDaemon:
             f"before={before}",
             f"after={after}",
         ]
+        if dropped:
+            lines.append(f"dropped_old={dropped}")
+            lines.append(f"retained_before_flush={retained_before_flush or retained}")
         if after:
             lines.append(
                 "hint=剩余项在 backoff / wait-for-bind / rebind-retry；后台会继续重试"
@@ -3033,6 +3041,7 @@ class BridgeDaemon:
             for item in self.state.pending_outbox:
                 if item.get("to") == from_user_id:
                     item.pop("last_attempt_at", None)
+            self._trim_pending_backlog_for_user_locked(from_user_id)
             if self.state.active_session_id and (
                 previous_user_id != from_user_id or not had_binding
             ):
@@ -3532,6 +3541,10 @@ class BridgeDaemon:
     def _flush_bound_outbox_if_any(self) -> None:
         with self._lock:
             to_user_id = self.state.bound_user_id
+            if to_user_id:
+                dropped, _ = self._trim_pending_backlog_for_user_locked(to_user_id)
+                if dropped:
+                    self._save_state()
             context_token = self.state.bound_context_token
             active_tmux_session = self.state.active_tmux_session
             # Auto-clear wait_for_bind after timeout so backlog doesn't
@@ -3573,6 +3586,31 @@ class BridgeDaemon:
         if not to_user_id or not has_pending or not deliverable_now:
             return
         self._flush_pending_outbox_all(to_user_id, context_token)
+
+    def _trim_pending_backlog_for_user_locked(
+        self,
+        to_user_id: str | None,
+    ) -> tuple[int, int]:
+        if not to_user_id:
+            return (0, 0)
+        dropped, retained = self.state.trim_pending_for_user(
+            to_user_id=to_user_id,
+            keep_last=PENDING_OUTBOX_KEEP_LAST,
+        )
+        if dropped:
+            if not self.state.pending_outbox:
+                self.state.outbox_waiting_for_bind = False
+                self.state.outbox_waiting_for_bind_since = ""
+            self._log_event(
+                "pending_backlog_trimmed",
+                {
+                    "to": to_user_id,
+                    "dropped": dropped,
+                    "retained": retained,
+                    "limit": PENDING_OUTBOX_KEEP_LAST,
+                },
+            )
+        return (dropped, retained)
 
     def _prune_stale_desktop_mirror_backlog(self) -> None:
         with self._lock:
@@ -3920,6 +3958,7 @@ class BridgeDaemon:
                 continue
         with self._lock:
             self.state.pending_outbox = kept + self.state.pending_outbox
+            self._trim_pending_backlog_for_user_locked(to_user_id)
             self._save_state()
 
     def _flush_pending_outbox_all(
@@ -4100,6 +4139,7 @@ class BridgeDaemon:
                 continue
         with self._lock:
             self.state.pending_outbox = kept + self.state.pending_outbox
+            self._trim_pending_backlog_for_user_locked(to_user_id)
             self._save_state()
 
     def _pending_item_age_seconds(self, item: dict[str, str]) -> float:
@@ -4159,14 +4199,9 @@ class BridgeDaemon:
         *,
         active_thread_id: str,
     ) -> bool:
-        # Owner policy: never drop pending desktop-mirror items by age or by
-        # inactive-thread status. Switching from single A to single B (or to
-        # group mode) should still cause A's pending finals/plans/progress to
-        # deliver whenever the owner's WeChat context becomes warm again.
-        # Duplication on a delayed delivery is acceptable; silent loss is
-        # not. The only remaining cap is state.pending_outbox's overflow
-        # limit (`max_items` in state.py), which tracks drops explicitly via
-        # pending_outbox_overflow_dropped counter.
+        # Age/thread pruning is no longer the policy boundary. The single
+        # backlog rule is simpler: keep only the newest owner-visible pending
+        # items per WeChat user and drop older backlog at enqueue/flush time.
         return False
 
     def _sync_mirror_cursor(self, thread_id: str) -> None:
@@ -4317,11 +4352,6 @@ class BridgeDaemon:
         kind: str,
         origin: str,
     ) -> str | None:
-        # Owner policy: never silently drop on ret=-2. Duplication on a
-        # successful-but-API-failed send is preferable to the owner never
-        # seeing a real final/plan. Any ret=-2 stays in pending_outbox and
-        # keeps retrying via the per-item exponential backoff until WeChat
-        # accepts it or the retry loop is stopped.
         if (
             kind == "progress"
             and origin == "desktop-mirror"
@@ -4499,6 +4529,7 @@ class BridgeDaemon:
                 for item in self.state.pending_outbox:
                     if item.get("to") == external_bound_user_id:
                         item.pop("last_attempt_at", None)
+            self.state.trim_pending_for_all_users(keep_last=PENDING_OUTBOX_KEEP_LAST)
             self._last_external_state_mtime_ns = mtime_ns
 
     def _save_state(self) -> None:
@@ -4511,9 +4542,14 @@ class BridgeDaemon:
             pass
 
     def _queue_text(self) -> str:
-        items = list(self.state.pending_outbox)
         active_tmux = str(self.state.active_tmux_session or "").strip()
         target_user = self.state.bound_user_id
+        if target_user:
+            with self._lock:
+                dropped, _ = self._trim_pending_backlog_for_user_locked(target_user)
+                if dropped:
+                    self._save_state()
+        items = list(self.state.pending_outbox)
         recent_items: list[dict] = []
         recent_scope = active_tmux or "all"
         if target_user:
@@ -4546,7 +4582,7 @@ class BridgeDaemon:
                 )
             if self.state.pending_outbox_overflow_dropped:
                 lines.append(
-                    f"overflow_dropped={self.state.pending_outbox_overflow_dropped}"
+                    f"backlog_dropped={self.state.pending_outbox_overflow_dropped}"
                 )
             return "\n".join(lines)
         now = datetime.now(UTC)
@@ -4608,7 +4644,7 @@ class BridgeDaemon:
         ]
         if self.state.pending_outbox_overflow_dropped:
             lines.append(
-                f"overflow_dropped={self.state.pending_outbox_overflow_dropped}"
+                f"backlog_dropped={self.state.pending_outbox_overflow_dropped}"
             )
         if self.state.outbox_waiting_for_bind:
             lines.append("wait=next-wechat-message")

@@ -18,10 +18,7 @@ def test_state_round_trip_persists_outbox_waiting_for_bind_since() -> None:
         reloaded = BridgeState.load(state_file)
 
         assert reloaded.outbox_waiting_for_bind is True
-        assert (
-            reloaded.outbox_waiting_for_bind_since
-            == "2026-03-31T12:00:00+00:00"
-        )
+        assert reloaded.outbox_waiting_for_bind_since == "2026-03-31T12:00:00+00:00"
 
 
 def test_state_round_trip_persists_pending_media_batches() -> None:
@@ -45,3 +42,29 @@ def test_state_round_trip_persists_pending_media_batches() -> None:
         assert batch.from_user_id == "user@im.wechat"
         assert batch.message_id == "msg-1"
         assert batch.image_paths == ["/tmp/a.jpg", "/tmp/b.jpg"]
+
+
+def test_state_load_trims_pending_outbox_to_latest_three_per_user() -> None:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        state_file = Path(tmpdir) / "state.json"
+        state = BridgeState()
+        state.pending_outbox = [
+            {
+                "to": "user@im.wechat",
+                "text": f"msg-{idx}",
+                "created_at": f"2026-04-30T00:00:0{idx}+00:00",
+                "kind": "message",
+                "origin": "bridge",
+            }
+            for idx in range(5)
+        ]
+        state.save(state_file)
+
+        reloaded = BridgeState.load(state_file)
+
+        assert [item["text"] for item in reloaded.pending_outbox] == [
+            "msg-2",
+            "msg-3",
+            "msg-4",
+        ]
+        assert reloaded.pending_outbox_overflow_dropped == 2

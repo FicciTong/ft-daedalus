@@ -211,12 +211,11 @@ If `doctor` later reports `errcode=-14` / session timeout, rerun:
 uv run daedalus-wechat auth-ilink
 ```
 
-If outbound sends later fail with `ret=-2`, the bridge now automatically retries
-once **without** `context_token`. This keeps delivery alive even when the old
-chat context expires. If that still fails, the bridge now parks the pending
-message instead of hammering the queue every second, and waits for the next
-inbound WeChat message to refresh binding. If you still do not see a message,
-send:
+If outbound sends later fail with `ret=-2`, the bridge treats it as an
+application-layer rejection. The pending outbox is intentionally lossy: for each
+bound WeChat user it keeps only the latest 3 pending messages and drops older
+backlog instead of trying to replay everything. If you still do not see a
+message, send:
 
 ```bash
 /status
@@ -266,7 +265,7 @@ verifies that an unauthorized sender is rejected before bind/prompt injection.
 
 ## 🛟 Reliability Guardrails
 
-The bridge now has four built-in reliability layers:
+The bridge now has five built-in reliability layers:
 
 1. **poll-loop retry instead of false watchdog kills**
    - long-poll failures are logged as `poll_error` and retried in-process
@@ -283,7 +282,7 @@ The bridge now has four built-in reliability layers:
      inbound `context_token` first
    - immediate command replies (for example `/status`) still use the live
      inbound context when available
-4. **runtime-native final capture + pending outbox**
+4. **runtime-native final capture + lossy pending outbox**
    - final replies are captured from runtime-native state sources:
      - Codex JSONL rollout
      - OpenCode sqlite/db
@@ -291,18 +290,16 @@ The bridge now has four built-in reliability layers:
    - if delivery still fails, the message is queued locally
    - queue entries are deduplicated by message identity instead of multiplying
      on repeated retry failures
-   - queued backlog is now partitioned by owner-facing `tmux` session, not
-     only tagged by thread id
-   - inactive-session backlog stays parked until you `/switch` to that tmux,
-     instead of being flushed into the currently active session chat flow
-   - mirrored desktop backlog is preserved in queue order; it is no longer
-     collapsed down to only the newest progress item for a thread
+   - queued backlog is a tail buffer, not a complete message log: each bound
+     WeChat user keeps only the latest 3 pending messages
+   - older pending backlog is dropped at enqueue, bind refresh, `/queue`,
+     `/catchup`, and `/flush` boundaries
+   - `/flush` only sends the retained latest 3 messages instead of force-sending
+     the full historical backlog
    - if WeChat still rejects the send with `ret=-2`, background retry pauses
      and waits for the next inbound WeChat message instead of retry-thrashing
-   - the bridge still flushes pending messages aggressively when later inbound
-     traffic refreshes the live chat binding
-   - owner-side backlog recovery is now automatic; no manual `/queue` /
-     `/catchup` trigger is required
+   - owner-side backlog recovery is best-effort and intentionally bounded; use
+     `/recent` for inspection, not full replay
 5. **asynchronous prompt lane + voice fallback**
    - WeChat prompts are queued and processed by a dedicated worker, so a long
      running prompt no longer blocks later `/status` or `/help`
