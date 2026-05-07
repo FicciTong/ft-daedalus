@@ -245,7 +245,7 @@ class LiveSessionTests(unittest.TestCase):
             + "Plan\n切到更小的主线切片。\n1. 完成: 检查 bridge 当前状态\n2. 进行中: 实现 plan icon",
         )
 
-    def test_inject_prompt_uses_send_keys_for_opencode_runtime_even_in_codex_tmux(
+    def test_inject_prompt_uses_paste_buffer_for_opencode_runtime_even_in_codex_tmux(
         self,
     ) -> None:
         with (
@@ -270,7 +270,14 @@ class LiveSessionTests(unittest.TestCase):
             run_mock.call_args_list,
             [
                 call(
-                    ["tmux", "send-keys", "-t", "codex:0.0", "line one line two"],
+                    ["tmux", "load-buffer", "-"],
+                    input=b"line one line two",
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
+                call(
+                    ["tmux", "paste-buffer", "-d", "-t", "codex:0.0"],
                     check=True,
                     stdout=-1,
                     stderr=-1,
@@ -284,7 +291,7 @@ class LiveSessionTests(unittest.TestCase):
             ],
         )
 
-    def test_inject_prompt_uses_send_keys_for_codex_runtime(self) -> None:
+    def test_inject_prompt_uses_paste_buffer_for_codex_runtime(self) -> None:
         with (
             patch.object(
                 self.runner,
@@ -307,7 +314,60 @@ class LiveSessionTests(unittest.TestCase):
             run_mock.call_args_list,
             [
                 call(
-                    ["tmux", "send-keys", "-t", "codex:0.0", "line one line two"],
+                    ["tmux", "load-buffer", "-"],
+                    input=b"line one line two",
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
+                call(
+                    ["tmux", "paste-buffer", "-d", "-t", "codex:0.0"],
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
+                call(
+                    ["tmux", "send-keys", "-t", "codex:0.0", "C-m"],
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
+            ],
+        )
+
+    def test_inject_prompt_uses_paste_buffer_for_long_codex_prompt(self) -> None:
+        prompt = ("结论先行。" * 700) + "\n" + ("这里是很长的顾问文本。" * 700)
+        expected_payload = (" ".join(prompt.replace("\r\n", "\n").split())).encode()
+        with (
+            patch.object(
+                self.runner,
+                "_runtime_status_for_tmux",
+                return_value=LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="codex",
+                    thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                    pane_cwd="/tmp",
+                    backend=CliBackend.CODEX.value,
+                ),
+            ),
+            patch("daedalus_wechat.live_session.time.sleep", lambda _: None),
+            patch("daedalus_wechat.live_session.subprocess.run") as run_mock,
+        ):
+            self.runner._inject_prompt("codex", prompt)
+
+        self.assertEqual(
+            run_mock.call_args_list,
+            [
+                call(
+                    ["tmux", "load-buffer", "-"],
+                    input=expected_payload,
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
+                call(
+                    ["tmux", "paste-buffer", "-d", "-t", "codex:0.0"],
                     check=True,
                     stdout=-1,
                     stderr=-1,

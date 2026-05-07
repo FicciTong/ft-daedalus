@@ -810,27 +810,24 @@ class LiveCodexSessionManager:
         if backend == CliBackend.UNKNOWN.value:
             backend = self.expected_backend_for_tmux_session(tmux_session)
         if backend in {CliBackend.OPENCODE.value, CliBackend.CODEX.value}:
-            single_line = " ".join(normalized.split())
-            subprocess.run(
-                ["tmux", "send-keys", "-t", f"{tmux_session}:0.0", single_line],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            payload = " ".join(normalized.split())
         else:
-            subprocess.run(
-                ["tmux", "load-buffer", "-"],
-                input=normalized.encode(),
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            subprocess.run(
-                ["tmux", "paste-buffer", "-d", "-t", f"{tmux_session}:0.0"],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
+            payload = normalized
+        if not payload:
+            return
+        subprocess.run(
+            ["tmux", "load-buffer", "-"],
+            input=payload.encode(),
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        subprocess.run(
+            ["tmux", "paste-buffer", "-d", "-t", f"{tmux_session}:0.0"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
         time.sleep(0.2)
         subprocess.run(
             ["tmux", "send-keys", "-t", f"{tmux_session}:0.0", "C-m"],
