@@ -15,6 +15,10 @@ from .config import load_config
 from .daemon import BridgeDaemon
 from .delivery_ledger import append_delivery
 from .ilink_auth import poll_ilink_login, start_ilink_login, write_bridge_account
+from .kairos_readout import (
+    format_kairos_today_readout,
+    load_kairos_today_readout,
+)
 from .live_session import LiveCodexSessionManager
 from .security_drill import run_security_drill
 from .state import BridgeState
@@ -240,6 +244,21 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional output path for the drill report",
     )
+    kairos_today = sub.add_parser(
+        "kairos-today",
+        help="Print Kairos owner readiness readout without sending or mutating state",
+    )
+    kairos_today.add_argument(
+        "--report-path",
+        type=Path,
+        default=None,
+        help="Optional Kairos owner_readiness_readout_latest.json path",
+    )
+    kairos_today.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the raw readout payload as JSON",
+    )
     send_bound = sub.add_parser(
         "send-bound",
         help="Send text / image / file / video to the currently bound WeChat chat",
@@ -318,6 +337,14 @@ def _auth_ilink(config, state: BridgeState) -> int:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
+
+    if args.command == "kairos-today":
+        payload = load_kairos_today_readout(args.report_path)
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(format_kairos_today_readout(payload))
+        return 0
 
     config = load_config()
     state = BridgeState.load(config.state_file)

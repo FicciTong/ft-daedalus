@@ -27,6 +27,7 @@ from .incoming_media import (
     download_incoming_image,
     download_incoming_video,
 )
+from .kairos_readout import format_kairos_today_readout, load_kairos_today_readout
 from .live_session import (
     OPENCODE_SESSION_PREFIX,
     PLAN_MARKER,
@@ -237,6 +238,9 @@ HELP_TEXT = """FT bridge 命令总览（支持 `/command` 和 `\\command`）
 backlog:
 /catchup [n]       裁当前绑定用户旧 backlog，只保留最近 n 条（默认/上限 3），并补看最近有效消息
 /flush             只冲当前绑定用户最后 3 条 pending backlog，老的直接丢弃
+
+Kairos:
+/kairos-today      只读 Kairos owner readiness；不发送交易建议、不改变 authority
 
 帮助:
 /help              显示这页
@@ -678,6 +682,8 @@ class BridgeDaemon:
             return self._status_text()
         if command == "/health":
             return self._health_text()
+        if command == "/kairos-today":
+            return format_kairos_today_readout(load_kairos_today_readout())
         if command == "/members":
             return self._members_text()
         if command == "/notify":
