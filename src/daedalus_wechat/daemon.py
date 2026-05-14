@@ -211,47 +211,43 @@ def _apply_voice_corrections(text: str, mapping: dict[str, str]) -> str:
     return out
 
 
-HELP_TEXT = """FT bridge 命令总览（支持 `/command` 和 `\\command`）
+COMMAND_ALIASES = {
+    "/h": "/help",
+    "/m": "/menu",
+    "/st": "/status",
+    "/hl": "/health",
+    "/ss": "/sessions",
+    "/mb": "/members",
+    "/sw": "/switch",
+    "/al": "/attach-last",
+    "/n": "/new",
+    "/x": "/stop",
+    "/nt": "/notify",
+    "/r": "/recent",
+    "/q": "/queue",
+    "/cu": "/catchup",
+    "/fl": "/flush",
+    "/lg": "/log",
+    "/kt": "/kairos-today",
+}
 
-会话:
-/status            当前 active session / tmux / cwd
-/health            bridge / tmux / thread 健康检查
-/sessions          当前可切换的 live tmux 列表
-/members           当前 room 可见参与者
-/switch <target>   切换到某个 session
-/switch group      进入 room 模式（个人 switch 保留）
-/attach-last       接最近一个 ft-cosmos session
-/new [label]       绑定 canonical live runtime（不会自动新建 tmux）
-/stop              清空当前 active session
-
-通知:
-/notify on         微信收 system + plan + progress + final
-/notify off        微信收 system + plan + final
-/notify status     查看当前通知模式
-
-追溯:
-/recent 10         看当前 active tmux 最近 10 条有效 delivery ledger
-/recent after 128  从 seq=128 之后继续看当前 active tmux（高级调试）
-/recent all 10     看所有 session 最近 10 条
-/log 10            看当前 bridge 最近事件/错误日志
-
-backlog:
-/catchup [n]       裁当前绑定用户旧 backlog，只保留最近 n 条（默认/上限 3），并补看最近有效消息
-/flush             只冲当前绑定用户最后 3 条 pending backlog，老的直接丢弃
-
-Kairos:
-/kairos-today      只读 Kairos owner readiness；不发送交易建议、不改变 authority
-
-帮助:
-/help              显示这页
-/menu              同 /help
-
-个人模式下普通文本消息 = 直接发给当前 active live tmux session。
-group 模式下只认显式 `@agent 消息` 定向；无论 single/group，桌面输出都会自动回到同一个聊天。
-如果当前 active tmux 还没打开受支持的 live runtime，bridge 会明确提示你先启动/恢复。
-/sessions 只显示当前 workspace 下、看起来像 live runtime 的 tmux。
-group 路由与个人默认对象隔离；退出 group 后个人 /switch 仍按 single 模式生效。
-bridge 不是完整日志同步通道；pending backlog 始终只保留最后 3 条，旧消息会直接丢弃。
+HELP_TEXT = """FT bridge（支持 `/` 和 `\\`，缩写参数同原命令）
+/h  /help          帮助
+/st /status        状态
+/hl /health        健康
+/ss /sessions      会话
+/sw /switch        切换
+/sw group          群组
+/mb /members       成员
+/al /attach-last   最近
+/n  /new           绑定
+/x  /stop          清空
+/nt /notify        通知
+/r  /recent        追溯
+/lg /log           日志
+/cu /catchup       补看
+/fl /flush         冲洗
+/kt /kairos-today  Kairos
 """
 
 
@@ -673,7 +669,7 @@ class BridgeDaemon:
         if body.startswith("\\"):
             body = "/" + body[1:]
         parts = body.split(maxsplit=1)
-        command = parts[0].lower()
+        command = COMMAND_ALIASES.get(parts[0].lower(), parts[0].lower())
         arg = parts[1].strip() if len(parts) > 1 else ""
 
         if command in {"/help", "/menu"}:
@@ -795,7 +791,7 @@ class BridgeDaemon:
                 f"attach={self.runner.attach_hint(refreshed)}",
             ]
             return "\n".join(lines)
-        return f"未知命令: {command}\n\n{HELP_TEXT}"
+        return f"未知命令: {parts[0].lower()}\nhint=发 /h 看命令"
 
     def _notify_text(self, arg: str) -> str:
         normalized = arg.strip().lower()

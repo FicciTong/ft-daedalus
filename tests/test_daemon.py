@@ -4318,18 +4318,56 @@ class DaemonTests(unittest.TestCase):
             help_text = daemon._handle_command("/help")
             menu_text = daemon._handle_command("/menu")
             self.assertEqual(help_text, menu_text)
-            self.assertIn("FT bridge 命令总览", help_text)
+            self.assertIn("FT bridge", help_text)
+            self.assertIn("/st /status", help_text)
             self.assertIn("/status", help_text)
+            self.assertIn("/hl /health", help_text)
             self.assertIn("/health", help_text)
+            self.assertIn("/ss /sessions", help_text)
             self.assertIn("/sessions", help_text)
-            self.assertIn("/notify on", help_text)
-            self.assertIn("/recent after 128", help_text)
-            self.assertIn("/log 10", help_text)
-            self.assertIn("当前可切换的 live tmux 列表", help_text)
-            self.assertIn("当前 active live tmux session", help_text)
-            self.assertIn("group 路由与个人默认对象隔离", help_text)
-            self.assertIn("/catchup [n]", help_text)
+            self.assertIn("/nt /notify", help_text)
+            self.assertIn("/r  /recent", help_text)
+            self.assertIn("/lg /log", help_text)
+            self.assertIn("/cu /catchup", help_text)
             self.assertIn("/flush", help_text)
+            self.assertLess(len(help_text.splitlines()), 20)
+
+    def test_short_command_aliases_route_to_canonical_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            self.assertEqual(daemon._handle_command("/h"), daemon._handle_command("/help"))
+            self.assertEqual(
+                daemon._handle_command("/nt status"),
+                daemon._handle_command("/notify status"),
+            )
+            self.assertEqual(
+                daemon._handle_command("/q"),
+                daemon._handle_command("/queue"),
+            )
+            self.assertIn("status=", daemon._handle_command("/st"))
+            self.assertIn("health=", daemon._handle_command("/hl"))
+            self.assertEqual(
+                daemon._handle_command("/ss"),
+                daemon._handle_command("/sessions"),
+            )
+            self.assertIn("catchup=blocked", daemon._handle_command("/cu 3"))
+            self.assertIn("flush=blocked", daemon._handle_command("/fl"))
+
+    def test_unknown_command_points_to_short_help(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            text = daemon._handle_command("/unknown")
+            self.assertEqual(text, "未知命令: /unknown\nhint=发 /h 看命令")
 
     def test_queue_text_summarizes_pending_outbox(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

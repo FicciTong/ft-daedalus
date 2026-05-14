@@ -434,22 +434,28 @@ The bridge accepts both `/command` and `\\command`.
 
 Commands:
 
-- `/help`
-- `/menu`
-- `/status`
-- `/health`
-- `/notify on|off|status`
-- `/recent [n]`
-- `/recent after <seq>`
-- `/recent all [n]`
-- `/recent all after <seq>`
-- `/sessions`
-- `/new [label]`  (bind canonical live runtime; does not create tmux)
-- `/switch <index|thread_id-prefix|label|tmux>`
-- `/switch group`  (enter group mode — see below)
-- `/members`  (list live participants in group mode)
-- `/attach-last`
-- `/stop`
+| Full | Short | 说明 |
+|---|---:|---|
+| `/help` | `/h` | 帮助 |
+| `/menu` | `/m` | 帮助 |
+| `/status` | `/st` | 状态 |
+| `/health` | `/hl` | 健康 |
+| `/sessions` | `/ss` | 会话 |
+| `/switch <target>` | `/sw <target>` | 切换 |
+| `/switch group` | `/sw group` | 群组 |
+| `/members` | `/mb` | 成员 |
+| `/attach-last` | `/al` | 最近 |
+| `/new [label]` | `/n [label]` | 绑定 |
+| `/stop` | `/x` | 清空 |
+| `/notify on|off|status` | `/nt on|off|status` | 通知 |
+| `/recent [n]` | `/r [n]` | 追溯 |
+| `/recent after <seq>` | `/r after <seq>` | 续看 |
+| `/recent all [n]` | `/r all [n]` | 全局 |
+| `/recent all after <seq>` | `/r all after <seq>` | 全局续看 |
+| `/log [n]` | `/lg [n]` | 日志 |
+| `/catchup [n]` | `/cu [n]` | 补看 |
+| `/flush` | `/fl` | 冲洗 |
+| `/kairos-today` | `/kt` | Kairos |
 
 For scripts or non-bridge sessions that still need to push a message into the
 currently bound WeChat chat, use:
