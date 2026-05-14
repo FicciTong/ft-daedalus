@@ -1040,7 +1040,9 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("1 codex | 019cdfe5 | codex live", text)
             self.assertIn("*2 123 | 11111111 | 123 live", text)
 
-    def test_members_text_prefers_tmux_name_over_stale_label(self) -> None:
+    def test_members_text_in_group_mode_prefers_tmux_name_without_active_marker(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_id = "ses_gpt"
             state = BridgeState(
@@ -1079,8 +1081,69 @@ class DaemonTests(unittest.TestCase):
 
             text = daemon._handle_command("/members")
 
-            self.assertIn("*1 gpt (codex) | ses_gpt", text)
+            self.assertIn("\n 1 gpt (codex) | ses_gpt", text)
+            self.assertNotIn("*1 gpt", text)
             self.assertNotIn("codex | ses_gpt", text)
+
+    def test_sessions_text_in_group_mode_does_not_mark_single_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_a = "019cdfe5-fa14-74a3-aa31-5451128ea58d"
+            thread_b = "11111111-2222-3333-4444-555555555555"
+            state = BridgeState(
+                active_session_id=thread_b,
+                active_tmux_session="beta",
+                room_mode_enabled=True,
+                sessions={
+                    thread_a: SessionRecord(
+                        thread_id=thread_a,
+                        label="alpha",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="alpha",
+                    ),
+                    thread_b: SessionRecord(
+                        thread_id=thread_b,
+                        label="beta",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-03-26T00:00:00+00:00",
+                        updated_at="2026-03-26T00:00:00+00:00",
+                        tmux_session="beta",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="alpha",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_a,
+                    pane_cwd="/tmp",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="beta",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_b,
+                    pane_cwd="/tmp",
+                ),
+            ]
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=state,
+            )
+
+            text = daemon._handle_command("/sessions")
+
+            self.assertIn("mode=group", text)
+            self.assertIn("\n 1 alpha | 019cdfe5 | alpha live", text)
+            self.assertIn("\n 2 beta | 11111111 | beta live", text)
+            self.assertNotIn("*2 beta", text)
 
     def test_switch_can_target_live_tmux_session_name(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

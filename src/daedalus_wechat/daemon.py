@@ -1138,6 +1138,11 @@ class BridgeDaemon:
     def _is_active_record(self, record) -> bool:
         return self._is_active_thread(record.thread_id, record.tmux_session)
 
+    def _session_list_marker(self, record) -> str:
+        if self._room_mode_enabled():
+            return " "
+        return "*" if self._is_active_record(record) else " "
+
     def _is_active_thread(
         self, thread_id: str | None, tmux_session: str | None = None
     ) -> bool:
@@ -1438,7 +1443,7 @@ class BridgeDaemon:
         if self._room_mode_enabled():
             lines.append("mode=group")
         for idx, record in enumerate(listed[:20], start=1):
-            marker = "*" if self._is_active_record(record) else " "
+            marker = self._session_list_marker(record)
             live_marker = " live" if record.thread_id in live_thread_ids else ""
             lines.append(
                 f"{marker}{idx} {self._session_display_name(record)} | {self._short_thread(record.thread_id)} | {record.tmux_session or '-'}{live_marker}"
@@ -3375,7 +3380,7 @@ class BridgeDaemon:
             f"members={len(live_records)}",
         ]
         for idx, record in enumerate(live_records[:20], start=1):
-            marker = "*" if self._is_active_record(record) else " "
+            marker = self._session_list_marker(record)
             name = self._session_display_name(record)
             backend = backend_map.get(record.tmux_session or "", "")
             suffix = f" ({backend})" if backend and backend != name else ""
