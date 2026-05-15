@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import time
 import unittest
@@ -346,6 +347,23 @@ class _FakeRunner:
                 continue
             normalized.append(status)
         return normalized
+
+
+def _memory_citation_text(body: str = "VISIBLE") -> str:
+    return "\n".join(
+        [
+            body,
+            "",
+            "<oai-mem-citation>",
+            "<citation_entries>",
+            "MEMORY.md:10-14|note=[prior safe lane precedent]",
+            "</citation_entries>",
+            "<rollout_ids>",
+            "019e1f66-14a6-73a1-9a1f-27906273fa7a",
+            "</rollout_ids>",
+            "</oai-mem-citation>",
+        ]
+    )
 
 
 class _TestDaemon(BridgeDaemon):
@@ -4044,6 +4062,36 @@ class DaemonTests(unittest.TestCase):
             )
             self.assertEqual(state.pending_outbox, [])
 
+    def test_pending_flush_strips_internal_memory_citation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": _memory_citation_text("PENDING_VISIBLE"),
+                        "created_at": "2026-03-26T00:00:00+00:00",
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                    }
+                ],
+            )
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+            daemon._flush_bound_outbox_if_any()
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                ("user@im.wechat", "ctx-1", "PENDING_VISIBLE"),
+            )
+            self.assertNotIn("oai-mem-citation", fake_wechat.sent[-1][2])
+            self.assertEqual(state.pending_outbox, [])
+
     def test_flush_pending_outbox_preserves_remaining_after_mid_flush_failure(
         self,
     ) -> None:
@@ -5803,6 +5851,39 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("[1][sent][progress][13:00:00] progress one", text)
             self.assertIn("next=/recent after 2", text)
 
+    def test_recent_strips_internal_memory_citation_from_ledger(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            config = self._make_config(state_dir, frozenset())
+            config.state_dir.mkdir(parents=True, exist_ok=True)
+            config.delivery_ledger_file.write_text(
+                json.dumps(
+                    {
+                        "seq": 1,
+                        "ts": "2026-03-26T05:00:00+00:00",
+                        "to": "user@im.wechat",
+                        "status": "sent",
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                        "text": _memory_citation_text("LEDGER_VISIBLE"),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            daemon = _TestDaemon(
+                config=config,
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(bound_user_id="user@im.wechat"),
+            )
+            text = daemon._recent_text("1")
+            self.assertIn("LEDGER_VISIBLE", text)
+            self.assertNotIn("oai-mem-citation", text)
+            self.assertNotIn("MEMORY.md", text)
+            self.assertNotIn("019e1f66", text)
+
     def test_recent_excludes_command_echo_history_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state_dir = Path(tmpdir)
@@ -6182,6 +6263,44 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("errors_only=true", text)
             self.assertIn("queued_outgoing", text)
             self.assertIn("ret=-2", text)
+
+    def test_log_text_strips_internal_memory_citation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            config = self._make_config(state_dir, frozenset())
+            config.state_dir.mkdir(parents=True, exist_ok=True)
+            runner = _FakeRunner()
+            config.event_log_file.write_text(
+                json.dumps(
+                    {
+                        "ts": "2026-03-26T05:00:01+00:00",
+                        "kind": "queued_outgoing",
+                        "payload": {
+                            "to": "user@im.wechat",
+                            "thread": runner.runtime_thread_id[:8],
+                            "error": "ret=-2",
+                            "text": _memory_citation_text("LOG_VISIBLE"),
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            daemon = _TestDaemon(
+                config=config,
+                wechat=_FakeWeChat(),
+                runner=runner,
+                state=BridgeState(
+                    bound_user_id="user@im.wechat",
+                    active_session_id=runner.runtime_thread_id,
+                    active_tmux_session="codex",
+                ),
+            )
+            text = daemon._log_text("errors 5")
+            self.assertIn("LOG_VISIBLE", text)
+            self.assertNotIn("oai-mem-citation", text)
+            self.assertNotIn("MEMORY.md", text)
 
     def test_mirror_desktop_final_back_to_wechat(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -6839,6 +6958,29 @@ class DaemonTests(unittest.TestCase):
                 "> set -g allow-passthrough on\n"
                 "> set -g set-clipboard on",
             )
+
+    def test_reply_strips_internal_memory_citation_from_wechat(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            daemon._reply(
+                "user@im.wechat",
+                "ctx-1",
+                _memory_citation_text("VISIBLE"),
+                kind="final",
+                origin="desktop-mirror",
+            )
+            self.assertEqual(
+                fake_wechat.sent[-1],
+                ("user@im.wechat", "ctx-1", "✅ VISIBLE"),
+            )
+            self.assertNotIn("oai-mem-citation", fake_wechat.sent[-1][2])
+            self.assertNotIn("MEMORY.md", fake_wechat.sent[-1][2])
 
     def test_mirror_plan_with_dedicated_icon(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

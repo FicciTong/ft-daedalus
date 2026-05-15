@@ -58,6 +58,26 @@ STALE_DESKTOP_MIRROR_DROP_SECONDS = 600.0
 ROOM_FOCUS_TIMEOUT_SECONDS = 30.0
 MIRRORED_TEXT_DEDUP_SECONDS = 1800.0
 ROOM_ROUTE_RE = re.compile(r"^[＠@](?P<target>[A-Za-z0-9_.:-]+)\s*(?P<body>[\s\S]*)$")
+OAI_MEM_CITATION_BLOCK_RE = re.compile(
+    r"\n{0,2}<oai-mem-citation>[\s\S]*?</oai-mem-citation>\s*",
+    re.IGNORECASE,
+)
+OAI_MEM_CITATION_START_RE = re.compile(
+    r"\n{0,2}<oai-mem-citation>[\s\S]*$",
+    re.IGNORECASE,
+)
+OAI_MEM_CITATION_END_RE = re.compile(
+    r"^[\s\S]*?</oai-mem-citation>\s*",
+    re.IGNORECASE,
+)
+OAI_MEM_CITATION_LINE_RE = re.compile(
+    r"(?im)^\s*(?:"
+    r"</?(?:oai-mem-citation|citation_entries|rollout_ids)>|"
+    r"(?:MEMORY\.md|rollout_summaries/[^|]+|skills/[^|]+|extensions/[^|]+)"
+    r":\d+-\d+\|note=\[[^\n]*\]|"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    r")\s*$"
+)
 
 # Digit words → ASCII digits for voice transcript normalization
 _CN_DIGITS: dict[str, str] = {
@@ -1022,7 +1042,7 @@ class BridgeDaemon:
             seq = int(item.get("seq", 0) or 0)
             status = str(item.get("status", "unknown"))
             kind = str(item.get("kind", "message"))
-            text = str(item.get("text", "")).strip()
+            text = self._strip_internal_metadata(str(item.get("text", "")))
             item_tmux = str(item.get("tmux_session", "")).strip()
             scope_suffix = f"[{item_tmux or 'unknown'}]" if scope_all else ""
             lines.append(f"[{seq}][{status}][{kind}][{ts}]{scope_suffix} {text}")
@@ -1114,7 +1134,7 @@ class BridgeDaemon:
             parts.append(f"from={payload['from']}")
         if payload.get("error"):
             parts.append(f"error={payload['error']}")
-        text = str(payload.get("text", "")).strip()
+        text = self._strip_internal_metadata(str(payload.get("text", "")))
         if text:
             parts.append(text.replace("\n", " ")[:120])
         if not parts:
@@ -1708,7 +1728,8 @@ class BridgeDaemon:
         return True
 
     def _render_reply_text(self, text: str, *, kind: str, origin: str) -> str:
-        body = self._strip_known_tags(text.strip())
+        body = self._strip_internal_metadata(text)
+        body = self._strip_known_tags(body.strip())
         body = self._normalize_markdown_for_wechat(body)
         if not body:
             body = "(空回复)"
@@ -1750,6 +1771,17 @@ class BridgeDaemon:
                 if normalized.endswith(suffix):
                     normalized = normalized[: -len(suffix)].rstrip()
         return normalized
+
+    def _strip_internal_metadata(self, text: str) -> str:
+        cleaned = str(text or "")
+        previous = None
+        while previous != cleaned:
+            previous = cleaned
+            cleaned = OAI_MEM_CITATION_BLOCK_RE.sub("\n", cleaned)
+            cleaned = OAI_MEM_CITATION_START_RE.sub("", cleaned)
+            cleaned = OAI_MEM_CITATION_END_RE.sub("", cleaned)
+            cleaned = OAI_MEM_CITATION_LINE_RE.sub("", cleaned)
+        return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
     def _normalize_markdown_for_wechat(self, text: str) -> str:
         normalized = text.replace("\r\n", "\n").replace("\r", "\n").strip()
@@ -1940,7 +1972,7 @@ class BridgeDaemon:
                     transcript_file=self.config.room_transcript_file,
                     speaker=speaker,
                     direction="outbound",
-                    body=final_text[:2000],
+                    body=self._strip_internal_metadata(final_text)[:2000],
                 )
             self._log_event(
                 "mirrored_final",
@@ -2042,7 +2074,7 @@ class BridgeDaemon:
                         transcript_file=self.config.room_transcript_file,
                         speaker=speaker,
                         direction="outbound",
-                        body=final_text[:2000],
+                        body=self._strip_internal_metadata(final_text)[:2000],
                     )
             # Prune old dedup entries
             if len(self._room_final_dedup) > 200:
@@ -2149,7 +2181,7 @@ class BridgeDaemon:
                         transcript_file=self.config.room_transcript_file,
                         speaker=speaker,
                         direction="outbound",
-                        body=final_text[:2000],
+                        body=self._strip_internal_metadata(final_text)[:2000],
                     )
                 self._log_event(
                     "mirrored_final"
@@ -3643,7 +3675,7 @@ class BridgeDaemon:
             self._save_state()
             bound_user_id = self.state.bound_user_id
         for item in dropped:
-            text = str(item.get("text", "")).strip()
+            text = self._strip_internal_metadata(str(item.get("text", "")))
             if not text:
                 continue
             thread_id = str(item.get("thread_id", "")).strip() or None
@@ -3801,7 +3833,7 @@ class BridgeDaemon:
         kept: list[dict[str, str]] = []
         blocked_delivery_groups: set[str] = set()
         for idx, item in enumerate(pending):
-            text = item.get("text", "").strip()
+            text = self._strip_internal_metadata(str(item.get("text", "")))
             if not text:
                 continue
             delivery_group_id = self._pending_delivery_group_id(item)
@@ -3981,7 +4013,7 @@ class BridgeDaemon:
         kept: list[dict[str, str]] = []
         blocked_delivery_groups: set[str] = set()
         for idx, item in enumerate(pending):
-            text = item.get("text", "").strip()
+            text = self._strip_internal_metadata(str(item.get("text", "")))
             if not text:
                 continue
             delivery_group_id = self._pending_delivery_group_id(item)
@@ -4582,7 +4614,8 @@ class BridgeDaemon:
                 )
                 lines.append(
                     "recent_effective="
-                    + str(latest.get("text", "")).strip().replace("\n", " ")[:120]
+                    + self._strip_internal_metadata(str(latest.get("text", "")))
+                    .replace("\n", " ")[:120]
                 )
                 lines.append(
                     "hint=/recent 看最近有效消息；bridge 会后台自动冲洗 backlog"

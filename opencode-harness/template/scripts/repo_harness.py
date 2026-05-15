@@ -7,8 +7,8 @@ import argparse
 import json
 import re
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CRITICAL_TEST_MAP = {
