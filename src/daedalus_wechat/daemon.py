@@ -3273,40 +3273,59 @@ class BridgeDaemon:
         if not normalized:
             return None, body
 
+        # Exact leading member names are allowed even when they are shorter
+        # than the fuzzy threshold. This keeps short handles such as "oc"
+        # usable in group mode while still requiring a token boundary so
+        # ordinary words like "occlusion" are not routed.
+        for live_name in sorted(live_names, key=len, reverse=True):
+            name_norm = _normalize_voice(live_name)
+            if not name_norm or not normalized.startswith(name_norm):
+                continue
+            next_pos = len(name_norm)
+            if next_pos < len(normalized):
+                next_ch = normalized[next_pos]
+                if next_ch.isascii() and next_ch.isalnum():
+                    continue
+            best_match = live_name
+            best_len = len(name_norm)
+            break
+        else:
+            best_match = None
+            best_len = 0
+
         # Wide matching: owner always tries to say a session name first.
         # Dynamically check if a prefix of the normalized input is a
         # substring of any live session name. Fully dynamic, no hardcoded
         # prefix/suffix stripping.
-        best_match: str | None = None
-        best_len: int = 0
-        min_match = 3  # minimum prefix length to avoid spurious matches
-        # Try longest prefixes first
-        for prefix_len in range(min(len(normalized), 20), min_match - 1, -1):
-            prefix = normalized[:prefix_len]
-            # Skip if prefix contains non-ASCII-alnum (likely message body)
-            if not all(c.isascii() and c.isalnum() for c in prefix):
-                continue
-            matches = [n for n in live_names if prefix in n.lower()]
-            if not matches:
-                continue
-            if len(matches) == 1:
-                best_match = matches[0]
+        if best_match is None:
+            min_match = 3  # minimum prefix length to avoid spurious matches
+            # Try longest prefixes first
+            for prefix_len in range(min(len(normalized), 20), min_match - 1, -1):
+                prefix = normalized[:prefix_len]
+                # Skip if prefix contains non-ASCII-alnum (likely message body)
+                if not all(c.isascii() and c.isalnum() for c in prefix):
+                    continue
+                matches = [n for n in live_names if prefix in n.lower()]
+                if not matches:
+                    continue
+                if len(matches) == 1:
+                    best_match = matches[0]
+                    best_len = prefix_len
+                    break
+                # Multiple matches: if input has a digit right after the matched
+                # prefix, use it to disambiguate (e.g. "kimi1" → prefer kimi1)
+                rest = normalized[prefix_len:]
+                if rest and rest[0].isdigit():
+                    digit = rest[0]
+                    digit_matches = [n for n in matches if n.lower().endswith(digit)]
+                    if len(digit_matches) == 1:
+                        best_match = digit_matches[0]
+                        best_len = prefix_len + 1  # consume the digit too
+                        break
+                # Fall back to longest session name among matches
+                best_match = sorted(matches, key=len, reverse=True)[0]
                 best_len = prefix_len
                 break
-            # Multiple matches: if input has a digit right after the matched
-            # prefix, use it to disambiguate (e.g. "kimi1" → prefer kimi1)
-            rest = normalized[prefix_len:]
-            if rest and rest[0].isdigit():
-                digit = rest[0]
-                digit_matches = [n for n in matches if n.lower().endswith(digit)]
-                if len(digit_matches) == 1:
-                    best_match = digit_matches[0]
-                    best_len = prefix_len + 1  # consume the digit too
-                    break
-            # Fall back to longest session name among matches
-            best_match = sorted(matches, key=len, reverse=True)[0]
-            best_len = prefix_len
-            break
 
         if best_match is None:
             return None, body

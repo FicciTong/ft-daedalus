@@ -2006,6 +2006,107 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(len(runner.submitted), 1)
             self.assertEqual(runner.submitted[0][0], thread_claude)
 
+    def test_group_mode_voice_exact_short_session_name_routes(self) -> None:
+        """'oc 你好' should match short tmux session 'oc' directly."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_oc = "ses_oc"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_oc: SessionRecord(
+                        thread_id=thread_oc,
+                        label="oc",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-06T00:00:00+00:00",
+                        updated_at="2026-04-06T00:00:00+00:00",
+                        tmux_session="oc",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="oc",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_oc,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                ),
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-1",
+                    "item_list": [{"type": 1, "text_item": {"text": "oc 你在吗"}}],
+                }
+            )
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            self.assertEqual(runner.submitted, [(thread_oc, "你在吗")])
+
+    def test_group_mode_voice_exact_short_session_name_requires_boundary(self) -> None:
+        """'occlusion ...' must not route to short tmux session 'oc'."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_oc = "ses_oc"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_oc: SessionRecord(
+                        thread_id=thread_oc,
+                        label="oc",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-06T00:00:00+00:00",
+                        updated_at="2026-04-06T00:00:00+00:00",
+                        tmux_session="oc",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="oc",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_oc,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                ),
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-1",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "occlusion check"}}
+                    ],
+                }
+            )
+            assert incoming is not None
+            daemon._handle_incoming(incoming)
+            self.assertEqual(runner.submitted, [])
+            self.assertIn("@agent", fake_wechat.sent[-1][2])
+
     def test_group_mode_voice_no_match_prompts_for_target(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
