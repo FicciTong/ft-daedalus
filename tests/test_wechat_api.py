@@ -12,6 +12,10 @@ from daedalus_wechat.wechat_api import (
     MEDIA_TYPE_VIDEO,
     WeChatAccount,
     WeChatClient,
+    _base_info,
+    _build_client_version,
+    _common_headers,
+    _sanitize_bot_agent,
 )
 
 
@@ -119,6 +123,59 @@ class WeChatApiTests(unittest.TestCase):
         client = _OkClient()
         client.send_text(to_user_id="user@im.wechat", context_token="", text="HELLO")
         self.assertNotIn("context_token", client.payloads[0]["msg"])
+
+    def test_base_info_includes_sanitized_bot_agent(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {
+                "DAEDALUS_WECHAT_BOT_AGENT": (
+                    "DaedalusWechat/0.1.0 (ft bridge) invalid(token"
+                )
+            },
+        ):
+            info = _base_info()
+
+        self.assertEqual(info["bot_agent"], "DaedalusWechat/0.1.0 (ft bridge)")
+        self.assertIn("channel_version", info)
+
+    def test_bot_agent_falls_back_when_invalid(self) -> None:
+        self.assertEqual(
+            _sanitize_bot_agent("broken token"),
+            _base_info()["bot_agent"],
+        )
+
+    def test_ilink_identity_headers_are_stable(self) -> None:
+        headers = _common_headers()
+        self.assertEqual(headers["iLink-App-Id"], "bot")
+        self.assertEqual(
+            headers["iLink-App-ClientVersion"],
+            str(_build_client_version(_base_info()["channel_version"])),
+        )
+
+    def test_get_updates_uses_server_poll_timeout_with_grace(self) -> None:
+        class _TimeoutClient(WeChatClient):
+            def __init__(self) -> None:
+                super().__init__(
+                    WeChatAccount(
+                        token="token",
+                        base_url="http://localhost",
+                        cdn_base_url="http://cdn.localhost",
+                        account_id="test-bot",
+                        user_id=None,
+                    )
+                )
+                self.timeouts: list[float] = []
+
+            def _post(
+                self, endpoint: str, payload: dict, timeout: float = 40.0
+            ) -> dict:
+                self.timeouts.append(timeout)
+                return {"ret": 0}
+
+        client = _TimeoutClient()
+        client.get_updates("buf", timeout_ms=12_000)
+
+        self.assertEqual(client.timeouts, [17.0])
 
 
 class _MediaCapturingClient(WeChatClient):

@@ -4,6 +4,8 @@ import base64
 import hashlib
 import json
 import mimetypes
+import os
+import re
 import secrets
 import subprocess
 import threading
@@ -17,6 +19,12 @@ from urllib.parse import quote, urljoin
 from urllib.request import Request, urlopen
 
 DEFAULT_CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c"
+DEFAULT_ILINK_APP_ID = "bot"
+BOT_AGENT_MAX_BYTES = 256
+BOT_AGENT_RE = re.compile(
+    r"^[A-Za-z0-9_.-]{1,32}/[A-Za-z0-9_.+-]{1,32}"
+    r"(?: \([\x20-\x27\x2A-\x7E]{1,64}\))?$"
+)
 
 # iLink getuploadurl media_type enum (distinct from item_list type codes).
 MEDIA_TYPE_IMAGE = 1
@@ -35,8 +43,55 @@ def _channel_version() -> str:
 CHANNEL_VERSION = _channel_version()
 
 
+def _build_client_version(value: str) -> int:
+    parts = value.split(".", 3)
+    numbers: list[int] = []
+    for part in parts[:3]:
+        match = re.match(r"^(\d+)", part)
+        numbers.append(int(match.group(1)) if match else 0)
+    while len(numbers) < 3:
+        numbers.append(0)
+    major, minor, patch = numbers[:3]
+    return ((major & 0xFF) << 16) | ((minor & 0xFF) << 8) | (patch & 0xFF)
+
+
+ILINK_APP_CLIENT_VERSION = _build_client_version(CHANNEL_VERSION)
+
+
+def _sanitize_bot_agent(raw: str | None) -> str:
+    if not raw:
+        return f"DaedalusWechat/{CHANNEL_VERSION}"
+    tokens = raw.strip().split()
+    accepted: list[str] = []
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        candidate = token
+        if idx + 1 < len(tokens) and tokens[idx + 1].startswith("("):
+            comment = tokens[idx + 1]
+            while idx + 2 < len(tokens) and not comment.endswith(")"):
+                idx += 1
+                comment += " " + tokens[idx + 1]
+            candidate = f"{token} {comment}"
+            idx += 1
+        if BOT_AGENT_RE.fullmatch(candidate):
+            accepted.append(candidate)
+        idx += 1
+    if not accepted:
+        return f"DaedalusWechat/{CHANNEL_VERSION}"
+    result = " ".join(accepted)
+    while accepted and len(result.encode("utf-8")) > BOT_AGENT_MAX_BYTES:
+        accepted.pop()
+        result = " ".join(accepted)
+    return result or f"DaedalusWechat/{CHANNEL_VERSION}"
+
+
+def _bot_agent() -> str:
+    return _sanitize_bot_agent(os.environ.get("DAEDALUS_WECHAT_BOT_AGENT"))
+
+
 def _base_info() -> dict[str, str]:
-    return {"channel_version": CHANNEL_VERSION}
+    return {"channel_version": CHANNEL_VERSION, "bot_agent": _bot_agent()}
 
 
 def _with_base_info(payload: dict[str, Any]) -> dict[str, Any]:
@@ -45,8 +100,18 @@ def _with_base_info(payload: dict[str, Any]) -> dict[str, Any]:
     base_info["channel_version"] = str(
         base_info.get("channel_version") or CHANNEL_VERSION
     )
+    base_info["bot_agent"] = _sanitize_bot_agent(
+        str(base_info.get("bot_agent") or _bot_agent())
+    )
     enriched["base_info"] = base_info
     return enriched
+
+
+def _common_headers() -> dict[str, str]:
+    return {
+        "iLink-App-Id": DEFAULT_ILINK_APP_ID,
+        "iLink-App-ClientVersion": str(ILINK_APP_CLIENT_VERSION),
+    }
 
 
 def _random_wechat_uin() -> str:
@@ -121,6 +186,7 @@ class WeChatClient:
                 "AuthorizationType": "ilink_bot_token",
                 "Authorization": f"Bearer {self.account.token}",
                 "X-WECHAT-UIN": _random_wechat_uin(),
+                **_common_headers(),
             },
             method="POST",
         )
@@ -133,11 +199,16 @@ class WeChatClient:
         except URLError as exc:
             raise RuntimeError(f"WeChat connection failed: {exc}") from exc
 
-    def get_updates(self, get_updates_buf: str) -> dict[str, Any]:
+    def get_updates(
+        self, get_updates_buf: str, *, timeout_ms: int | None = None
+    ) -> dict[str, Any]:
+        timeout = 40.0
+        if timeout_ms is not None and timeout_ms > 0:
+            timeout = max(float(timeout_ms) / 1000.0 + 5.0, 10.0)
         return self._post(
             "ilink/bot/getupdates",
             {"get_updates_buf": get_updates_buf, "base_info": _base_info()},
-            timeout=40.0,
+            timeout=timeout,
         )
 
     def send_text(

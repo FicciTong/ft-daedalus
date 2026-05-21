@@ -27,6 +27,7 @@ class ILinkLoginResult:
     account_id: str
     base_url: str
     user_id: str | None
+    already_connected: bool = False
 
 
 def _http_json(
@@ -55,13 +56,57 @@ def _http_json(
         raise RuntimeError(f"iLink connection failed: {exc}") from exc
 
 
-def start_ilink_login(*, bot_type: str = DEFAULT_ILINK_BOT_TYPE) -> ILinkQRCode:
+def load_local_bot_tokens(*, account_file: Path, limit: int = 10) -> list[str]:
+    if limit <= 0 or not account_file.exists():
+        return []
+    candidates: list[Path] = [account_file]
+    try:
+        for path in sorted(
+            account_file.parent.glob("*.json"),
+            key=lambda item: (item.stat().st_mtime, item.name),
+            reverse=True,
+        ):
+            if path not in candidates:
+                candidates.append(path)
+    except OSError:
+        pass
+
+    tokens: list[str] = []
+    seen: set[str] = set()
+    for path in candidates:
+        try:
+            token = str(json.loads(path.read_text(encoding="utf-8")).get("token", ""))
+        except (OSError, json.JSONDecodeError):
+            continue
+        token = token.strip()
+        if token and token not in seen:
+            tokens.append(token)
+            seen.add(token)
+        if len(tokens) >= limit:
+            break
+    return tokens
+
+
+def start_ilink_login(
+    *,
+    bot_type: str = DEFAULT_ILINK_BOT_TYPE,
+    local_tokens: list[str] | tuple[str, ...] = (),
+) -> ILinkQRCode:
     query = urlencode({"bot_type": bot_type})
-    payload = _http_json(
-        method="GET",
-        endpoint=f"ilink/bot/get_bot_qrcode?{query}",
-        timeout=10.0,
-    )
+    token_list = [token.strip() for token in local_tokens if token.strip()][:10]
+    try:
+        payload = _http_json(
+            method="POST",
+            endpoint=f"ilink/bot/get_bot_qrcode?{query}",
+            body={"local_token_list": token_list},
+            timeout=10.0,
+        )
+    except RuntimeError:
+        payload = _http_json(
+            method="GET",
+            endpoint=f"ilink/bot/get_bot_qrcode?{query}",
+            timeout=10.0,
+        )
     qrcode = str(payload.get("qrcode", "")).strip()
     qrcode_url = str(payload.get("qrcode_img_content", "")).strip()
     if not qrcode or not qrcode_url:
@@ -94,6 +139,19 @@ def poll_ilink_login(
                 current_base_url = f"https://{redirect_host}"
             time.sleep(1.0)
             continue
+        if status == "binded_redirect":
+            return ILinkLoginResult(
+                token="",
+                account_id="",
+                base_url=current_base_url,
+                user_id=None,
+                already_connected=True,
+            )
+        if status in {"need_verifycode", "verify_code_blocked"}:
+            raise RuntimeError(
+                "iLink QR login requires extra verification; rerun auth-ilink "
+                "after the WeChat-side verification state clears"
+            )
         if status == "expired":
             raise RuntimeError(
                 "iLink QR code expired; rerun auth-ilink to get a fresh QR code"
@@ -118,6 +176,8 @@ def poll_ilink_login(
 
 
 def write_bridge_account(*, account_file: Path, result: ILinkLoginResult) -> None:
+    if getattr(result, "already_connected", False):
+        raise RuntimeError("iLink account already connected; no new token to write")
     account_file.parent.mkdir(parents=True, exist_ok=True)
     account_file.write_text(
         json.dumps(

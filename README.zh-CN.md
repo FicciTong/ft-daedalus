@@ -196,9 +196,11 @@ uv run daedalus-wechat auth-ilink
 它会自动：
 
 1. 直接调用腾讯官方 iLink 二维码登录接口
-2. 等待扫码确认
-3. 把结果写入 bridge 的本地状态目录
-4. 自动重载正在运行的 bridge service，让新 token 立刻生效
+2. 上送本地已有 bot token 列表，让腾讯侧识别“已连接过此端”
+3. 等待扫码确认
+4. 如果服务端返回 `binded_redirect`，保留现有 account / binding，不误判失败
+5. 把新授权结果写入 bridge 的本地状态目录
+6. 自动重载正在运行的 bridge service，让新 token 立刻生效
 
 默认账号文件位置：
 
@@ -283,10 +285,13 @@ systemctl --user restart daedalus-wechat
 
 ## 🛟 可靠性保障
 
-现在这套 bridge 内置了四层保障：
+现在这套 bridge 内置了五层保障：
 
 1. **长轮询内部重试，不再用误杀式 watchdog**
    - 长轮询失败会记成 `poll_error` 并在进程内重试
+   - 如果腾讯侧返回 `longpolling_timeout_ms`，下一轮 poll 会按服务端 hint 调整
+   - 连续 poll 错误会从短重试进入 30 秒退避，不再固定 2 秒打满
+   - 如果 poll 返回 `ret=-14` / `errcode=-14`，bridge 会清掉 stale cursor 并暂停一段时间，等待重新登录或服务端会话恢复
    - 服务仍然跑在 `systemd` 下，保留 `Restart=always`
    - 但不再使用会把健康长轮询误判成卡死的 watchdog
 2. **过期 context 自动重发**

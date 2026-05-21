@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import re
 import threading
@@ -47,6 +48,13 @@ from .state import (
 from .systemd_notify import notify as systemd_notify
 from .wechat_api import DEFAULT_CDN_BASE_URL, WeChatClient
 
+SESSION_EXPIRED_ERRCODE = -14
+SESSION_EXPIRED_PAUSE_SECONDS = 600.0
+POLL_ERROR_RETRY_SECONDS = 2.0
+POLL_ERROR_BACKOFF_SECONDS = 30.0
+POLL_ERROR_BACKOFF_AFTER = 3
+MIN_LONG_POLL_TIMEOUT_MS = 5_000
+MAX_LONG_POLL_TIMEOUT_MS = 120_000
 DISPLAY_TZ = ZoneInfo("Asia/Shanghai")
 STALE_AUTO_FLUSH_SECONDS = 300.0
 WAIT_FOR_BIND_TIMEOUT_SECONDS = 60.0
@@ -319,32 +327,59 @@ class BridgeDaemon:
         systemd_notify("STATUS=bridge running")
 
     def run_forever(self) -> None:
+        next_poll_timeout_ms = self._bounded_poll_timeout_ms(self.config.poll_timeout_ms)
+        consecutive_poll_errors = 0
         while True:
             try:
-                response = self.wechat.get_updates(self.state.get_updates_buf)
+                response = self._get_updates_response(timeout_ms=next_poll_timeout_ms)
             except Exception as exc:  # noqa: BLE001
-                self._log_event("poll_error", {"error": str(exc)})
+                consecutive_poll_errors += 1
+                self._log_event(
+                    "poll_error",
+                    {
+                        "error": str(exc),
+                        "consecutive_failures": consecutive_poll_errors,
+                    },
+                )
                 systemd_notify("STATUS=bridge poll error; retrying")
-                time.sleep(2.0)
+                time.sleep(self._poll_error_sleep_seconds(consecutive_poll_errors))
                 continue
             ret = response.get("ret")
             errcode = response.get("errcode")
             if ret not in (None, 0) or errcode not in (None, 0):
+                consecutive_poll_errors += 1
                 self._log_event(
                     "poll_error",
                     {
                         "ret": ret,
                         "errcode": errcode,
                         "errmsg": response.get("errmsg"),
+                        "consecutive_failures": consecutive_poll_errors,
                     },
                 )
                 if self._should_reset_poll_cursor(ret=ret, errcode=errcode):
                     with self._lock:
                         self.state.get_updates_buf = ""
                         self._save_state()
+                if self._is_session_expired(ret=ret, errcode=errcode):
+                    systemd_notify("STATUS=bridge poll session expired; paused")
+                    time.sleep(SESSION_EXPIRED_PAUSE_SECONDS)
+                    continue
                 systemd_notify("STATUS=bridge poll error; retrying")
-                time.sleep(2.0)
+                time.sleep(self._poll_error_sleep_seconds(consecutive_poll_errors))
                 continue
+            consecutive_poll_errors = 0
+            timeout_hint = response.get("longpolling_timeout_ms")
+            if timeout_hint is not None:
+                try:
+                    next_poll_timeout_ms = self._bounded_poll_timeout_ms(
+                        int(timeout_hint)
+                    )
+                except (TypeError, ValueError):
+                    self._log_event(
+                        "poll_timeout_hint_ignored",
+                        {"longpolling_timeout_ms": timeout_hint},
+                    )
             with self._lock:
                 self.state.get_updates_buf = response.get(
                     "get_updates_buf", self.state.get_updates_buf
@@ -4476,7 +4511,33 @@ class BridgeDaemon:
     def _should_reset_poll_cursor(self, *, ret: object, errcode: object) -> bool:
         # Invalid or stale poll cursors should be cleared so the bridge can
         # resume from the server's current stream instead of retrying forever.
-        return ret in {-1, -14} or errcode in {-1, -14}
+        return ret in {-1, SESSION_EXPIRED_ERRCODE} or errcode in {
+            -1,
+            SESSION_EXPIRED_ERRCODE,
+        }
+
+    def _is_session_expired(self, *, ret: object, errcode: object) -> bool:
+        return ret == SESSION_EXPIRED_ERRCODE or errcode == SESSION_EXPIRED_ERRCODE
+
+    def _bounded_poll_timeout_ms(self, value: int) -> int:
+        return max(MIN_LONG_POLL_TIMEOUT_MS, min(MAX_LONG_POLL_TIMEOUT_MS, int(value)))
+
+    def _poll_error_sleep_seconds(self, consecutive_failures: int) -> float:
+        if consecutive_failures >= POLL_ERROR_BACKOFF_AFTER:
+            return POLL_ERROR_BACKOFF_SECONDS
+        return POLL_ERROR_RETRY_SECONDS
+
+    def _get_updates_response(self, *, timeout_ms: int) -> dict:
+        try:
+            params = inspect.signature(self.wechat.get_updates).parameters
+        except (TypeError, ValueError):
+            params = {}
+        if "timeout_ms" in params:
+            return self.wechat.get_updates(
+                self.state.get_updates_buf,
+                timeout_ms=timeout_ms,
+            )
+        return self.wechat.get_updates(self.state.get_updates_buf)
 
     def _pending_item_key(
         self, item: dict[str, str]

@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from daedalus_wechat.config import BridgeConfig
 from daedalus_wechat.daemon import (
+    SESSION_EXPIRED_PAUSE_SECONDS,
     BridgeDaemon,
     IncomingMessage,
     _apply_voice_corrections,
@@ -570,6 +571,67 @@ class DaemonTests(unittest.TestCase):
             status_calls = [args[0] for args, _ in notify.call_args_list if args]
             self.assertIn("STATUS=bridge poll error; retrying", status_calls)
             self.assertIn("STATUS=bridge polling", status_calls)
+
+    def test_poll_uses_server_longpoll_timeout_hint(self) -> None:
+        class _TimeoutAwareWeChat(_FakeWeChat):
+            def __init__(self) -> None:
+                super().__init__()
+                self.timeouts: list[int | None] = []
+
+            def get_updates(self, _buf: str, *, timeout_ms: int | None = None):
+                self.timeouts.append(timeout_ms)
+                if len(self.timeouts) == 1:
+                    return {
+                        "get_updates_buf": "buf-1",
+                        "longpolling_timeout_ms": 12_000,
+                        "msgs": [],
+                    }
+                raise KeyboardInterrupt()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wechat = _TimeoutAwareWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(
+                    Path(tmpdir), frozenset({"allowed-user@im.wechat"})
+                ),
+                wechat=wechat,
+                runner=_FakeRunner(),
+                state=BridgeState(),
+            )
+            with self.assertRaises(KeyboardInterrupt):
+                daemon.run_forever()
+
+        self.assertEqual(wechat.timeouts, [35_000, 12_000])
+
+    def test_session_expired_poll_pauses_and_clears_cursor(self) -> None:
+        class _ExpiredWeChat(_FakeWeChat):
+            def get_updates(self, _buf: str):
+                return {"ret": -14, "errcode": None, "errmsg": "session expired"}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(get_updates_buf="expired-buf")
+            with (
+                patch("daedalus_wechat.daemon.systemd_notify") as notify,
+                patch(
+                    "daedalus_wechat.daemon.time.sleep",
+                    side_effect=KeyboardInterrupt,
+                ) as sleep,
+            ):
+                daemon = _TestDaemon(
+                    config=self._make_config(
+                        Path(tmpdir), frozenset({"allowed-user@im.wechat"})
+                    ),
+                    wechat=_ExpiredWeChat(),
+                    runner=_FakeRunner(),
+                    state=state,
+                )
+                with self.assertRaises(KeyboardInterrupt):
+                    daemon.run_forever()
+
+        self.assertEqual(state.get_updates_buf, "")
+        sleep.assert_called_once_with(SESSION_EXPIRED_PAUSE_SECONDS)
+        status_calls = [args[0] for args, _ in notify.call_args_list if args]
+        self.assertIn("STATUS=bridge poll session expired; paused", status_calls)
 
     def test_health_text_is_mobile_short(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -233,6 +233,60 @@ class CliTests(unittest.TestCase):
             self.assertEqual(state.outbox_waiting_for_bind_since, "")
             self.assertEqual(state.pending_outbox, [])
 
+    def test_auth_ilink_already_connected_preserves_existing_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config = self._make_config(tmp_path)
+            config.account_file.write_text(
+                json.dumps(
+                    {
+                        "token": "existing-token",
+                        "baseUrl": "https://ilinkai.weixin.qq.com",
+                        "accountId": "bot@im.bot",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            state = BridgeState(
+                get_updates_buf="live-buf",
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": "keep",
+                        "created_at": "2026-04-04T00:00:00+00:00",
+                    }
+                ],
+            )
+            with (
+                patch(
+                    "daedalus_wechat.cli.start_ilink_login",
+                    return_value=type(
+                        "QR",
+                        (),
+                        {"qrcode": "qr-token", "qrcode_url": "https://example.com/qr"},
+                    )(),
+                ),
+                patch(
+                    "daedalus_wechat.cli.poll_ilink_login",
+                    return_value=type(
+                        "LoginResult",
+                        (),
+                        {"already_connected": True},
+                    )(),
+                ),
+            ):
+                rc = _auth_ilink(config, state)
+
+            self.assertEqual(rc, 0)
+            payload = json.loads(config.account_file.read_text(encoding="utf-8"))
+            self.assertEqual(payload["token"], "existing-token")
+            self.assertEqual(state.get_updates_buf, "live-buf")
+            self.assertEqual(state.bound_user_id, "user@im.wechat")
+            self.assertEqual(state.bound_context_token, "ctx-1")
+            self.assertEqual(len(state.pending_outbox), 1)
+
     def test_maybe_restart_bridge_service_restarts_only_if_active(self) -> None:
         with patch("daedalus_wechat.cli.subprocess.run") as run:
             run.side_effect = [

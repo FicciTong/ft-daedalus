@@ -14,7 +14,12 @@ from pathlib import Path
 from .config import load_config
 from .daemon import BridgeDaemon
 from .delivery_ledger import append_delivery
-from .ilink_auth import poll_ilink_login, start_ilink_login, write_bridge_account
+from .ilink_auth import (
+    load_local_bot_tokens,
+    poll_ilink_login,
+    start_ilink_login,
+    write_bridge_account,
+)
 from .kairos_readout import (
     format_kairos_today_readout,
     load_kairos_today_readout,
@@ -312,10 +317,14 @@ def _maybe_restart_bridge_service() -> bool:
 
 
 def _auth_ilink(config, state: BridgeState) -> int:
-    qr = start_ilink_login()
+    qr = start_ilink_login(local_tokens=load_local_bot_tokens(account_file=config.account_file))
     print("使用微信扫描以下二维码链接完成授权：")
     print(qr.qrcode_url)
     result = poll_ilink_login(qrcode=qr.qrcode)
+    if getattr(result, "already_connected", False):
+        print("account_already_connected=true")
+        print("existing bridge account remains unchanged")
+        return 0
     write_bridge_account(account_file=config.account_file, result=result)
     state.get_updates_buf = ""
     state.bound_user_id = None

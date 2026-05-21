@@ -14,6 +14,10 @@ Update as of `2026-04-12`:
   off-target final does not jump ahead of the agent that was just tagged
 - backend/runtime detection now prefers live child/backend evidence for
   `Codex` / `OpenCode` under tmux instead of weaker shell-screen heuristics
+- iLink adapter now tracks the 2026-05 Tencent OpenClaw Weixin protocol drift:
+  request identity headers, `bot_agent`, QR `local_token_list` /
+  `binded_redirect`, server-directed long-poll timeout, and `-14` session
+  expiry pause/backoff
 - owner-facing command shape stays the same
 - this document still tracks the **next** reliability/drain semantics lane,
   not the already-landed runtime-adapter cut
