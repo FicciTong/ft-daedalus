@@ -20,7 +20,7 @@ class BridgeConfig:
     opencode_state_db: Path = field(default_factory=lambda: default_opencode_state_db())
     opencode_state_db_source: str = "default_resolved"
     poll_timeout_ms: int = 35_000
-    text_chunk_limit: int = 1800
+    text_chunk_limit: int = 4000
     min_send_interval_seconds: float = 1.5
     outbox_retry_interval_seconds: float = 1.0
 
@@ -195,7 +195,7 @@ def load_config() -> BridgeConfig:
             "DAEDALUS_WECHAT_TEXT_CHUNK_LIMIT",
             file_env.get("DAEDALUS_WECHAT_TEXT_CHUNK_LIMIT"),
         ),
-        default=1800,
+        default=4000,
     )
     min_send_interval_seconds = _parse_float(
         os.environ.get(

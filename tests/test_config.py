@@ -30,6 +30,7 @@ class ConfigTests(unittest.TestCase):
                 "DAEDALUS_WECHAT_ALLOWED_USERS=user-a@im.wechat,user-b@im.wechat\n"
                 "DAEDALUS_WECHAT_TMUX_SESSION=my-tmux\n"
                 "DAEDALUS_WECHAT_PROGRESS_UPDATES=on\n"
+                "DAEDALUS_WECHAT_TEXT_CHUNK_LIMIT=3333\n"
                 "DAEDALUS_WECHAT_OUTBOX_RETRY_INTERVAL_SECONDS=0.75\n"
             )
             with patch.dict(
@@ -44,6 +45,7 @@ class ConfigTests(unittest.TestCase):
             )
             self.assertEqual(config.canonical_tmux_session, "my-tmux")
             self.assertTrue(config.progress_updates_default)
+            self.assertEqual(config.text_chunk_limit, 3333)
             self.assertEqual(config.outbox_retry_interval_seconds, 0.75)
             self.assertTrue(str(config.codex_state_db).endswith(".sqlite"))
             self.assertEqual(config.codex_state_db_source, "default_resolved")
@@ -74,6 +76,7 @@ class ConfigTests(unittest.TestCase):
             ):
                 config = load_config()
             self.assertFalse(config.progress_updates_default)
+            self.assertEqual(config.text_chunk_limit, 4000)
             self.assertEqual(config.outbox_retry_interval_seconds, 1.0)
 
     def test_default_codex_state_db_prefers_canonical_state_sqlite(self) -> None:

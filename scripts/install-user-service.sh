@@ -43,6 +43,9 @@ DAEDALUS_WECHAT_TMUX_SESSION=codex
 # Default mobile posture: keep system / plan / final, suppress progress noise.
 # Use /notify on later if you explicitly want progress too.
 DAEDALUS_WECHAT_PROGRESS_UPDATES=off
+
+# Outbound WeChat text chunk size. Keep below aggressive client/API limits.
+DAEDALUS_WECHAT_TEXT_CHUNK_LIMIT=4000
 EOF
 fi
 
