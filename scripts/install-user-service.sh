@@ -44,8 +44,8 @@ DAEDALUS_WECHAT_TMUX_SESSION=codex
 # Use /notify on later if you explicitly want progress too.
 DAEDALUS_WECHAT_PROGRESS_UPDATES=off
 
-# Outbound WeChat text chunk size. Keep below aggressive client/API limits.
-DAEDALUS_WECHAT_TEXT_CHUNK_LIMIT=4000
+# Outbound WeChat text chunk size. The bridge clamps this to 1..10000.
+DAEDALUS_WECHAT_TEXT_CHUNK_LIMIT=10000
 EOF
 fi
 

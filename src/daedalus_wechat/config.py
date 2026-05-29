@@ -4,6 +4,9 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+DEFAULT_TEXT_CHUNK_LIMIT = 10_000
+MAX_TEXT_CHUNK_LIMIT = 10_000
+
 
 @dataclass(frozen=True)
 class BridgeConfig:
@@ -20,7 +23,7 @@ class BridgeConfig:
     opencode_state_db: Path = field(default_factory=lambda: default_opencode_state_db())
     opencode_state_db_source: str = "default_resolved"
     poll_timeout_ms: int = 35_000
-    text_chunk_limit: int = 4000
+    text_chunk_limit: int = DEFAULT_TEXT_CHUNK_LIMIT
     min_send_interval_seconds: float = 1.5
     outbox_retry_interval_seconds: float = 1.0
 
@@ -95,6 +98,10 @@ def _parse_int(raw: str | None, *, default: int) -> int:
         return int(raw.strip())
     except ValueError:
         return default
+
+
+def _bounded_text_chunk_limit(value: int) -> int:
+    return min(MAX_TEXT_CHUNK_LIMIT, max(1, value))
 
 
 def _default_workspace_root() -> Path:
@@ -195,7 +202,7 @@ def load_config() -> BridgeConfig:
             "DAEDALUS_WECHAT_TEXT_CHUNK_LIMIT",
             file_env.get("DAEDALUS_WECHAT_TEXT_CHUNK_LIMIT"),
         ),
-        default=4000,
+        default=DEFAULT_TEXT_CHUNK_LIMIT,
     )
     min_send_interval_seconds = _parse_float(
         os.environ.get(
@@ -224,7 +231,7 @@ def load_config() -> BridgeConfig:
         canonical_tmux_session=canonical_tmux_session,
         allowed_users=allowed_users,
         progress_updates_default=progress_updates_default,
-        text_chunk_limit=max(1, text_chunk_limit),
+        text_chunk_limit=_bounded_text_chunk_limit(text_chunk_limit),
         min_send_interval_seconds=min_send_interval_seconds,
         outbox_retry_interval_seconds=outbox_retry_interval_seconds,
     )

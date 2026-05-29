@@ -7,6 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from daedalus_wechat.config import (
+    DEFAULT_TEXT_CHUNK_LIMIT,
+    MAX_TEXT_CHUNK_LIMIT,
     _parse_allowed_users,
     default_codex_state_db,
     load_config,
@@ -76,8 +78,20 @@ class ConfigTests(unittest.TestCase):
             ):
                 config = load_config()
             self.assertFalse(config.progress_updates_default)
-            self.assertEqual(config.text_chunk_limit, 4000)
+            self.assertEqual(config.text_chunk_limit, DEFAULT_TEXT_CHUNK_LIMIT)
             self.assertEqual(config.outbox_retry_interval_seconds, 1.0)
+
+    def test_load_config_caps_text_chunk_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_file = Path(tmpdir) / "bridge.env"
+            env_file.write_text("DAEDALUS_WECHAT_TEXT_CHUNK_LIMIT=20000\n")
+            with patch.dict(
+                os.environ,
+                {"DAEDALUS_WECHAT_ENV_FILE": str(env_file)},
+                clear=False,
+            ):
+                config = load_config()
+            self.assertEqual(config.text_chunk_limit, MAX_TEXT_CHUNK_LIMIT)
 
     def test_default_codex_state_db_prefers_canonical_state_sqlite(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

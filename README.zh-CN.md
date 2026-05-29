@@ -325,11 +325,13 @@ DAEDALUS_WECHAT_MIN_SEND_INTERVAL_SECONDS=0.5
 
 默认就是 `0.5` 秒，所有微信出站消息都走这个节流。
 
-微信文本出站默认按 `4000` 字符分段。要调整单条文本分段长度，可以在 env 里设置：
+微信文本出站默认按 `10000` 字符分段。要调整单条文本分段长度，可以在 env 里设置：
 
 ```bash
-DAEDALUS_WECHAT_TEXT_CHUNK_LIMIT=4000
+DAEDALUS_WECHAT_TEXT_CHUNK_LIMIT=10000
 ```
+
+bridge 会把该值限制在 `1..10000`，避免本地配置意外突破当前保守文本通道上限。
 
 最后兜底的 operator 操作还是：
 
