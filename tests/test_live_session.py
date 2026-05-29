@@ -1695,6 +1695,61 @@ class LiveSessionTests(unittest.TestCase):
                 statuses = self.runner.list_live_runtime_statuses()
         self.assertEqual([item.tmux_session for item in statuses], ["codex", "123"])
 
+    def test_runtime_inventory_reuses_short_ttl_cache(self) -> None:
+        runner = LiveCodexSessionManager(
+            codex_bin="codex",
+            opencode_bin="opencode",
+            default_cwd=Path("/tmp"),
+            canonical_tmux_session="codex",
+            runtime_inventory_cache_seconds=30.0,
+        )
+        calls: list[str] = []
+
+        def fake_status(tmux_session: str) -> LiveRuntimeStatus:
+            calls.append(tmux_session)
+            return LiveRuntimeStatus(
+                tmux_session=tmux_session,
+                exists=True,
+                pane_command="codex",
+                thread_id=f"11111111-2222-3333-4444-{len(calls):012d}",
+                pane_cwd="/tmp",
+                backend="codex",
+            )
+
+        with patch.object(
+            runner, "_list_tmux_sessions", return_value=["codex", "opencode"]
+        ):
+            with patch.object(runner, "_runtime_status_for_tmux", side_effect=fake_status):
+                first = runner.list_tmux_runtime_inventory()
+                second = runner.list_tmux_runtime_inventory()
+
+        self.assertEqual([item.tmux_session for item in first], ["codex", "opencode"])
+        self.assertEqual([item.tmux_session for item in second], ["codex", "opencode"])
+        self.assertEqual(calls, ["codex", "opencode"])
+
+    def test_runtime_inventory_conflict_check_uses_single_status_pass(self) -> None:
+        calls: list[str] = []
+
+        def fake_status(tmux_session: str) -> LiveRuntimeStatus:
+            calls.append(tmux_session)
+            return LiveRuntimeStatus(
+                tmux_session=tmux_session,
+                exists=True,
+                pane_command="codex",
+                thread_id="11111111-2222-3333-4444-555555555555",
+                pane_cwd="/tmp",
+                backend="codex",
+            )
+
+        with patch.object(
+            self.runner, "_list_tmux_sessions", return_value=["codex", "probe"]
+        ):
+            with patch.object(self.runner, "_runtime_status_for_tmux", side_effect=fake_status):
+                inventory = self.runner.list_tmux_runtime_inventory()
+
+        self.assertEqual(calls, ["codex", "probe"])
+        self.assertEqual([item.reason for item in inventory], ["live", "live"])
+
     def test_sync_live_sessions_preserves_existing_labels(self) -> None:
         state = BridgeState(
             sessions={

@@ -1888,7 +1888,7 @@ class BridgeDaemon:
 
     def _mirror_loop(self) -> None:
         while True:
-            time.sleep(0.2)
+            time.sleep(self.config.mirror_poll_interval_seconds)
             try:
                 # Owner output is mode-agnostic: both single and group receive
                 # all live desktop replies. Mode only changes inbound routing.

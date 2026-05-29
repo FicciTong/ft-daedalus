@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from enum import Enum
 from pathlib import Path
 
@@ -39,15 +40,22 @@ _COMM_TO_BACKEND.update({
     "kimi": CliBackend.KIMI,
     "kimi code": CliBackend.KIMI,
 })
+_PROC_BACKEND_CACHE_TTL_SECONDS = 5.0
+_PROC_BACKEND_CACHE: dict[int, tuple[float, CliBackend]] = {}
 
 
 def _detect_backend_from_proc(pane_pid: int | None) -> CliBackend:
     """Walk /proc process tree to detect backend from child process names."""
     if not pane_pid:
         return CliBackend.UNKNOWN
+    current = time.monotonic()
+    cached = _PROC_BACKEND_CACHE.get(pane_pid)
+    if cached is not None and current - cached[0] <= _PROC_BACKEND_CACHE_TTL_SECONDS:
+        return cached[1]
     proc_root = Path("/proc")
     to_visit = [pane_pid]
     visited: set[int] = set()
+    backend_result = CliBackend.UNKNOWN
     while to_visit:
         pid = to_visit.pop()
         if pid in visited:
@@ -59,7 +67,8 @@ def _detect_backend_from_proc(pane_pid: int | None) -> CliBackend:
             continue
         backend = _COMM_TO_BACKEND.get(comm)
         if backend is not None:
-            return backend
+            backend_result = backend
+            break
         # Enqueue children via /proc/<pid>/task/<tid>/children.
         task_dir = proc_root / str(pid) / "task"
         try:
@@ -74,7 +83,8 @@ def _detect_backend_from_proc(pane_pid: int | None) -> CliBackend:
                     pass
         except OSError:
             pass
-    return CliBackend.UNKNOWN
+    _PROC_BACKEND_CACHE[pane_pid] = (current, backend_result)
+    return backend_result
 
 
 def detect_backend(

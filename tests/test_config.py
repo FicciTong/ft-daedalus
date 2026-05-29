@@ -34,6 +34,8 @@ class ConfigTests(unittest.TestCase):
                 "DAEDALUS_WECHAT_PROGRESS_UPDATES=on\n"
                 "DAEDALUS_WECHAT_TEXT_CHUNK_LIMIT=3333\n"
                 "DAEDALUS_WECHAT_OUTBOX_RETRY_INTERVAL_SECONDS=0.75\n"
+                "DAEDALUS_WECHAT_MIRROR_POLL_INTERVAL_SECONDS=1.25\n"
+                "DAEDALUS_WECHAT_RUNTIME_INVENTORY_CACHE_SECONDS=4.5\n"
             )
             with patch.dict(
                 os.environ,
@@ -49,6 +51,8 @@ class ConfigTests(unittest.TestCase):
             self.assertTrue(config.progress_updates_default)
             self.assertEqual(config.text_chunk_limit, 3333)
             self.assertEqual(config.outbox_retry_interval_seconds, 0.75)
+            self.assertEqual(config.mirror_poll_interval_seconds, 1.25)
+            self.assertEqual(config.runtime_inventory_cache_seconds, 4.5)
             self.assertTrue(str(config.codex_state_db).endswith(".sqlite"))
             self.assertEqual(config.codex_state_db_source, "default_resolved")
 
@@ -80,6 +84,8 @@ class ConfigTests(unittest.TestCase):
             self.assertFalse(config.progress_updates_default)
             self.assertEqual(config.text_chunk_limit, DEFAULT_TEXT_CHUNK_LIMIT)
             self.assertEqual(config.outbox_retry_interval_seconds, 1.0)
+            self.assertEqual(config.mirror_poll_interval_seconds, 2.0)
+            self.assertEqual(config.runtime_inventory_cache_seconds, 2.0)
 
     def test_load_config_caps_text_chunk_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

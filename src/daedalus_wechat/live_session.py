@@ -93,6 +93,7 @@ class LiveCodexSessionManager:
         canonical_tmux_session: str,
         codex_state_db: Path | None = None,
         opencode_state_db: Path | None = None,
+        runtime_inventory_cache_seconds: float = 2.0,
     ) -> None:
         self.codex_bin = codex_bin
         self.opencode_bin = opencode_bin
@@ -103,6 +104,9 @@ class LiveCodexSessionManager:
         self.session_root = Path.home() / ".codex" / "sessions"
         self.claude_projects_root = Path.home() / ".claude" / "projects"
         self.kimi_sessions_root = Path.home() / ".kimi" / "sessions"
+        self.runtime_inventory_cache_seconds = max(0.0, runtime_inventory_cache_seconds)
+        self._runtime_inventory_cache_at = 0.0
+        self._runtime_inventory_cache: list[TmuxRuntimeInventoryItem] | None = None
 
     def find_latest_thread(self) -> str | None:
         state_db = self.codex_state_db
@@ -200,16 +204,33 @@ class LiveCodexSessionManager:
         return None
 
     def runtime_conflict_reason(self, status: LiveRuntimeStatus) -> str | None:
+        inventory = self.list_tmux_runtime_inventory()
+        statuses = [
+            LiveRuntimeStatus(
+                tmux_session=item.tmux_session,
+                exists=True,
+                pane_command=item.pane_command,
+                thread_id=item.thread_id,
+                pane_cwd=item.pane_cwd,
+                backend=item.backend,
+            )
+            for item in inventory
+            if item.reason != "missing"
+        ]
+        return self._runtime_conflict_reason_from_statuses(status, statuses)
+
+    def _runtime_conflict_reason_from_statuses(
+        self, status: LiveRuntimeStatus, statuses: list[LiveRuntimeStatus]
+    ) -> str | None:
         if (
             not status.exists
             or not status.thread_id
             or status.backend == CliBackend.UNKNOWN.value
         ):
             return None
-        for tmux_session in self._list_tmux_sessions():
-            if tmux_session == status.tmux_session:
+        for other in statuses:
+            if other.tmux_session == status.tmux_session:
                 continue
-            other = self._runtime_status_for_tmux(tmux_session)
             if (
                 not other.exists
                 or not other.thread_id
@@ -402,13 +423,27 @@ class LiveCodexSessionManager:
         return canonical_status
 
     def list_tmux_runtime_inventory(self) -> list[TmuxRuntimeInventoryItem]:
+        current = time.monotonic()
+        if self._runtime_inventory_cache is not None and (
+            current - self._runtime_inventory_cache_at
+        ) <= self.runtime_inventory_cache_seconds:
+            return list(self._runtime_inventory_cache)
+        inventory = self._list_tmux_runtime_inventory_uncached()
+        self._runtime_inventory_cache_at = current
+        self._runtime_inventory_cache = list(inventory)
+        return inventory
+
+    def _list_tmux_runtime_inventory_uncached(self) -> list[TmuxRuntimeInventoryItem]:
         items: list[TmuxRuntimeInventoryItem] = []
-        for tmux_session in self._list_tmux_sessions():
-            status = self._runtime_status_for_tmux(tmux_session)
+        statuses = [
+            self._runtime_status_for_tmux(tmux_session)
+            for tmux_session in self._list_tmux_sessions()
+        ]
+        for status in statuses:
             if not status.exists:
                 items.append(
                     TmuxRuntimeInventoryItem(
-                        tmux_session=tmux_session,
+                        tmux_session=status.tmux_session,
                         pane_command=None,
                         thread_id=None,
                         pane_cwd=None,
@@ -417,7 +452,9 @@ class LiveCodexSessionManager:
                     )
                 )
                 continue
-            conflict_reason = self.runtime_conflict_reason(status)
+            conflict_reason = self._runtime_conflict_reason_from_statuses(
+                status, statuses
+            )
             if (
                 conflict_reason is not None
                 and conflict_reason != "duplicate-runtime-id"

@@ -411,6 +411,7 @@ def main() -> int:
             canonical_tmux_session=config.canonical_tmux_session,
             codex_state_db=config.codex_state_db,
             opencode_state_db=config.opencode_state_db,
+            runtime_inventory_cache_seconds=config.runtime_inventory_cache_seconds,
         )
         print(f"latest_codex_thread={runner.find_latest_thread()}")
         print(
@@ -469,6 +470,7 @@ def main() -> int:
             canonical_tmux_session=config.canonical_tmux_session,
             codex_state_db=config.codex_state_db,
             opencode_state_db=config.opencode_state_db,
+            runtime_inventory_cache_seconds=config.runtime_inventory_cache_seconds,
         ),
         state=state,
     )

@@ -26,6 +26,8 @@ class BridgeConfig:
     text_chunk_limit: int = DEFAULT_TEXT_CHUNK_LIMIT
     min_send_interval_seconds: float = 1.5
     outbox_retry_interval_seconds: float = 1.0
+    mirror_poll_interval_seconds: float = 2.0
+    runtime_inventory_cache_seconds: float = 2.0
 
     @property
     def state_file(self) -> Path:
@@ -218,6 +220,20 @@ def load_config() -> BridgeConfig:
         ),
         default=1.0,
     )
+    mirror_poll_interval_seconds = _parse_float(
+        os.environ.get(
+            "DAEDALUS_WECHAT_MIRROR_POLL_INTERVAL_SECONDS",
+            file_env.get("DAEDALUS_WECHAT_MIRROR_POLL_INTERVAL_SECONDS"),
+        ),
+        default=2.0,
+    )
+    runtime_inventory_cache_seconds = _parse_float(
+        os.environ.get(
+            "DAEDALUS_WECHAT_RUNTIME_INVENTORY_CACHE_SECONDS",
+            file_env.get("DAEDALUS_WECHAT_RUNTIME_INVENTORY_CACHE_SECONDS"),
+        ),
+        default=2.0,
+    )
     return BridgeConfig(
         codex_bin=codex_bin,
         opencode_bin=opencode_bin,
@@ -234,4 +250,6 @@ def load_config() -> BridgeConfig:
         text_chunk_limit=_bounded_text_chunk_limit(text_chunk_limit),
         min_send_interval_seconds=min_send_interval_seconds,
         outbox_retry_interval_seconds=outbox_retry_interval_seconds,
+        mirror_poll_interval_seconds=max(0.2, mirror_poll_interval_seconds),
+        runtime_inventory_cache_seconds=max(0.0, runtime_inventory_cache_seconds),
     )
