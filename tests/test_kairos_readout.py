@@ -548,6 +548,10 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "next_follow_tail5=25.15%" in text
     assert "HIGH_INDUSTRY_CONCENTRATION" in text
     assert "日包总入口" in text
+    assert (
+        "owner_brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF "
+        "rows=40 source=package"
+    ) in text
     assert "intraday_manifest=REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST" in text
     assert "rows=144 symbols=41 windows=3 edge_runtime=Windows ft-edge" in text
     assert "intraday_alert=REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT" in text
@@ -595,6 +599,19 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "net=0.99%" in text
     assert "n=1005/days=32" in text
     assert "wounds=3" in text
+
+
+def test_format_kairos_owner_brief_falls_back_when_package_lacks_brief() -> None:
+    payload = _sample_owner_brief_payload()
+    package = _sample_owner_daily_package_payload()
+    package.pop("owner_review_brief")
+
+    text = format_kairos_owner_brief(payload, daily_package=package)
+
+    assert (
+        "owner_brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF "
+        "rows=1 source=latest_owner_brief_fallback"
+    ) in text
 
 
 def test_cli_brief_does_not_require_bridge_state(tmp_path: Path, capsys, monkeypatch) -> None:

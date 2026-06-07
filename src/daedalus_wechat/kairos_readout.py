@@ -337,6 +337,7 @@ def _as_list(value: Any) -> list[Any]:
 def _format_daily_package_handoff(
     package: dict[str, Any] | None,
     *,
+    owner_brief_payload: dict[str, Any] | None = None,
     intraday_alert: dict[str, Any] | None = None,
 ) -> list[str]:
     if not isinstance(package, dict):
@@ -356,6 +357,16 @@ def _format_daily_package_handoff(
         ]
 
     owner_brief = _as_dict(package.get("owner_review_brief"))
+    owner_brief_source = "package"
+    if not owner_brief:
+        brief_payload = _as_dict(owner_brief_payload)
+        brief_candidates = _as_list(brief_payload.get("owner_review_candidates"))
+        if brief_payload.get("status"):
+            owner_brief = {
+                "source_status": brief_payload.get("status"),
+                "owner_review_candidate_count": len(brief_candidates),
+            }
+            owner_brief_source = "latest_owner_brief_fallback"
     intraday_manifest = _as_dict(package.get("intraday_candidate_manifest"))
     windows = _as_list(intraday_manifest.get("collection_windows"))
     edge_contract = _as_dict(intraday_manifest.get("edge_collection_contract"))
@@ -370,7 +381,8 @@ def _format_daily_package_handoff(
         ),
         (
             f"- owner_brief={owner_brief.get('source_status', 'unknown')} "
-            f"rows={_fmt_num(owner_brief.get('owner_review_candidate_count'))}"
+            f"rows={_fmt_num(owner_brief.get('owner_review_candidate_count'))} "
+            f"source={owner_brief_source}"
         ),
         (
             f"- intraday_manifest={intraday_manifest.get('source_status', 'unknown')} "
@@ -743,6 +755,7 @@ def format_kairos_owner_brief(
     lines.extend(
         _format_daily_package_handoff(
             daily_package,
+            owner_brief_payload=payload,
             intraday_alert=intraday_alert,
         )
     )
