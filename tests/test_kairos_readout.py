@@ -11,6 +11,7 @@ from daedalus_wechat.kairos_readout import (
     format_kairos_owner_brief,
     format_kairos_today_readout,
     load_kairos_intraday_alert,
+    load_kairos_intraday_candidate_manifest,
     load_kairos_owner_brief,
     load_kairos_owner_daily_package,
     load_kairos_today_readout,
@@ -416,6 +417,39 @@ def _sample_intraday_alert_payload() -> dict[str, object]:
     }
 
 
+def _sample_intraday_manifest_payload() -> dict[str, object]:
+    return {
+        "status": "REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST",
+        "as_of_date": "2026-06-05",
+        "target_trade_date": "2026-06-08",
+        "accepted_edges": 0,
+        "candidate_count": 144,
+        "unique_symbol_count": 41,
+        "markdown_path": "/tmp/short_cycle_intraday_candidate_manifest_latest.md",
+        "edge_collection_contract": {
+            "edge_runtime": "Windows ft-edge",
+            "transport": "file handoff; no DB writes",
+        },
+        "collection_windows": [
+            {
+                "time_cst": "09:26",
+                "window_id": "opening_print_0926",
+                "owner_use": "opening print observation",
+            },
+            {
+                "time_cst": "09:36",
+                "window_id": "first5m_preliminary_0936",
+                "owner_use": "first five minute observation",
+            },
+            {
+                "time_cst": "10:01",
+                "window_id": "first30m_confirmation_1001",
+                "owner_use": "first thirty minute observation",
+            },
+        ],
+    }
+
+
 def test_load_kairos_today_readout_reads_report(tmp_path: Path) -> None:
     report_path = tmp_path / "owner_readiness_readout_latest.json"
     report_path.write_text(
@@ -553,7 +587,10 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
         "rows=40 source=package"
     ) in text
     assert "intraday_manifest=REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST" in text
-    assert "rows=144 symbols=41 windows=3 edge_runtime=Windows ft-edge" in text
+    assert (
+        "rows=144 symbols=41 windows=3 edge_runtime=Windows ft-edge source=package"
+        in text
+    )
     assert "intraday_alert=REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT" in text
     assert "rows=2 observed=2 pending=25 topn=20 right_tail_supp=7 clusters=2" in text
     assert "intraday_alert_md=/tmp/short_cycle_intraday_owner_alert_latest.md" in text
@@ -614,6 +651,26 @@ def test_format_kairos_owner_brief_falls_back_when_package_lacks_brief() -> None
     ) in text
 
 
+def test_format_kairos_owner_brief_falls_back_when_package_lacks_intraday_manifest() -> None:
+    payload = _sample_owner_brief_payload()
+    package = _sample_owner_daily_package_payload()
+    package.pop("intraday_candidate_manifest")
+
+    text = format_kairos_owner_brief(
+        payload,
+        daily_package=package,
+        intraday_manifest=_sample_intraday_manifest_payload(),
+    )
+
+    assert "intraday_manifest=REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST" in text
+    assert (
+        "rows=144 symbols=41 windows=3 edge_runtime=Windows ft-edge "
+        "source=latest_intraday_manifest_fallback"
+    ) in text
+    assert "10:01 first30m_confirmation_1001" in text
+    assert "intraday_md=/tmp/short_cycle_intraday_candidate_manifest_latest.md" in text
+
+
 def test_cli_brief_does_not_require_bridge_state(tmp_path: Path, capsys, monkeypatch) -> None:
     report_path = tmp_path / "short_cycle_owner_review_brief_latest.json"
     report_path.write_text(
@@ -627,6 +684,10 @@ def test_cli_brief_does_not_require_bridge_state(tmp_path: Path, capsys, monkeyp
     monkeypatch.setattr(
         "daedalus_wechat.cli.load_kairos_owner_daily_package",
         lambda: _sample_owner_daily_package_payload(),
+    )
+    monkeypatch.setattr(
+        "daedalus_wechat.cli.load_kairos_intraday_candidate_manifest",
+        lambda: _sample_intraday_manifest_payload(),
     )
 
     rc = main()
@@ -645,6 +706,9 @@ def test_daemon_brief_command_is_read_only() -> None:
     ), patch(
         "daedalus_wechat.daemon.load_kairos_owner_daily_package",
         return_value=_sample_owner_daily_package_payload(),
+    ), patch(
+        "daedalus_wechat.daemon.load_kairos_intraday_candidate_manifest",
+        return_value=_sample_intraday_manifest_payload(),
     ), patch(
         "daedalus_wechat.daemon.load_kairos_intraday_alert",
         return_value=_sample_intraday_alert_payload(),
@@ -668,6 +732,22 @@ def test_load_kairos_intraday_alert_reads_latest_report(tmp_path: Path) -> None:
     payload = load_kairos_intraday_alert(report_path)
 
     assert payload["status"] == "REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT"
+    assert payload["report_path"] == str(report_path)
+    assert payload["accepted_edges"] == 0
+
+
+def test_load_kairos_intraday_candidate_manifest_reads_latest_report(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "short_cycle_intraday_candidate_manifest_latest.json"
+    report_path.write_text(
+        json.dumps(_sample_intraday_manifest_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    payload = load_kairos_intraday_candidate_manifest(report_path)
+
+    assert payload["status"] == "REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST"
     assert payload["report_path"] == str(report_path)
     assert payload["accepted_edges"] == 0
 

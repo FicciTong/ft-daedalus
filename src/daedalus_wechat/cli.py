@@ -25,6 +25,7 @@ from .kairos_readout import (
     format_kairos_owner_brief,
     format_kairos_today_readout,
     load_kairos_intraday_alert,
+    load_kairos_intraday_candidate_manifest,
     load_kairos_owner_brief,
     load_kairos_owner_daily_package,
     load_kairos_today_readout,
@@ -411,6 +412,7 @@ def main() -> int:
                     payload,
                     candidate_limit=args.limit,
                     daily_package=load_kairos_owner_daily_package(),
+                    intraday_manifest=load_kairos_intraday_candidate_manifest(),
                     intraday_alert=load_kairos_intraday_alert(),
                 )
             )

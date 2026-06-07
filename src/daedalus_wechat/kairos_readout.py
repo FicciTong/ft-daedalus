@@ -59,6 +59,19 @@ def default_kairos_intraday_alert_path() -> Path:
     )
 
 
+def default_kairos_intraday_candidate_manifest_path() -> Path:
+    """Return the workbench-local Kairos short-cycle intraday manifest path."""
+    cosmos_root = Path(__file__).resolve().parents[3]
+    return (
+        cosmos_root
+        / "ft-kairos"
+        / "var"
+        / "reports"
+        / "research_substrate"
+        / "short_cycle_intraday_candidate_manifest_latest.json"
+    )
+
+
 def _missing_payload(report_path: Path, *, status: str, reason: str) -> dict[str, Any]:
     return {
         "report_contract": "daedalus_wechat.kairos_today_readout",
@@ -157,6 +170,29 @@ def _missing_intraday_alert_payload(
             "status": "MISSING",
             "message": reason,
         },
+        "authority_boundary": {
+            "authority_delta": "none",
+            "owner_advisory_allowed": False,
+            "owner_pnl_claim_allowed": False,
+            "consumer_cutover_allowed": False,
+            "live_broker_allowed": False,
+            "auto_order_allowed": False,
+        },
+        "errors": [reason],
+    }
+
+
+def _missing_intraday_candidate_manifest_payload(
+    report_path: Path, *, status: str, reason: str
+) -> dict[str, Any]:
+    return {
+        "contract": "daedalus_wechat.kairos_intraday_candidate_manifest_readout",
+        "readout_source": "fail_closed",
+        "status": status,
+        "report_path": str(report_path),
+        "as_of_date": None,
+        "target_trade_date": None,
+        "accepted_edges": 0,
         "authority_boundary": {
             "authority_delta": "none",
             "owner_advisory_allowed": False,
@@ -291,6 +327,44 @@ def load_kairos_intraday_alert(report_path: Path | None = None) -> dict[str, Any
     return payload
 
 
+def load_kairos_intraday_candidate_manifest(
+    report_path: Path | None = None,
+) -> dict[str, Any]:
+    path = report_path or default_kairos_intraday_candidate_manifest_path()
+    if not path.is_file():
+        return _missing_intraday_candidate_manifest_payload(
+            path,
+            status="MISSING",
+            reason="Kairos short-cycle intraday candidate manifest is missing",
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except JSONDecodeError as exc:
+        return _missing_intraday_candidate_manifest_payload(
+            path,
+            status="BLOCKED",
+            reason=(
+                "Kairos short-cycle intraday candidate manifest is invalid JSON: "
+                f"{exc.msg}"
+            ),
+        )
+    except OSError as exc:
+        return _missing_intraday_candidate_manifest_payload(
+            path,
+            status="BLOCKED",
+            reason=f"Kairos short-cycle intraday candidate manifest cannot be read: {exc}",
+        )
+    if not isinstance(payload, dict):
+        return _missing_intraday_candidate_manifest_payload(
+            path,
+            status="BLOCKED",
+            reason="Kairos short-cycle intraday candidate manifest root is not an object",
+        )
+    payload = dict(payload)
+    payload["report_path"] = str(path)
+    return payload
+
+
 def _fmt_pct(value: Any) -> str:
     if value is None:
         return "None"
@@ -338,6 +412,7 @@ def _format_daily_package_handoff(
     package: dict[str, Any] | None,
     *,
     owner_brief_payload: dict[str, Any] | None = None,
+    intraday_manifest_payload: dict[str, Any] | None = None,
     intraday_alert: dict[str, Any] | None = None,
 ) -> list[str]:
     if not isinstance(package, dict):
@@ -368,6 +443,24 @@ def _format_daily_package_handoff(
             }
             owner_brief_source = "latest_owner_brief_fallback"
     intraday_manifest = _as_dict(package.get("intraday_candidate_manifest"))
+    intraday_manifest_source = "package"
+    if not intraday_manifest:
+        manifest_payload = _as_dict(intraday_manifest_payload)
+        manifest_status = manifest_payload.get("status")
+        if manifest_status:
+            manifest_windows = _as_list(manifest_payload.get("collection_windows"))
+            intraday_manifest = {
+                "source_status": manifest_status,
+                "candidate_count": manifest_payload.get("candidate_count"),
+                "unique_symbol_count": manifest_payload.get("unique_symbol_count"),
+                "collection_window_count": len(manifest_windows),
+                "collection_windows": manifest_windows,
+                "edge_collection_contract": manifest_payload.get(
+                    "edge_collection_contract"
+                ),
+                "source_markdown_path": manifest_payload.get("markdown_path"),
+            }
+            intraday_manifest_source = "latest_intraday_manifest_fallback"
     windows = _as_list(intraday_manifest.get("collection_windows"))
     edge_contract = _as_dict(intraday_manifest.get("edge_collection_contract"))
 
@@ -389,7 +482,8 @@ def _format_daily_package_handoff(
             f"rows={_fmt_num(intraday_manifest.get('candidate_count'))} "
             f"symbols={_fmt_num(intraday_manifest.get('unique_symbol_count'))} "
             f"windows={_fmt_num(intraday_manifest.get('collection_window_count'))} "
-            f"edge_runtime={edge_contract.get('edge_runtime', 'unknown')}"
+            f"edge_runtime={edge_contract.get('edge_runtime', 'unknown')} "
+            f"source={intraday_manifest_source}"
         ),
     ]
     for row in windows[:3]:
@@ -680,6 +774,7 @@ def format_kairos_owner_brief(
     *,
     candidate_limit: int = 12,
     daily_package: dict[str, Any] | None = None,
+    intraday_manifest: dict[str, Any] | None = None,
     intraday_alert: dict[str, Any] | None = None,
 ) -> str:
     """Render the latest owner review brief as a compact mobile readout."""
@@ -756,6 +851,7 @@ def format_kairos_owner_brief(
         _format_daily_package_handoff(
             daily_package,
             owner_brief_payload=payload,
+            intraday_manifest_payload=intraday_manifest,
             intraday_alert=intraday_alert,
         )
     )
@@ -1025,6 +1121,7 @@ def format_kairos_today_readout(payload: dict[str, Any]) -> str:
 
 
 __all__ = [
+    "default_kairos_intraday_candidate_manifest_path",
     "default_kairos_intraday_alert_path",
     "default_kairos_owner_daily_package_path",
     "default_kairos_owner_brief_path",
@@ -1032,6 +1129,7 @@ __all__ = [
     "format_kairos_intraday_alert",
     "format_kairos_owner_brief",
     "format_kairos_today_readout",
+    "load_kairos_intraday_candidate_manifest",
     "load_kairos_intraday_alert",
     "load_kairos_owner_daily_package",
     "load_kairos_owner_brief",
