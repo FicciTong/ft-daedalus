@@ -11,6 +11,7 @@ from daedalus_wechat.kairos_readout import (
     format_kairos_owner_brief,
     format_kairos_today_readout,
     load_kairos_forward_shadow_track_record,
+    load_kairos_hypothesis_scout_readout,
     load_kairos_intraday_alert,
     load_kairos_intraday_candidate_manifest,
     load_kairos_owner_brief,
@@ -430,6 +431,67 @@ def _sample_forward_shadow_track_record_payload() -> dict[str, object]:
     }
 
 
+def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
+    return {
+        "status": "REPORT_ONLY_SHORT_CYCLE_HYPOTHESIS_SCOUT_READOUT",
+        "accepted_edges": 0,
+        "report_path": "/tmp/short_cycle_hypothesis_scout_readout_latest.json",
+        "markdown_path": "/tmp/short_cycle_hypothesis_scout_readout_latest.md",
+        "counts": {
+            "scout_cell_count": 724,
+            "hypothesis_card_count": 40,
+            "dispatchable_pending_run_cell_count": 520,
+            "needs_executable_spec_cell_count": 124,
+            "pending_surface_cell_count": 80,
+        },
+        "owner_review_surface": {
+            "surface_status": "REPORT_ONLY_SCOUT_INTAKE_DENOMINATOR",
+            "top_families": [
+                {"name": "execution_template_ablation", "count": 92},
+                {"name": "intraday_price_volume", "count": 88},
+                {"name": "auction_microstructure", "count": 80},
+            ],
+            "top_hypotheses": [
+                {"name": "next_open_vs_first5m_vwap_gap", "count": 32},
+                {"name": "tail_accumulation_next_open", "count": 32},
+            ],
+            "dispatchable_examples": [
+                {
+                    "hypothesis_id": "ice_point_repair_first_board",
+                    "family": "emotion_cycle_timing",
+                    "horizon_id": "next_open_to_d3_close",
+                    "route": "NEEDS_DAYWALK",
+                    "execution_dispatch": "EXECUTABLE",
+                    "missing_surface_requirements": [],
+                    "next_action": "run_daywalk_stability_and_forward_observed_readout",
+                }
+            ],
+            "needs_executable_spec_examples": [
+                {
+                    "hypothesis_id": "tail_accumulation_next_open",
+                    "family": "intraday_price_volume",
+                    "horizon_id": "tail_buy_to_next_open",
+                    "route": "RESOLVE_BLOCKER",
+                    "execution_dispatch": "NEEDS_EXECUTABLE_SPEC",
+                    "missing_surface_requirements": [],
+                    "next_action": "write_machine_executable_predicate_or_registered_runner_spec",
+                }
+            ],
+            "pending_surface_examples": [
+                {
+                    "hypothesis_id": "northbound_out_active_money_smallcap",
+                    "family": "fund_preference_flow",
+                    "horizon_id": "next_open_to_d3_close",
+                    "route": "RESOLVE_BLOCKER",
+                    "execution_dispatch": None,
+                    "missing_surface_requirements": ["canonical.northbound_flow_day"],
+                    "next_action": "materialize_pit_safe_source_surface_before_freeze",
+                }
+            ],
+        },
+    }
+
+
 def _sample_intraday_alert_payload() -> dict[str, object]:
     return {
         "status": "REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT",
@@ -712,6 +774,22 @@ def test_load_kairos_forward_shadow_track_record_reads_latest_report(
     assert payload["accepted_edges"] == 0
 
 
+def test_load_kairos_hypothesis_scout_readout_reads_latest_report(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "short_cycle_hypothesis_scout_readout_latest.json"
+    report_path.write_text(
+        json.dumps(_sample_hypothesis_scout_readout_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    payload = load_kairos_hypothesis_scout_readout(report_path)
+
+    assert payload["status"] == "REPORT_ONLY_SHORT_CYCLE_HYPOTHESIS_SCOUT_READOUT"
+    assert payload["report_path"] == str(report_path)
+    assert payload["accepted_edges"] == 0
+
+
 def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) -> None:
     payload = _sample_owner_brief_payload()
     payload["report_path"] = str(tmp_path / "brief.json")
@@ -722,6 +800,7 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
         payload,
         daily_package=package,
         intraday_alert=_sample_intraday_alert_payload(),
+        hypothesis_scout_readout=_sample_hypothesis_scout_readout_payload(),
     )
 
     assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in text
@@ -806,6 +885,20 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "tape=RIGHT_TAIL_TAPE_ACTIVE 涨停=88 高度=5 炸板=63" in text
     assert "not a position-sizing instruction" in text
     assert "not position sizing" in text
+    assert "Broad scout intake" in text
+    assert (
+        "cells=724 hypotheses=40 dispatchable=520 needs_spec=124 pending_surface=80"
+        in text
+    )
+    assert "top_families execution_template_ablation=92 intraday_price_volume=88" in text
+    assert "dispatchable: ice_point_repair_first_board family=emotion_cycle_timing" in text
+    assert "needs_spec: tail_accumulation_next_open family=intraday_price_volume" in text
+    assert (
+        "pending_surface: northbound_out_active_money_smallcap "
+        "family=fund_preference_flow"
+    ) in text
+    assert "missing=canonical.northbound_flow_day" in text
+    assert "scout denominator only; not evidence, not edge, not GO, not advice" in text
     assert "跨horizon右尾交集" in text
     assert "clusters=1 stocks=4 consensus=17 diagnostic_only=true" in text
     assert "support_state=CROSS_HORIZON_SINGLE_WINDOW_ONLY" in text
@@ -932,6 +1025,10 @@ def test_cli_brief_does_not_require_bridge_state(tmp_path: Path, capsys, monkeyp
         "daedalus_wechat.cli.load_kairos_forward_shadow_track_record",
         lambda: _sample_forward_shadow_track_record_payload(),
     )
+    monkeypatch.setattr(
+        "daedalus_wechat.cli.load_kairos_hypothesis_scout_readout",
+        lambda: _sample_hypothesis_scout_readout_payload(),
+    )
 
     rc = main()
 
@@ -939,6 +1036,7 @@ def test_cli_brief_does_not_require_bridge_state(tmp_path: Path, capsys, monkeyp
     out = capsys.readouterr().out
     assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in out
     assert "日包总入口" in out
+    assert "Broad scout intake" in out
     assert "002251.SZ 步步高" in out
 
 
@@ -958,6 +1056,9 @@ def test_daemon_brief_command_is_read_only() -> None:
     ), patch(
         "daedalus_wechat.daemon.load_kairos_forward_shadow_track_record",
         return_value=_sample_forward_shadow_track_record_payload(),
+    ), patch(
+        "daedalus_wechat.daemon.load_kairos_hypothesis_scout_readout",
+        return_value=_sample_hypothesis_scout_readout_payload(),
     ):
         text = BridgeDaemon._handle_command(BridgeDaemon.__new__(BridgeDaemon), "/brief")
 
@@ -966,6 +1067,7 @@ def test_daemon_brief_command_is_read_only() -> None:
     assert "intraday_manifest=REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST" in text
     assert "intraday_alert=REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT" in text
     assert "Forward-shadow闭环" in text
+    assert "Broad scout intake" in text
 
 
 def test_load_kairos_intraday_alert_reads_latest_report(tmp_path: Path) -> None:

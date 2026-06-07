@@ -72,6 +72,19 @@ def default_kairos_intraday_candidate_manifest_path() -> Path:
     )
 
 
+def default_kairos_hypothesis_scout_readout_path() -> Path:
+    """Return the workbench-local Kairos short-cycle hypothesis scout path."""
+    cosmos_root = Path(__file__).resolve().parents[3]
+    return (
+        cosmos_root
+        / "ft-kairos"
+        / "var"
+        / "reports"
+        / "research_substrate"
+        / "short_cycle_hypothesis_scout_readout_latest.json"
+    )
+
+
 def default_kairos_forward_shadow_track_record_path() -> Path:
     """Return the workbench-local Kairos forward-shadow track-record path."""
     cosmos_root = Path(__file__).resolve().parents[3]
@@ -264,6 +277,27 @@ def _missing_forward_shadow_track_record_payload(
     }
 
 
+def _missing_hypothesis_scout_readout_payload(
+    report_path: Path, *, status: str, reason: str
+) -> dict[str, Any]:
+    return {
+        "contract": "daedalus_wechat.kairos_hypothesis_scout_readout",
+        "readout_source": "fail_closed",
+        "status": status,
+        "report_path": str(report_path),
+        "accepted_edges": 0,
+        "authority_boundary": {
+            "authority_delta": "none",
+            "owner_advisory_allowed": False,
+            "owner_pnl_claim_allowed": False,
+            "consumer_cutover_allowed": False,
+            "live_broker_allowed": False,
+            "auto_order_allowed": False,
+        },
+        "errors": [reason],
+    }
+
+
 def load_kairos_owner_brief(report_path: Path | None = None) -> dict[str, Any]:
     path = report_path or default_kairos_owner_brief_path()
     if not path.is_file():
@@ -324,6 +358,41 @@ def load_kairos_owner_daily_package(report_path: Path | None = None) -> dict[str
             path,
             status="BLOCKED",
             reason="Kairos short-cycle owner daily package root is not an object",
+        )
+    payload = dict(payload)
+    payload["report_path"] = str(path)
+    return payload
+
+
+def load_kairos_hypothesis_scout_readout(
+    report_path: Path | None = None,
+) -> dict[str, Any]:
+    path = report_path or default_kairos_hypothesis_scout_readout_path()
+    if not path.is_file():
+        return _missing_hypothesis_scout_readout_payload(
+            path,
+            status="MISSING",
+            reason="Kairos short-cycle hypothesis scout readout is missing",
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except JSONDecodeError as exc:
+        return _missing_hypothesis_scout_readout_payload(
+            path,
+            status="BLOCKED",
+            reason=f"Kairos hypothesis scout readout is invalid JSON: {exc.msg}",
+        )
+    except OSError as exc:
+        return _missing_hypothesis_scout_readout_payload(
+            path,
+            status="BLOCKED",
+            reason=f"Kairos hypothesis scout readout cannot be read: {exc}",
+        )
+    if not isinstance(payload, dict):
+        return _missing_hypothesis_scout_readout_payload(
+            path,
+            status="BLOCKED",
+            reason="Kairos hypothesis scout readout root is not an object",
         )
     payload = dict(payload)
     payload["report_path"] = str(path)
@@ -1070,6 +1139,95 @@ def _format_cross_horizon_clusters(payload: dict[str, Any], *, limit: int = 3) -
     return lines
 
 
+def _fmt_named_counts(rows: list[Any], *, limit: int = 3) -> str:
+    parts: list[str] = []
+    for row in rows[:limit]:
+        if not isinstance(row, dict):
+            continue
+        parts.append(f"{row.get('name', 'unknown')}={_fmt_num(row.get('count'))}")
+    return " ".join(parts) if parts else "none"
+
+
+def _format_scout_example(row: dict[str, Any]) -> str:
+    missing = _as_list(row.get("missing_surface_requirements"))
+    missing_text = ",".join(str(item) for item in missing[:3]) if missing else "none"
+    return (
+        f"{row.get('hypothesis_id', 'unknown')} "
+        f"family={row.get('family', 'unknown')} "
+        f"horizon={row.get('horizon_id', 'unknown')} "
+        f"route={row.get('route', 'unknown')} "
+        f"dispatch={row.get('execution_dispatch', 'unknown')} "
+        f"missing={missing_text} "
+        f"next={row.get('next_action', 'review')}"
+    )
+
+
+def _format_hypothesis_scout_readout(
+    scout: dict[str, Any] | None,
+    *,
+    limit: int = 2,
+) -> list[str]:
+    if not isinstance(scout, dict):
+        return []
+
+    errors = _as_list(scout.get("errors"))
+    if errors:
+        return [
+            "",
+            "Broad scout intake:",
+            (
+                f"- scout={scout.get('status', 'unknown')} "
+                f"accepted_edges={scout.get('accepted_edges', 0)}"
+            ),
+            *[f"- error={item}" for item in errors[:2]],
+            f"- artifact={scout.get('report_path', 'unknown')}",
+            "- boundary=scout unavailable; no evidence, no edge, no GO, no advice",
+        ]
+
+    counts = _as_dict(scout.get("counts"))
+    surface = _as_dict(scout.get("owner_review_surface"))
+    top_families = _as_list(surface.get("top_families"))
+    top_hypotheses = _as_list(surface.get("top_hypotheses"))
+    dispatchable = _as_list(surface.get("dispatchable_examples"))
+    needs_spec = _as_list(surface.get("needs_executable_spec_examples"))
+    pending_surface = _as_list(surface.get("pending_surface_examples"))
+
+    lines = [
+        "",
+        "Broad scout intake:",
+        (
+            f"- scout={scout.get('status', 'unknown')} "
+            f"surface={surface.get('surface_status', 'unknown')} "
+            f"cells={_fmt_num(counts.get('scout_cell_count'))} "
+            f"hypotheses={_fmt_num(counts.get('hypothesis_card_count'))} "
+            f"dispatchable={_fmt_num(counts.get('dispatchable_pending_run_cell_count'))} "
+            f"needs_spec={_fmt_num(counts.get('needs_executable_spec_cell_count'))} "
+            f"pending_surface={_fmt_num(counts.get('pending_surface_cell_count'))} "
+            f"accepted_edges={scout.get('accepted_edges', 0)}"
+        ),
+        (
+            f"- top_families {_fmt_named_counts(top_families, limit=4)}; "
+            f"top_hypotheses {_fmt_named_counts(top_hypotheses, limit=4)}"
+        ),
+    ]
+    for row in dispatchable[:limit]:
+        if isinstance(row, dict):
+            lines.append(f"- dispatchable: {_format_scout_example(row)}")
+    for row in needs_spec[:limit]:
+        if isinstance(row, dict):
+            lines.append(f"- needs_spec: {_format_scout_example(row)}")
+    for row in pending_surface[:limit]:
+        if isinstance(row, dict):
+            lines.append(f"- pending_surface: {_format_scout_example(row)}")
+    markdown_path = scout.get("markdown_path")
+    if markdown_path:
+        lines.append(f"- scout_md={markdown_path}")
+    lines.append(
+        "- boundary=scout denominator only; not evidence, not edge, not GO, not advice"
+    )
+    return lines
+
+
 def format_kairos_owner_brief(
     payload: dict[str, Any],
     *,
@@ -1078,6 +1236,7 @@ def format_kairos_owner_brief(
     intraday_manifest: dict[str, Any] | None = None,
     intraday_alert: dict[str, Any] | None = None,
     forward_shadow_track_record: dict[str, Any] | None = None,
+    hypothesis_scout_readout: dict[str, Any] | None = None,
 ) -> str:
     """Render the latest owner review brief as a compact mobile readout."""
 
@@ -1169,6 +1328,12 @@ def format_kairos_owner_brief(
         )
     )
     lines.extend(_format_explosive_posture(payload))
+    lines.extend(
+        _format_hypothesis_scout_readout(
+            hypothesis_scout_readout,
+            limit=min(candidate_limit, 2),
+        )
+    )
     lines.extend(_format_weak_signal_queue(payload, limit=min(candidate_limit, 5)))
     lines.extend(_format_cross_horizon_clusters(payload, limit=3))
 
@@ -1438,6 +1603,7 @@ def format_kairos_today_readout(payload: dict[str, Any]) -> str:
 
 __all__ = [
     "default_kairos_forward_shadow_track_record_path",
+    "default_kairos_hypothesis_scout_readout_path",
     "default_kairos_intraday_candidate_manifest_path",
     "default_kairos_intraday_alert_path",
     "default_kairos_owner_daily_package_path",
@@ -1447,6 +1613,7 @@ __all__ = [
     "format_kairos_owner_brief",
     "format_kairos_today_readout",
     "load_kairos_forward_shadow_track_record",
+    "load_kairos_hypothesis_scout_readout",
     "load_kairos_intraday_candidate_manifest",
     "load_kairos_intraday_alert",
     "load_kairos_owner_daily_package",
