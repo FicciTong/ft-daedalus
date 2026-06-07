@@ -34,6 +34,7 @@ from .kairos_readout import (
     format_kairos_intraday_alert,
     format_kairos_owner_brief,
     format_kairos_today_readout,
+    load_kairos_forward_shadow_track_record,
     load_kairos_intraday_alert,
     load_kairos_intraday_candidate_manifest,
     load_kairos_owner_brief,
@@ -878,6 +879,7 @@ class BridgeDaemon:
                 daily_package=load_kairos_owner_daily_package(),
                 intraday_manifest=load_kairos_intraday_candidate_manifest(),
                 intraday_alert=load_kairos_intraday_alert(),
+                forward_shadow_track_record=load_kairos_forward_shadow_track_record(),
             )
         if command == "/intraday":
             return format_kairos_intraday_alert(load_kairos_intraday_alert())

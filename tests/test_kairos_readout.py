@@ -10,6 +10,7 @@ from daedalus_wechat.kairos_readout import (
     format_kairos_intraday_alert,
     format_kairos_owner_brief,
     format_kairos_today_readout,
+    load_kairos_forward_shadow_track_record,
     load_kairos_intraday_alert,
     load_kairos_intraday_candidate_manifest,
     load_kairos_owner_brief,
@@ -365,6 +366,42 @@ def _sample_owner_daily_package_payload() -> dict[str, object]:
     }
 
 
+def _sample_forward_shadow_track_record_payload() -> dict[str, object]:
+    return {
+        "contract": "ftkairos.research_substrate.short_cycle_forward_shadow_track_record",
+        "status": "PENDING_SHORT_CYCLE_FORWARD_SHADOW_TRACK_RECORD",
+        "as_of_date": "2026-06-05",
+        "target_trade_date": "2026-06-08",
+        "accepted_edges": 0,
+        "freeze_id": "short_cycle_trigger_forward_shadow_20260608_asof_20260605",
+        "observed_from": {
+            "open_state_waterline": "2026-06-05",
+        },
+        "summary": {
+            "candidate_track_count": 244,
+            "evidence_track_count": 204,
+            "trigger_fired_count": 0,
+            "trigger_not_fired_count": 0,
+            "pending_trigger_count": 244,
+            "following_observed_count": 0,
+            "following_scoreable_candidate_count": 0,
+            "d3_observed_count": 0,
+            "d5_observed_count": 0,
+            "scoreable_candidate_count": 0,
+            "lifecycle_state": "PENDING_TARGET_OPEN_STATE",
+            "next_action": "wait for target open-state and first30m fields",
+            "next_observation_targets": [
+                {
+                    "target": "target_open_state",
+                    "date": "2026-06-08",
+                    "reason": "PENDING_TARGET_OPEN_STATE",
+                    "candidate_count": 244,
+                }
+            ],
+        },
+    }
+
+
 def _sample_intraday_alert_payload() -> dict[str, object]:
     return {
         "status": "REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT",
@@ -599,6 +636,22 @@ def test_load_kairos_owner_daily_package_reads_latest_report(tmp_path: Path) -> 
     assert payload["accepted_edges"] == 0
 
 
+def test_load_kairos_forward_shadow_track_record_reads_latest_report(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "short_cycle_forward_shadow_track_record_latest.json"
+    report_path.write_text(
+        json.dumps(_sample_forward_shadow_track_record_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    payload = load_kairos_forward_shadow_track_record(report_path)
+
+    assert payload["status"] == "PENDING_SHORT_CYCLE_FORWARD_SHADOW_TRACK_RECORD"
+    assert payload["report_path"] == str(report_path)
+    assert payload["accepted_edges"] == 0
+
+
 def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) -> None:
     payload = _sample_owner_brief_payload()
     payload["report_path"] = str(tmp_path / "brief.json")
@@ -719,6 +772,24 @@ def test_format_kairos_owner_brief_falls_back_when_package_lacks_brief() -> None
     ) in text
 
 
+def test_format_kairos_owner_brief_uses_track_record_fallback() -> None:
+    payload = _sample_owner_brief_payload()
+    package = _sample_owner_daily_package_payload()
+    package.pop("forward_shadow_track_record")
+
+    text = format_kairos_owner_brief(
+        payload,
+        daily_package=package,
+        forward_shadow_track_record=_sample_forward_shadow_track_record_payload(),
+    )
+
+    assert "Forward-shadow闭环" in text
+    assert "source=PENDING_SHORT_CYCLE_FORWARD_SHADOW_TRACK_RECORD" in text
+    assert "open_state_waterline=2026-06-05" in text
+    assert "target_open_state@2026-06-08 count=244" in text
+    assert "pending is not failed trade, not negative edge" in text
+
+
 def test_format_kairos_owner_brief_falls_back_when_package_lacks_intraday_manifest() -> None:
     payload = _sample_owner_brief_payload()
     package = _sample_owner_daily_package_payload()
@@ -757,6 +828,10 @@ def test_cli_brief_does_not_require_bridge_state(tmp_path: Path, capsys, monkeyp
         "daedalus_wechat.cli.load_kairos_intraday_candidate_manifest",
         lambda: _sample_intraday_manifest_payload(),
     )
+    monkeypatch.setattr(
+        "daedalus_wechat.cli.load_kairos_forward_shadow_track_record",
+        lambda: _sample_forward_shadow_track_record_payload(),
+    )
 
     rc = main()
 
@@ -780,6 +855,9 @@ def test_daemon_brief_command_is_read_only() -> None:
     ), patch(
         "daedalus_wechat.daemon.load_kairos_intraday_alert",
         return_value=_sample_intraday_alert_payload(),
+    ), patch(
+        "daedalus_wechat.daemon.load_kairos_forward_shadow_track_record",
+        return_value=_sample_forward_shadow_track_record_payload(),
     ):
         text = BridgeDaemon._handle_command(BridgeDaemon.__new__(BridgeDaemon), "/brief")
 

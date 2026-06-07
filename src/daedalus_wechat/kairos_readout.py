@@ -72,6 +72,19 @@ def default_kairos_intraday_candidate_manifest_path() -> Path:
     )
 
 
+def default_kairos_forward_shadow_track_record_path() -> Path:
+    """Return the workbench-local Kairos forward-shadow track-record path."""
+    cosmos_root = Path(__file__).resolve().parents[3]
+    return (
+        cosmos_root
+        / "ft-kairos"
+        / "var"
+        / "reports"
+        / "research_substrate"
+        / "short_cycle_forward_shadow_track_record_latest.json"
+    )
+
+
 def _missing_payload(report_path: Path, *, status: str, reason: str) -> dict[str, Any]:
     return {
         "report_contract": "daedalus_wechat.kairos_today_readout",
@@ -228,6 +241,29 @@ def _missing_owner_daily_package_payload(
     }
 
 
+def _missing_forward_shadow_track_record_payload(
+    report_path: Path, *, status: str, reason: str
+) -> dict[str, Any]:
+    return {
+        "contract": "daedalus_wechat.kairos_forward_shadow_track_record_readout",
+        "readout_source": "fail_closed",
+        "status": status,
+        "report_path": str(report_path),
+        "as_of_date": None,
+        "target_trade_date": None,
+        "accepted_edges": 0,
+        "authority_boundary": {
+            "authority_delta": "none",
+            "owner_advisory_allowed": False,
+            "owner_pnl_claim_allowed": False,
+            "consumer_cutover_allowed": False,
+            "live_broker_allowed": False,
+            "auto_order_allowed": False,
+        },
+        "errors": [reason],
+    }
+
+
 def load_kairos_owner_brief(report_path: Path | None = None) -> dict[str, Any]:
     path = report_path or default_kairos_owner_brief_path()
     if not path.is_file():
@@ -288,6 +324,41 @@ def load_kairos_owner_daily_package(report_path: Path | None = None) -> dict[str
             path,
             status="BLOCKED",
             reason="Kairos short-cycle owner daily package root is not an object",
+        )
+    payload = dict(payload)
+    payload["report_path"] = str(path)
+    return payload
+
+
+def load_kairos_forward_shadow_track_record(
+    report_path: Path | None = None,
+) -> dict[str, Any]:
+    path = report_path or default_kairos_forward_shadow_track_record_path()
+    if not path.is_file():
+        return _missing_forward_shadow_track_record_payload(
+            path,
+            status="MISSING",
+            reason="Kairos short-cycle forward-shadow track record is missing",
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except JSONDecodeError as exc:
+        return _missing_forward_shadow_track_record_payload(
+            path,
+            status="BLOCKED",
+            reason=f"Kairos forward-shadow track record is invalid JSON: {exc.msg}",
+        )
+    except OSError as exc:
+        return _missing_forward_shadow_track_record_payload(
+            path,
+            status="BLOCKED",
+            reason=f"Kairos forward-shadow track record cannot be read: {exc}",
+        )
+    if not isinstance(payload, dict):
+        return _missing_forward_shadow_track_record_payload(
+            path,
+            status="BLOCKED",
+            reason="Kairos forward-shadow track record root is not an object",
         )
     payload = dict(payload)
     payload["report_path"] = str(path)
@@ -732,15 +803,65 @@ def _format_long_window_route_examples(payload: dict[str, Any], *, limit: int = 
 
 def _format_forward_shadow_track_record(
     package: dict[str, Any] | None,
+    *,
+    track_record: dict[str, Any] | None = None,
 ) -> list[str]:
-    if not isinstance(package, dict):
-        return []
-    track = _as_dict(package.get("forward_shadow_track_record"))
+    track = (
+        _as_dict(package.get("forward_shadow_track_record"))
+        if isinstance(package, dict)
+        else {}
+    )
+    if not track:
+        track = _as_dict(track_record)
     if not track:
         return []
-    return [
+
+    if isinstance(track.get("summary"), dict):
+        summary = _as_dict(track.get("summary"))
+        observed_from = _as_dict(track.get("observed_from"))
+        track = {
+            "source_status": track.get("status"),
+            "source_report_path": track.get("report_path"),
+            "source_markdown_path": track.get("markdown_path"),
+            "freeze_id": track.get("freeze_id"),
+            "as_of_date": track.get("as_of_date"),
+            "target_trade_date": track.get("target_trade_date"),
+            "open_state_waterline": observed_from.get("open_state_waterline"),
+            "lifecycle_state": summary.get("lifecycle_state"),
+            "next_action": summary.get("next_action"),
+            "candidate_track_count": summary.get("candidate_track_count"),
+            "trigger_fired_count": summary.get("trigger_fired_count"),
+            "pending_trigger_count": summary.get("pending_trigger_count"),
+            "following_observed_count": summary.get("following_observed_count"),
+            "following_scoreable_candidate_count": summary.get(
+                "following_scoreable_candidate_count"
+            ),
+            "d3_observed_count": summary.get("d3_observed_count"),
+            "d5_observed_count": summary.get("d5_observed_count"),
+            "scoreable_candidate_count": summary.get("scoreable_candidate_count"),
+            "next_observation_targets": summary.get("next_observation_targets"),
+        }
+
+    target_rows: list[str] = []
+    for item in _as_list(track.get("next_observation_targets"))[:2]:
+        if not isinstance(item, dict):
+            continue
+        target_rows.append(
+            f"{item.get('target', 'unknown')}@{item.get('date', 'unknown')}"
+            f" count={_fmt_num(item.get('candidate_count'))}"
+            f" reason={item.get('reason', 'unknown')}"
+        )
+
+    lines = [
         "",
         "Forward-shadow闭环:",
+        (
+            f"- source={track.get('source_status', 'unknown')} "
+            f"freeze={track.get('freeze_id', 'unknown')} "
+            f"as_of={track.get('as_of_date', 'unknown')} "
+            f"target={track.get('target_trade_date', 'unknown')} "
+            f"open_state_waterline={track.get('open_state_waterline', 'unknown')}"
+        ),
         (
             f"- lifecycle={track.get('lifecycle_state', 'unknown')} "
             f"next={track.get('next_action', 'unknown')}"
@@ -756,8 +877,13 @@ def _format_forward_shadow_track_record(
             f"d5={_fmt_num(track.get('d5_observed_count'))} "
             f"scoreable={_fmt_num(track.get('scoreable_candidate_count'))}"
         ),
-        "- boundary=frozen candidate track record; pending is not failed trade, not negative edge",
     ]
+    if target_rows:
+        lines.append(f"- next_targets={'; '.join(target_rows)}")
+    lines.append(
+        "- boundary=frozen candidate track record; pending is not failed trade, not negative edge"
+    )
+    return lines
 
 
 def _format_weak_signal_queue(payload: dict[str, Any], *, limit: int) -> list[str]:
@@ -858,6 +984,7 @@ def format_kairos_owner_brief(
     daily_package: dict[str, Any] | None = None,
     intraday_manifest: dict[str, Any] | None = None,
     intraday_alert: dict[str, Any] | None = None,
+    forward_shadow_track_record: dict[str, Any] | None = None,
 ) -> str:
     """Render the latest owner review brief as a compact mobile readout."""
 
@@ -941,7 +1068,12 @@ def format_kairos_owner_brief(
     lines.extend(_format_shortest_legal_next_open_horizon(daily_package))
     lines.extend(_format_long_window_route_counts(payload))
     lines.extend(_format_long_window_route_examples(payload))
-    lines.extend(_format_forward_shadow_track_record(daily_package))
+    lines.extend(
+        _format_forward_shadow_track_record(
+            daily_package,
+            track_record=forward_shadow_track_record,
+        )
+    )
     lines.extend(_format_explosive_posture(payload))
     lines.extend(_format_weak_signal_queue(payload, limit=min(candidate_limit, 5)))
     lines.extend(_format_cross_horizon_clusters(payload, limit=3))
@@ -1205,6 +1337,7 @@ def format_kairos_today_readout(payload: dict[str, Any]) -> str:
 
 
 __all__ = [
+    "default_kairos_forward_shadow_track_record_path",
     "default_kairos_intraday_candidate_manifest_path",
     "default_kairos_intraday_alert_path",
     "default_kairos_owner_daily_package_path",
@@ -1213,6 +1346,7 @@ __all__ = [
     "format_kairos_intraday_alert",
     "format_kairos_owner_brief",
     "format_kairos_today_readout",
+    "load_kairos_forward_shadow_track_record",
     "load_kairos_intraday_candidate_manifest",
     "load_kairos_intraday_alert",
     "load_kairos_owner_daily_package",
