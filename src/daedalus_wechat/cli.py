@@ -21,8 +21,10 @@ from .ilink_auth import (
     write_bridge_account,
 )
 from .kairos_readout import (
+    format_kairos_intraday_alert,
     format_kairos_owner_brief,
     format_kairos_today_readout,
+    load_kairos_intraday_alert,
     load_kairos_owner_brief,
     load_kairos_today_readout,
 )
@@ -287,6 +289,27 @@ def build_parser() -> argparse.ArgumentParser:
         default=12,
         help="Maximum number of owner candidate rows to render",
     )
+    intraday = sub.add_parser(
+        "intraday",
+        help="Print latest Kairos short-cycle intraday owner alert",
+    )
+    intraday.add_argument(
+        "--report-path",
+        type=Path,
+        default=None,
+        help="Optional short_cycle_intraday_owner_alert_latest.json path",
+    )
+    intraday.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the raw intraday alert payload as JSON",
+    )
+    intraday.add_argument(
+        "--limit",
+        type=int,
+        default=12,
+        help="Maximum number of intraday candidate rows to render",
+    )
     send_bound = sub.add_parser(
         "send-bound",
         help="Send text / image / file / video to the currently bound WeChat chat",
@@ -383,6 +406,13 @@ def main() -> int:
             print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         else:
             print(format_kairos_owner_brief(payload, candidate_limit=args.limit))
+        return 0
+    if args.command == "intraday":
+        payload = load_kairos_intraday_alert(args.report_path)
+        if args.json:
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+        else:
+            print(format_kairos_intraday_alert(payload, candidate_limit=args.limit))
         return 0
 
     config = load_config()

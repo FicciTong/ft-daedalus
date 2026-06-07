@@ -5040,6 +5040,7 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("/lg /log", help_text)
             self.assertIn("/cu /catchup", help_text)
             self.assertIn("/b /brief", help_text)
+            self.assertIn("/ia /intraday", help_text)
             self.assertIn("/flush", help_text)
             self.assertLess(len(help_text.splitlines()), 20)
 
@@ -5069,6 +5070,14 @@ class DaemonTests(unittest.TestCase):
                 self.assertEqual(
                     daemon._handle_command("/b"),
                     daemon._handle_command("/brief"),
+                )
+            with patch(
+                "daedalus_wechat.daemon.load_kairos_intraday_alert",
+                return_value={"status": "REPORT_ONLY", "accepted_edges": 0},
+            ):
+                self.assertEqual(
+                    daemon._handle_command("/ia"),
+                    daemon._handle_command("/intraday"),
                 )
             self.assertIn("status=", daemon._handle_command("/st"))
             self.assertIn("health=", daemon._handle_command("/hl"))

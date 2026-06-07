@@ -32,6 +32,19 @@ def default_kairos_owner_brief_path() -> Path:
     )
 
 
+def default_kairos_intraday_alert_path() -> Path:
+    """Return the workbench-local Kairos short-cycle intraday alert path."""
+    cosmos_root = Path(__file__).resolve().parents[3]
+    return (
+        cosmos_root
+        / "ft-kairos"
+        / "var"
+        / "reports"
+        / "research_substrate"
+        / "short_cycle_intraday_owner_alert_latest.json"
+    )
+
+
 def _missing_payload(report_path: Path, *, status: str, reason: str) -> dict[str, Any]:
     return {
         "report_contract": "daedalus_wechat.kairos_today_readout",
@@ -115,6 +128,33 @@ def _missing_owner_brief_payload(
     }
 
 
+def _missing_intraday_alert_payload(
+    report_path: Path, *, status: str, reason: str
+) -> dict[str, Any]:
+    return {
+        "contract": "daedalus_wechat.kairos_intraday_alert_readout",
+        "readout_source": "fail_closed",
+        "status": status,
+        "report_path": str(report_path),
+        "as_of_date": None,
+        "target_trade_date": None,
+        "accepted_edges": 0,
+        "realtime_snapshot_status": {
+            "status": "MISSING",
+            "message": reason,
+        },
+        "authority_boundary": {
+            "authority_delta": "none",
+            "owner_advisory_allowed": False,
+            "owner_pnl_claim_allowed": False,
+            "consumer_cutover_allowed": False,
+            "live_broker_allowed": False,
+            "auto_order_allowed": False,
+        },
+        "errors": [reason],
+    }
+
+
 def load_kairos_owner_brief(report_path: Path | None = None) -> dict[str, Any]:
     path = report_path or default_kairos_owner_brief_path()
     if not path.is_file():
@@ -148,6 +188,39 @@ def load_kairos_owner_brief(report_path: Path | None = None) -> dict[str, Any]:
     return payload
 
 
+def load_kairos_intraday_alert(report_path: Path | None = None) -> dict[str, Any]:
+    path = report_path or default_kairos_intraday_alert_path()
+    if not path.is_file():
+        return _missing_intraday_alert_payload(
+            path,
+            status="MISSING",
+            reason="Kairos short-cycle intraday owner alert is missing",
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except JSONDecodeError as exc:
+        return _missing_intraday_alert_payload(
+            path,
+            status="BLOCKED",
+            reason=f"Kairos short-cycle intraday owner alert is invalid JSON: {exc.msg}",
+        )
+    except OSError as exc:
+        return _missing_intraday_alert_payload(
+            path,
+            status="BLOCKED",
+            reason=f"Kairos short-cycle intraday owner alert cannot be read: {exc}",
+        )
+    if not isinstance(payload, dict):
+        return _missing_intraday_alert_payload(
+            path,
+            status="BLOCKED",
+            reason="Kairos short-cycle intraday owner alert root is not an object",
+        )
+    payload = dict(payload)
+    payload["report_path"] = str(path)
+    return payload
+
+
 def _fmt_pct(value: Any) -> str:
     if value is None:
         return "None"
@@ -167,6 +240,14 @@ def _fmt_num(value: Any) -> str:
     if as_float.is_integer():
         return str(int(as_float))
     return f"{as_float:.4g}"
+
+
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
 
 
 def format_kairos_owner_brief(
@@ -300,6 +381,104 @@ def format_kairos_owner_brief(
     return "\n".join(lines)
 
 
+def format_kairos_intraday_alert(
+    payload: dict[str, Any], *, candidate_limit: int = 12
+) -> str:
+    """Render the latest intraday owner alert as a compact mobile readout."""
+
+    status = str(payload.get("status") or "UNKNOWN")
+    as_of = payload.get("as_of_date") or "unknown"
+    target = payload.get("target_trade_date") or "unknown"
+    accepted_edges = payload.get("accepted_edges", 0)
+    report_path = payload.get("report_path", "unknown")
+    errors = payload.get("errors")
+    if isinstance(errors, list) and errors:
+        return "\n".join(
+            [
+                f"Kairos intraday={status}",
+                f"report_path={report_path}",
+                *[f"error={item}" for item in errors[:4]],
+                "boundary=read-only report; not advisory; accepted_edges=0",
+            ]
+        )
+
+    snapshot = _as_dict(payload.get("realtime_snapshot_status"))
+    market = _as_dict(payload.get("market_facts"))
+    concentration = _as_dict(payload.get("industry_concentration"))
+    setup = _as_dict(payload.get("setup_supply"))
+    candidates = _as_list(payload.get("candidate_alerts"))
+
+    lines = [
+        f"Kairos 盘中 alert={status}",
+        f"as_of={as_of} target={target} accepted_edges={accepted_edges}",
+        "boundary=report-only / 不是买卖建议 / 不是GO / 不是 validated edge",
+        (
+            f"snapshot={snapshot.get('status', 'unknown')} "
+            f"rows={_fmt_num(snapshot.get('row_count'))} "
+            f"time={snapshot.get('snapshot_time', 'None')}"
+        ),
+        (
+            f"market={market.get('market_regime', 'unknown')}/"
+            f"{market.get('emotion_phase', 'unknown')} "
+            f"涨停={_fmt_num(market.get('limit_up_count'))} "
+            f"炸板={_fmt_num(market.get('broken_limit_up_count'))} "
+            f"高度={_fmt_num(market.get('highest_continuous_board'))}"
+        ),
+        (
+            f"industry={concentration.get('state', 'unknown')} "
+            f"top_share={_fmt_pct(concentration.get('top_industry_share_pct'))}"
+        ),
+        (
+            f"setup_supply={setup.get('state', 'unknown')} "
+            f"watchlist={_fmt_num(setup.get('stock_watchlist_count'))} "
+            f"sealed={_fmt_num(setup.get('sealed_no_break_watchlist_count'))}"
+        ),
+        "",
+        "时间窗:",
+    ]
+    for row in _as_list(payload.get("session_windows")):
+        if not isinstance(row, dict):
+            continue
+        lines.append(
+            f"- {row.get('time_cst')} {row.get('window_id')}: "
+            f"{row.get('owner_use')} ({row.get('trust_level')})"
+        )
+
+    lines.extend(["", f"盘中候选 Top {min(candidate_limit, len(candidates))}:"])
+    for row in candidates[:candidate_limit]:
+        if not isinstance(row, dict):
+            continue
+        checkpoints = {
+            str(item.get("window_id")): item
+            for item in _as_list(row.get("runtime_checkpoints"))
+            if isinstance(item, dict)
+        }
+        support = _as_dict(row.get("support_snapshot"))
+        lines.append(
+            f"- #{_fmt_num(row.get('rank'))} "
+            f"{row.get('symbol', 'unknown')} {row.get('stock_name', '')} "
+            f"[{row.get('industry_name', 'unknown')}] "
+            f"{row.get('tactic_id', 'unknown')} "
+            f"label={row.get('owner_confidence_label', 'unknown')} "
+            f"net={_fmt_pct(support.get('net_excess_pct'))} "
+            f"tail5={_fmt_pct(support.get('right_tail_return_ge_5pct_share_pct'))} "
+            f"open={_as_dict(checkpoints.get('opening_print_0926')).get('trigger_status')} "
+            f"5m={_as_dict(checkpoints.get('first5m_preliminary_0936')).get('trigger_status')} "
+            f"30m={_as_dict(checkpoints.get('first30m_confirmation_1001')).get('trigger_status')} "
+            f"wounds={len(_as_list(row.get('evidence_wounds')))}"
+        )
+
+    lines.extend(
+        [
+            "",
+            "禁止误读: pending=没有实时快照; stale不许推断; 一字/涨停开不暗示可成交; "
+            "alert不是买卖指令; accepted_edges=0",
+            f"artifact={report_path}",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def format_kairos_today_readout(payload: dict[str, Any]) -> str:
     status = str(payload.get("run_status") or "UNKNOWN").upper()
     summary = payload.get("owner_summary")
@@ -344,10 +523,13 @@ def format_kairos_today_readout(payload: dict[str, Any]) -> str:
 
 
 __all__ = [
+    "default_kairos_intraday_alert_path",
     "default_kairos_owner_brief_path",
     "default_kairos_readout_path",
+    "format_kairos_intraday_alert",
     "format_kairos_owner_brief",
     "format_kairos_today_readout",
+    "load_kairos_intraday_alert",
     "load_kairos_owner_brief",
     "load_kairos_today_readout",
 ]

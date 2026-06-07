@@ -31,8 +31,10 @@ from .incoming_media import (
     download_incoming_video,
 )
 from .kairos_readout import (
+    format_kairos_intraday_alert,
     format_kairos_owner_brief,
     format_kairos_today_readout,
+    load_kairos_intraday_alert,
     load_kairos_owner_brief,
     load_kairos_today_readout,
 )
@@ -338,6 +340,7 @@ COMMAND_ALIASES = {
     "/lg": "/log",
     "/kt": "/kairos-today",
     "/b": "/brief",
+    "/ia": "/intraday",
     "/it": "/intent",
     "/rs": "/room-status",
     "/bc": "/broadcast",
@@ -380,7 +383,7 @@ HELP_TEXT = """FT bridge（支持 `/` 和 `\\`，缩写参数同原命令）
 /lg /log           日志
 /cu /catchup       补看
 /fl /flush         冲洗
-/kt /kairos-today  Kairos；/b /brief 日包
+/kt /kairos-today  Kairos；/b /brief 日包；/ia /intraday 盘中
 /it /intent        接线 agent
 /rs /room-status   房间状态；/bc 广播
 """
@@ -869,6 +872,8 @@ class BridgeDaemon:
             return format_kairos_today_readout(load_kairos_today_readout())
         if command == "/brief":
             return format_kairos_owner_brief(load_kairos_owner_brief())
+        if command == "/intraday":
+            return format_kairos_intraday_alert(load_kairos_intraday_alert())
         if command == "/members":
             return self._members_text()
         if command == "/intent":

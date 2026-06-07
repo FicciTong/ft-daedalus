@@ -7,8 +7,10 @@ from unittest.mock import patch
 from daedalus_wechat.cli import main
 from daedalus_wechat.daemon import BridgeDaemon
 from daedalus_wechat.kairos_readout import (
+    format_kairos_intraday_alert,
     format_kairos_owner_brief,
     format_kairos_today_readout,
+    load_kairos_intraday_alert,
     load_kairos_owner_brief,
     load_kairos_today_readout,
 )
@@ -90,6 +92,73 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                 "event_n": 7134,
                 "date_count": 811,
                 "next_open_to_close_pct": 0.82,
+            }
+        ],
+    }
+
+
+def _sample_intraday_alert_payload() -> dict[str, object]:
+    return {
+        "status": "REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT",
+        "as_of_date": "2026-06-05",
+        "target_trade_date": "2026-06-08",
+        "accepted_edges": 0,
+        "realtime_snapshot_status": {
+            "status": "PENDING_REALTIME_SNAPSHOT",
+            "message": "no realtime snapshot supplied",
+            "row_count": 0,
+        },
+        "market_facts": {
+            "market_regime": "CHOPPY",
+            "emotion_phase": "hot",
+            "limit_up_count": 88,
+            "broken_limit_up_count": 63,
+            "highest_continuous_board": 5,
+        },
+        "industry_concentration": {
+            "state": "HIGH_INDUSTRY_CONCENTRATION",
+            "top_industry_share_pct": 51.16,
+        },
+        "setup_supply": {
+            "state": "MODERATE_SETUP_SUPPLY",
+            "stock_watchlist_count": 20,
+            "sealed_no_break_watchlist_count": 12,
+        },
+        "session_windows": [
+            {
+                "time_cst": "09:26",
+                "window_id": "opening_print_0926",
+                "owner_use": "read opening print",
+                "trust_level": "high_if_snapshot_fresh",
+            }
+        ],
+        "candidate_alerts": [
+            {
+                "rank": 1,
+                "symbol": "002251.SZ",
+                "stock_name": "步步高",
+                "industry_name": "超市连锁",
+                "tactic_id": "high_gap_first30m_hold",
+                "owner_confidence_label": "可用参考",
+                "evidence_wounds": ["row_level_fdr_holdout_not_available"],
+                "support_snapshot": {
+                    "net_excess_pct": 0.9856,
+                    "right_tail_return_ge_5pct_share_pct": 43.98,
+                },
+                "runtime_checkpoints": [
+                    {
+                        "window_id": "opening_print_0926",
+                        "trigger_status": "PENDING_REALTIME_SNAPSHOT",
+                    },
+                    {
+                        "window_id": "first5m_preliminary_0936",
+                        "trigger_status": "PENDING_REALTIME_SNAPSHOT",
+                    },
+                    {
+                        "window_id": "first30m_confirmation_1001",
+                        "trigger_status": "PENDING_REALTIME_SNAPSHOT",
+                    },
+                ],
             }
         ],
     }
@@ -223,4 +292,78 @@ def test_daemon_brief_command_is_read_only() -> None:
         text = BridgeDaemon._handle_command(BridgeDaemon.__new__(BridgeDaemon), "/brief")
 
     assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in text
+    assert "accepted_edges=0" in text
+
+
+def test_load_kairos_intraday_alert_reads_latest_report(tmp_path: Path) -> None:
+    report_path = tmp_path / "short_cycle_intraday_owner_alert_latest.json"
+    report_path.write_text(
+        json.dumps(_sample_intraday_alert_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    payload = load_kairos_intraday_alert(report_path)
+
+    assert payload["status"] == "REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT"
+    assert payload["report_path"] == str(report_path)
+    assert payload["accepted_edges"] == 0
+
+
+def test_format_kairos_intraday_alert_keeps_report_only_boundary(
+    tmp_path: Path,
+) -> None:
+    payload = _sample_intraday_alert_payload()
+    payload["report_path"] = str(tmp_path / "intraday.json")
+
+    text = format_kairos_intraday_alert(payload)
+
+    assert "Kairos 盘中 alert=REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT" in text
+    assert "accepted_edges=0" in text
+    assert "不是买卖建议" in text
+    assert "不是GO" in text
+    assert "002251.SZ 步步高" in text
+    assert "PENDING_REALTIME_SNAPSHOT" in text
+
+
+def test_cli_intraday_does_not_require_bridge_state(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    report_path = tmp_path / "short_cycle_intraday_owner_alert_latest.json"
+    report_path.write_text(
+        json.dumps(_sample_intraday_alert_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "daedalus-wechat",
+            "intraday",
+            "--report-path",
+            str(report_path),
+            "--limit",
+            "1",
+        ],
+    )
+
+    rc = main()
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Kairos 盘中 alert=REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT" in out
+    assert "002251.SZ 步步高" in out
+
+
+def test_daemon_intraday_command_is_read_only() -> None:
+    with patch(
+        "daedalus_wechat.daemon.load_kairos_intraday_alert",
+        return_value=_sample_intraday_alert_payload(),
+    ):
+        text = BridgeDaemon._handle_command(
+            BridgeDaemon.__new__(BridgeDaemon),
+            "/intraday",
+        )
+
+    assert "Kairos 盘中 alert=REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT" in text
     assert "accepted_edges=0" in text
