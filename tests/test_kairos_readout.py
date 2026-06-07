@@ -126,6 +126,46 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                 "RIGHT_TAIL_FORWARD_SHADOW_OBSERVATION": 8,
                 "PREDICATE_SUPPORT_ADAPTATION": 13,
             },
+            "top_keep_rows": [
+                {
+                    "hypothesis_id": "leader_orderly_flat_pullback",
+                    "machine_route": "STRICT_CANDIDATE_FORWARD_SHADOW_OBSERVATION",
+                    "candidate_window_count": 4,
+                    "cross_horizon_ready_window_ids": [
+                        "short_cycle_long_2023_h1",
+                        "short_cycle_long_2023_h2",
+                        "short_cycle_long_2024_h1",
+                    ],
+                    "next_open_following_close_best_net_excess_pct": 0.0739,
+                    "next_open_following_close_right_tail_return_ge_5pct_max_share_pct": 20.0,
+                    "windows_tested": 7,
+                }
+            ],
+            "top_adapt_rows": [
+                {
+                    "hypothesis_id": "prior_limit_gap_down_reclaim",
+                    "machine_route": "RIGHT_TAIL_FORWARD_SHADOW_OBSERVATION",
+                    "adapt_route": "RIGHT_TAIL_FORWARD_SHADOW_OBSERVATION",
+                    "candidate_window_count": 0,
+                    "cross_horizon_ready_window_ids": [
+                        "short_cycle_long_2025_h2",
+                        "short_cycle_long_2026_q1_q2",
+                    ],
+                    "next_open_following_close_best_net_excess_pct": 1.7168,
+                    "next_open_following_close_right_tail_return_ge_5pct_max_share_pct": 40.0,
+                    "windows_tested": 7,
+                },
+                {
+                    "hypothesis_id": "cold_world_volume_exhaustion",
+                    "machine_route": "PREDICATE_SUPPORT_ADAPTATION",
+                    "adapt_route": "PREDICATE_SUPPORT_ADAPTATION",
+                    "candidate_window_count": 0,
+                    "cross_horizon_ready_window_ids": [],
+                    "next_open_following_close_best_net_excess_pct": None,
+                    "next_open_following_close_right_tail_return_ge_5pct_max_share_pct": None,
+                    "windows_tested": 7,
+                },
+            ],
             "cross_horizon_right_tail_consensus": {
                 "multi_window_min_ready_threshold": 2,
                 "both_horizon_multi_window_ready_hypothesis_count": 0,
@@ -631,6 +671,12 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
         "research_clock_only=true not_GO=true"
     ) in text
     assert "machine route counts are research next actions" in text
+    assert "route_examples:" in text
+    assert "leader_orderly_flat_pullback route=STRICT_CANDIDATE_FORWARD_SHADOW_OBSERVATION" in text
+    assert "prior_limit_gap_down_reclaim route=RIGHT_TAIL_FORWARD_SHADOW_OBSERVATION" in text
+    assert "cold_world_volume_exhaustion route=PREDICATE_SUPPORT_ADAPTATION" in text
+    assert "follow_net=1.72% follow_tail5=40.00%" in text
+    assert "route_examples_boundary=examples are research routing samples" in text
     assert "Forward-shadow闭环" in text
     assert "records=244 fired=0 pending=244 following=0 following_scoreable=0" in text
     assert "pending is not failed trade, not negative edge" in text

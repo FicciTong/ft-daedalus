@@ -682,6 +682,54 @@ def _format_long_window_route_counts(payload: dict[str, Any]) -> list[str]:
     ]
 
 
+def _route_example_key(item: dict[str, Any]) -> str:
+    return str(item.get("machine_route") or item.get("adapt_route") or "UNKNOWN_ROUTE")
+
+
+def _format_long_window_route_examples(payload: dict[str, Any], *, limit: int = 4) -> list[str]:
+    stability = _as_dict(payload.get("long_window_stability"))
+    rows = [
+        item
+        for item in (
+            _as_list(stability.get("top_keep_rows"))
+            + _as_list(stability.get("top_adapt_rows"))
+        )
+        if isinstance(item, dict)
+    ]
+    if not rows:
+        return []
+
+    examples: list[dict[str, Any]] = []
+    seen_routes: set[str] = set()
+    for item in rows:
+        route = _route_example_key(item)
+        if route in seen_routes:
+            continue
+        seen_routes.add(route)
+        examples.append(item)
+        if len(examples) >= limit:
+            break
+
+    if not examples:
+        return []
+
+    lines = ["- route_examples:"]
+    for item in examples:
+        ready_windows = _as_list(item.get("cross_horizon_ready_window_ids"))
+        lines.append(
+            f"  {item.get('hypothesis_id', 'unknown')} "
+            f"route={_route_example_key(item)} "
+            f"cand_windows={_fmt_num(item.get('candidate_window_count'))} "
+            f"ready_windows={_fmt_num(len(ready_windows))} "
+            f"follow_net={_fmt_pct(item.get('next_open_following_close_best_net_excess_pct'))} "
+            "follow_tail5="
+            f"{_fmt_pct(item.get('next_open_following_close_right_tail_return_ge_5pct_max_share_pct'))} "
+            f"windows={_fmt_num(item.get('windows_tested'))}"
+        )
+    lines.append("- route_examples_boundary=examples are research routing samples, not stock advice")
+    return lines
+
+
 def _format_forward_shadow_track_record(
     package: dict[str, Any] | None,
 ) -> list[str]:
@@ -892,6 +940,7 @@ def format_kairos_owner_brief(
     lines.extend(_format_environment_conditioned_diagnostics(daily_package))
     lines.extend(_format_shortest_legal_next_open_horizon(daily_package))
     lines.extend(_format_long_window_route_counts(payload))
+    lines.extend(_format_long_window_route_examples(payload))
     lines.extend(_format_forward_shadow_track_record(daily_package))
     lines.extend(_format_explosive_posture(payload))
     lines.extend(_format_weak_signal_queue(payload, limit=min(candidate_limit, 5)))
