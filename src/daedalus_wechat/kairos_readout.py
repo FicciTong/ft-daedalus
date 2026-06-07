@@ -410,6 +410,46 @@ def _format_explosive_posture(payload: dict[str, Any]) -> list[str]:
     ]
 
 
+def _format_environment_conditioned_diagnostics(
+    package: dict[str, Any] | None,
+) -> list[str]:
+    if not isinstance(package, dict):
+        return []
+    sweep = _as_dict(package.get("environment_conditioned_ab_sweep"))
+    if not sweep:
+        return []
+    summary = _as_dict(sweep.get("summary"))
+    wounds = _as_dict(sweep.get("diagnostic_wounds"))
+    route_counts = _as_dict(wounds.get("route_counts")) or _as_dict(
+        summary.get("route_counts")
+    )
+    return [
+        "",
+        "环境条件化 A/B 伤口:",
+        (
+            f"- freshness={summary.get('freshness_status', 'unknown')} "
+            f"current_promising={_fmt_num(summary.get('promising_count'))} "
+            f"diagnostic_promising={_fmt_num(summary.get('diagnostic_promising_count'))} "
+            f"denominator={_fmt_num(wounds.get('trial_denominator_case_count'))} "
+            f"posthoc={wounds.get('candidate_variants_selected_posthoc', 'unknown')}"
+        ),
+        (
+            f"- routes promising={_fmt_num(route_counts.get('PROMISING_REVIEW_ONLY'))} "
+            f"placebo_weak={_fmt_num(route_counts.get('PLACEBO_CONTROL_WEAK'))} "
+            f"not_better={_fmt_num(route_counts.get('NOT_BETTER_THAN_POOLED'))} "
+            "support_insufficient="
+            f"{_fmt_num(route_counts.get('SUPPORT_INSUFFICIENT', wounds.get('support_insufficient_count', 0)))}"
+        ),
+        (
+            f"- trust_gate={wounds.get('uses_environment_fingerprint_trust_gate', 'unknown')} "
+            f"trusted_axes={_fmt_num(wounds.get('trusted_axis_count'))} "
+            f"features={_fmt_num(wounds.get('similarity_feature_count'))} "
+            f"blocked_axes={','.join(str(x) for x in _as_list(wounds.get('blocked_axes_not_used'))[:3])}"
+        ),
+        "- boundary=diagnostic routing only; not edge, not GO, not advice",
+    ]
+
+
 def _format_weak_signal_queue(payload: dict[str, Any], *, limit: int) -> list[str]:
     queue = _as_list(payload.get("weak_signal_review_queue"))
     if not queue:
@@ -505,6 +545,7 @@ def format_kairos_owner_brief(
     ]
 
     lines.extend(_format_daily_package_handoff(daily_package))
+    lines.extend(_format_environment_conditioned_diagnostics(daily_package))
     lines.extend(_format_explosive_posture(payload))
     lines.extend(_format_weak_signal_queue(payload, limit=min(candidate_limit, 5)))
 

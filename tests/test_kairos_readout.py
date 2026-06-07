@@ -159,6 +159,35 @@ def _sample_owner_daily_package_payload() -> dict[str, object]:
         "as_of_date": "2026-06-05",
         "target_trade_date": "2026-06-08",
         "accepted_edges": 0,
+        "environment_conditioned_ab_sweep": {
+            "summary": {
+                "freshness_status": "CURRENT_FOR_PACKAGE_AS_OF",
+                "promising_count": 10,
+                "diagnostic_promising_count": 10,
+                "route_counts": {
+                    "PROMISING_REVIEW_ONLY": 10,
+                    "PLACEBO_CONTROL_WEAK": 11,
+                    "NOT_BETTER_THAN_POOLED": 3,
+                },
+            },
+            "diagnostic_wounds": {
+                "candidate_variants_selected_posthoc": True,
+                "trial_denominator_case_count": 24,
+                "uses_environment_fingerprint_trust_gate": True,
+                "trusted_axis_count": 4,
+                "similarity_feature_count": 4,
+                "blocked_axes_not_used": [
+                    "world_*_WARN_REVIEW_BEFORE_WEIGHTING",
+                    "product_market_temperature",
+                    "product_rotation_speed",
+                ],
+                "route_counts": {
+                    "PROMISING_REVIEW_ONLY": 10,
+                    "PLACEBO_CONTROL_WEAK": 11,
+                    "NOT_BETTER_THAN_POOLED": 3,
+                },
+            },
+        },
         "owner_review_brief": {
             "source_status": "REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF",
             "owner_review_candidate_count": 40,
@@ -384,6 +413,12 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "intraday_manifest=REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST" in text
     assert "rows=144 symbols=41 windows=3 edge_runtime=Windows ft-edge" in text
     assert "09:26 opening_print_0926" in text
+    assert "环境条件化 A/B 伤口" in text
+    assert "denominator=24 posthoc=True" in text
+    assert "routes promising=10 placebo_weak=11 not_better=3" in text
+    assert "support_insufficient=0" in text
+    assert "trust_gate=True trusted_axes=4 features=4" in text
+    assert "diagnostic routing only; not edge" in text
     assert "短线暴利/右尾温度计" in text
     assert "setup=43 watchlist=20 强封无炸=12" in text
     assert "tape=RIGHT_TAIL_TAPE_ACTIVE 涨停=88 高度=5 炸板=63" in text
