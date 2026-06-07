@@ -198,6 +198,29 @@ def _sample_owner_daily_package_payload() -> dict[str, object]:
                 },
             },
         },
+        "long_window_cached_retry_sweep": {
+            "next_open_following_close_diagnostic_summary": {
+                "status": "REPORT_ONLY_NEXT_OPEN_FOLLOWING_CLOSE_LONG_WINDOW_DIAGNOSTIC",
+                "horizon_id": "next_open_to_following_close",
+                "hypothesis_count": 30,
+                "positive_net_hypothesis_count": 8,
+                "positive_net_window_count": 8,
+                "cost_killed_hypothesis_count": 16,
+                "right_tail_ready_hypothesis_count": 17,
+                "top_positive_net_rows": [
+                    {
+                        "hypothesis_id": "prior_limit_orderly_digest",
+                        "best_net_excess_pct": 0.8816,
+                        "right_tail_return_ge_5pct_max_share_pct": 25.9259,
+                        "right_tail_return_p90_max_pct": 9.1973,
+                        "windows_tested": 7,
+                        "evolution_next_action": (
+                            "adapt_predicate_or_surface_coverage_before_rerun"
+                        ),
+                    }
+                ],
+            }
+        },
         "owner_review_brief": {
             "source_status": "REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF",
             "owner_review_candidate_count": 40,
@@ -432,6 +455,11 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "diagnostic_only=true" in text
     assert "trust_gate=True trusted_axes=4 features=4" in text
     assert "diagnostic routing only; not edge" in text
+    assert "T+1合法最短持有诊断" in text
+    assert "horizon=next_open_to_following_close" in text
+    assert "positive_net=8/30 windows=8 cost_killed=16 right_tail_ready=17" in text
+    assert "prior_limit_orderly_digest net=0.88%" in text
+    assert "report-only, not edge, not GO, not advice" in text
     assert "短线暴利/右尾温度计" in text
     assert "setup=43 watchlist=20 强封无炸=12" in text
     assert "tape=RIGHT_TAIL_TAPE_ACTIVE 涨停=88 高度=5 炸板=63" in text

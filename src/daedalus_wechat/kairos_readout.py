@@ -467,6 +467,50 @@ def _format_environment_conditioned_diagnostics(
     ]
 
 
+def _format_shortest_legal_next_open_horizon(
+    package: dict[str, Any] | None,
+) -> list[str]:
+    if not isinstance(package, dict):
+        return []
+    sweep = _as_dict(package.get("long_window_cached_retry_sweep"))
+    diagnostic = _as_dict(sweep.get("next_open_following_close_diagnostic_summary"))
+    if not diagnostic:
+        return []
+    rows = _as_list(diagnostic.get("top_positive_net_rows"))
+    lines = [
+        "",
+        "T+1合法最短持有诊断:",
+        (
+            f"- horizon={diagnostic.get('horizon_id', 'unknown')} "
+            f"status={diagnostic.get('status', 'unknown')} "
+            f"positive_net={_fmt_num(diagnostic.get('positive_net_hypothesis_count'))}"
+            f"/{_fmt_num(diagnostic.get('hypothesis_count'))} "
+            f"windows={_fmt_num(diagnostic.get('positive_net_window_count'))} "
+            f"cost_killed={_fmt_num(diagnostic.get('cost_killed_hypothesis_count'))} "
+            f"right_tail_ready="
+            f"{_fmt_num(diagnostic.get('right_tail_ready_hypothesis_count'))}"
+        ),
+        (
+            "- boundary=shortest legal next-open holding diagnostic; "
+            "report-only, not edge, not GO, not advice"
+        ),
+    ]
+    if rows:
+        lines.append("- top_net:")
+    for item in rows[:3]:
+        if not isinstance(item, dict):
+            continue
+        lines.append(
+            f"  {item.get('hypothesis_id', 'unknown')} "
+            f"net={_fmt_pct(item.get('best_net_excess_pct'))} "
+            f"tail5={_fmt_pct(item.get('right_tail_return_ge_5pct_max_share_pct'))} "
+            f"p90={_fmt_pct(item.get('right_tail_return_p90_max_pct'))} "
+            f"windows={_fmt_num(item.get('windows_tested'))} "
+            f"next={item.get('evolution_next_action', 'review')}"
+        )
+    return lines
+
+
 def _format_weak_signal_queue(payload: dict[str, Any], *, limit: int) -> list[str]:
     queue = _as_list(payload.get("weak_signal_review_queue"))
     if not queue:
@@ -563,6 +607,7 @@ def format_kairos_owner_brief(
 
     lines.extend(_format_daily_package_handoff(daily_package))
     lines.extend(_format_environment_conditioned_diagnostics(daily_package))
+    lines.extend(_format_shortest_legal_next_open_horizon(daily_package))
     lines.extend(_format_explosive_posture(payload))
     lines.extend(_format_weak_signal_queue(payload, limit=min(candidate_limit, 5)))
 
