@@ -441,6 +441,13 @@ def _format_environment_conditioned_diagnostics(
             f"{_fmt_num(route_counts.get('SUPPORT_INSUFFICIENT', wounds.get('support_insufficient_count', 0)))}"
         ),
         (
+            f"- fdr pass={_fmt_num(wounds.get('fdr_pass_count'))} "
+            f"tested={_fmt_num(wounds.get('fdr_tested_case_count'))} "
+            f"q={wounds.get('fdr_q', 'unknown')} "
+            f"procedure={wounds.get('fdr_procedure', 'unknown')} "
+            "diagnostic_only=true"
+        ),
+        (
             f"- trust_gate={wounds.get('uses_environment_fingerprint_trust_gate', 'unknown')} "
             f"trusted_axes={_fmt_num(wounds.get('trusted_axis_count'))} "
             f"features={_fmt_num(wounds.get('similarity_feature_count'))} "

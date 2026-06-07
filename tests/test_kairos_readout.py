@@ -174,6 +174,10 @@ def _sample_owner_daily_package_payload() -> dict[str, object]:
                 "candidate_variants_selected_posthoc": True,
                 "trial_denominator_case_count": 24,
                 "uses_environment_fingerprint_trust_gate": True,
+                "fdr_pass_count": 2,
+                "fdr_tested_case_count": 24,
+                "fdr_q": 0.05,
+                "fdr_procedure": "benjamini_hochberg_on_placebo_rank_rates",
                 "trusted_axis_count": 4,
                 "similarity_feature_count": 4,
                 "blocked_axes_not_used": [
@@ -417,6 +421,8 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "denominator=24 posthoc=True" in text
     assert "routes promising=10 placebo_weak=11 not_better=3" in text
     assert "support_insufficient=0" in text
+    assert "fdr pass=2 tested=24 q=0.05" in text
+    assert "diagnostic_only=true" in text
     assert "trust_gate=True trusted_axes=4 features=4" in text
     assert "diagnostic routing only; not edge" in text
     assert "短线暴利/右尾温度计" in text
