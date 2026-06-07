@@ -924,27 +924,6 @@ class LiveCodexSessionManager:
             payload=payload,
             backend=backend,
         )
-        if backend == CliBackend.CODEX.value and submit_key == "Tab":
-            # Busy Codex should enter the owner-visible next-tool-call queue.
-            # Falling back to Enter turns the delivery into a different TUI
-            # action and can leave long WeChat prompts looking like a follow-up
-            # rather than the normal queued owner input.
-            self._send_submit_key(tmux_session=tmux_session, submit_key="Tab")
-            if self._wait_for_prompt_submission(
-                tmux_session=tmux_session,
-                payload=payload,
-                backend=backend,
-            ):
-                return
-            self._raise_if_codex_legacy_followup_queue(
-                tmux_session=tmux_session,
-                payload=payload,
-                backend=backend,
-            )
-            raise RuntimeError(
-                f"tmux {tmux_session} prompt delivery did not enter Codex "
-                "next-tool-call queue"
-            )
         fallback_key = self._fallback_submit_key(
             backend=backend, previous_key=submit_key
         )
@@ -999,16 +978,18 @@ class LiveCodexSessionManager:
         return False
 
     def _codex_submit_key(self, screen_tail: str) -> str:
-        """Prefer Codex queue submit while a turn is visibly running."""
-        if CODEX_QUEUE_HINT_RE.search(screen_tail):
-            return "Tab"
-        if CODEX_BUSY_HINT_RE.search(screen_tail):
-            return "Tab"
+        """Codex owner input is submitted with Enter.
+
+        Codex currently exposes a `tab to queue message` hint while busy, but
+        that path creates the TUI's legacy follow-up queue in the owner's live
+        pane. The desired owner-visible state is the normal next-tool-call
+        message queue, which is produced by typed input plus Enter.
+        """
         return "C-m"
 
     def _fallback_submit_key(self, *, backend: str, previous_key: str) -> str:
         if backend == CliBackend.CODEX.value:
-            return "Tab" if previous_key != "Tab" else "C-m"
+            return "C-m"
         return previous_key
 
     def _prompt_still_in_input_box(self, screen_tail: str, payload: str) -> bool:

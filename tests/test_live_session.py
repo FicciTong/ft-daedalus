@@ -323,7 +323,7 @@ class LiveSessionTests(unittest.TestCase):
             ],
         )
 
-    def test_inject_prompt_uses_queue_submit_for_busy_codex_prompt(self) -> None:
+    def test_inject_prompt_uses_enter_submit_for_busy_codex_prompt(self) -> None:
         prompt = ("结论先行。" * 700) + "\n" + ("这里是很长的顾问文本。" * 700)
         expected_payload = " ".join(prompt.replace("\r\n", "\n").split())
         with (
@@ -364,7 +364,7 @@ class LiveSessionTests(unittest.TestCase):
                     stderr=-1,
                 ),
                 call(
-                    ["tmux", "send-keys", "-t", "codex:0.0", "Tab"],
+                    ["tmux", "send-keys", "-t", "codex:0.0", "C-m"],
                     check=True,
                     stdout=-1,
                     stderr=-1,
@@ -490,17 +490,17 @@ class LiveSessionTests(unittest.TestCase):
             )
         )
 
-    def test_codex_submit_key_uses_tab_when_queue_hint_is_visible(self) -> None:
+    def test_codex_submit_key_uses_enter_when_queue_hint_is_visible(self) -> None:
         self.assertEqual(
             self.runner._codex_submit_key(
                 "Working (3m 45s • esc to interrupt)\n"
                 "› pending owner message\n"
                 "tab to queue message"
             ),
-            "Tab",
+            "C-m",
         )
 
-    def test_busy_codex_queue_submit_does_not_fallback_to_enter(self) -> None:
+    def test_busy_codex_submit_retries_enter_without_tab_fallback(self) -> None:
         with (
             patch.object(
                 self.runner,
@@ -525,7 +525,7 @@ class LiveSessionTests(unittest.TestCase):
             patch("daedalus_wechat.live_session.time.sleep", lambda _: None),
             patch("daedalus_wechat.live_session.subprocess.run") as run_mock,
         ):
-            with self.assertRaisesRegex(RuntimeError, "next-tool-call queue"):
+            with self.assertRaisesRegex(RuntimeError, "input composer"):
                 self.runner._inject_prompt("codex", "line one\nline two")
 
         submit_keys = [
@@ -533,7 +533,7 @@ class LiveSessionTests(unittest.TestCase):
             for args in run_mock.call_args_list
             if args[0][0][:3] == ["tmux", "send-keys", "-t"]
         ]
-        self.assertEqual(submit_keys, ["Tab", "Tab"])
+        self.assertEqual(submit_keys, ["C-m", "C-m"])
 
     def test_busy_codex_queue_submit_rejects_legacy_followup_marker(self) -> None:
         with (
@@ -569,7 +569,7 @@ class LiveSessionTests(unittest.TestCase):
             for args in run_mock.call_args_list
             if args[0][0][:3] == ["tmux", "send-keys", "-t"]
         ]
-        self.assertEqual(submit_keys, ["Tab"])
+        self.assertEqual(submit_keys, ["C-m"])
 
     def test_codex_submit_key_uses_enter_when_idle(self) -> None:
         self.assertEqual(
