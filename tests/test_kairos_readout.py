@@ -531,6 +531,38 @@ def _sample_intraday_alert_payload() -> dict[str, object]:
     }
 
 
+def _sample_future_blocked_intraday_alert_payload() -> dict[str, object]:
+    payload = _sample_intraday_alert_payload()
+    payload.update(
+        {
+            "status": "BLOCKED_SHORT_CYCLE_INTRADAY_OWNER_ALERT",
+            "generated_at_utc": "2026-06-07T21:17:39Z",
+            "errors": ["realtime_snapshot_future_timestamp"],
+            "realtime_snapshot_status": {
+                "status": "BLOCKED_SNAPSHOT_FUTURE_TIMESTAMP",
+                "message": (
+                    "realtime snapshot carries a future observation timestamp"
+                ),
+                "row_count": 28,
+                "snapshot_time": "2026-06-08T09:26:05+08:00",
+                "generated_at_utc": "2026-06-07T21:17:39Z",
+                "max_observation_time_utc": "2026-06-08T01:26:05+00:00",
+            },
+            "observation_projection_status": {
+                "candidate_source_counts": {
+                    "topn_owner_review": 20,
+                    "cross_horizon_right_tail_supplement": 8,
+                },
+                "observed_candidate_count": 0,
+                "pending_candidate_count": 28,
+                "cross_horizon_right_tail_cluster_count": 2,
+                "cross_horizon_right_tail_cluster_candidate_count": 8,
+            },
+        }
+    )
+    return payload
+
+
 def _sample_intraday_manifest_payload() -> dict[str, object]:
     return {
         "status": "REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST",
@@ -795,6 +827,21 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "wounds=3" in text
 
 
+def test_format_kairos_owner_brief_shows_intraday_alert_blocker() -> None:
+    text = format_kairos_owner_brief(
+        _sample_owner_brief_payload(),
+        daily_package=_sample_owner_daily_package_payload(),
+        intraday_alert=_sample_future_blocked_intraday_alert_payload(),
+    )
+
+    assert "intraday_alert=BLOCKED_SHORT_CYCLE_INTRADAY_OWNER_ALERT" in text
+    assert "snapshot=BLOCKED_SNAPSHOT_FUTURE_TIMESTAMP" in text
+    assert "intraday_alert_blocker reason=BLOCKED_SNAPSHOT_FUTURE_TIMESTAMP" in text
+    assert "generated=2026-06-07T21:17:39Z" in text
+    assert "max_observation=2026-06-08T01:26:05+00:00" in text
+    assert "errors=realtime_snapshot_future_timestamp" in text
+
+
 def test_format_kairos_owner_brief_falls_back_when_package_lacks_brief() -> None:
     payload = _sample_owner_brief_payload()
     package = _sample_owner_daily_package_payload()
@@ -969,6 +1016,19 @@ def test_format_kairos_intraday_alert_keeps_report_only_boundary(
     assert "002240.SZ 盛新锂能" in text
     assert "prior_weak_close_reclaim_volume::小金属" in text
     assert "PENDING_REALTIME_SNAPSHOT" in text
+
+
+def test_format_kairos_intraday_alert_shows_blocked_snapshot_details() -> None:
+    text = format_kairos_intraday_alert(
+        _sample_future_blocked_intraday_alert_payload()
+    )
+
+    assert "Kairos intraday=BLOCKED_SHORT_CYCLE_INTRADAY_OWNER_ALERT" in text
+    assert "intraday_alert_blocker reason=BLOCKED_SNAPSHOT_FUTURE_TIMESTAMP" in text
+    assert "snapshot_time=2026-06-08T09:26:05+08:00" in text
+    assert "max_observation=2026-06-08T01:26:05+00:00" in text
+    assert "error=realtime_snapshot_future_timestamp" in text
+    assert "accepted_edges=0" in text
 
 
 def test_cli_intraday_does_not_require_bridge_state(

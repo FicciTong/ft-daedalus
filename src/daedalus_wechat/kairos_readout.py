@@ -463,6 +463,33 @@ def _fmt_ci(lower: Any, upper: Any) -> str:
     return f"[{_fmt_pct(lower)},{_fmt_pct(upper)}]"
 
 
+def _format_intraday_snapshot_blocker(
+    *,
+    snapshot: dict[str, Any],
+    alert: dict[str, Any],
+) -> str | None:
+    status = str(snapshot.get("status") or "")
+    if not status.startswith("BLOCKED"):
+        return None
+    parts = [f"reason={status}"]
+    message = snapshot.get("message")
+    if message:
+        parts.append(f"message={message}")
+    generated_at = snapshot.get("generated_at_utc") or alert.get("generated_at_utc")
+    if generated_at:
+        parts.append(f"generated={generated_at}")
+    max_observation = snapshot.get("max_observation_time_utc")
+    if max_observation:
+        parts.append(f"max_observation={max_observation}")
+    snapshot_time = snapshot.get("snapshot_time")
+    if snapshot_time:
+        parts.append(f"snapshot_time={snapshot_time}")
+    errors = alert.get("errors")
+    if isinstance(errors, list) and errors:
+        parts.append(f"errors={','.join(str(item) for item in errors[:4])}")
+    return "- intraday_alert_blocker " + " ".join(parts)
+
+
 def _fmt_counter(counter: Counter[str], *, limit: int = 4) -> str:
     parts = [
         f"{name}={_fmt_num(count)}"
@@ -592,6 +619,12 @@ def _format_daily_package_handoff(
             f"clusters={_fmt_num(projection.get('cross_horizon_right_tail_cluster_count'))} "
             f"snapshot={snapshot.get('status', 'unknown')}"
         )
+        blocker = _format_intraday_snapshot_blocker(
+            snapshot=snapshot,
+            alert=alert,
+        )
+        if blocker:
+            lines.append(blocker)
         alert_md = alert.get("markdown_path")
         if alert_md:
             lines.append(f"- intraday_alert_md={alert_md}")
@@ -1230,10 +1263,16 @@ def format_kairos_intraday_alert(
     report_path = payload.get("report_path", "unknown")
     errors = payload.get("errors")
     if isinstance(errors, list) and errors:
+        snapshot = _as_dict(payload.get("realtime_snapshot_status"))
+        blocker = _format_intraday_snapshot_blocker(
+            snapshot=snapshot,
+            alert=payload,
+        )
         return "\n".join(
             [
                 f"Kairos intraday={status}",
                 f"report_path={report_path}",
+                *([blocker] if blocker else []),
                 *[f"error={item}" for item in errors[:4]],
                 "boundary=read-only report; not advisory; accepted_edges=0",
             ]
