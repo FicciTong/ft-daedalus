@@ -65,6 +65,31 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                 }
             ],
         },
+        "explosive_short_cycle_posture": {
+            "posture_state": (
+                "RIGHT_TAIL_TAPE_ACTIVE__MODERATE_SETUP_SUPPLY__"
+                "HIGH_INDUSTRY_CONCENTRATION"
+            ),
+            "setup_supply": {
+                "owner_candidate_count": 43,
+                "stock_watchlist_count": 20,
+                "limit_board_continuation_candidate_count": 12,
+                "state": "MODERATE_SETUP_SUPPLY",
+                "passive_timing_read": (
+                    "setup supply is an observed market thermometer and research "
+                    "input; it is not a position-sizing instruction"
+                ),
+            },
+            "right_tail_tape": {
+                "state": "RIGHT_TAIL_TAPE_ACTIVE",
+                "limit_up_count": 88,
+                "highest_continuous_board": 5,
+                "broken_limit_up_count": 63,
+            },
+            "concentration": {
+                "top_industry_share_pct": 51.16,
+            },
+        },
         "owner_review_candidates": [
             {
                 "review_rank": 1,
@@ -338,6 +363,11 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "intraday_manifest=REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST" in text
     assert "rows=144 symbols=41 windows=3 edge_runtime=Windows ft-edge" in text
     assert "09:26 opening_print_0926" in text
+    assert "短线暴利/右尾温度计" in text
+    assert "setup=43 watchlist=20 强封无炸=12" in text
+    assert "tape=RIGHT_TAIL_TAPE_ACTIVE 涨停=88 高度=5 炸板=63" in text
+    assert "not a position-sizing instruction" in text
+    assert "not position sizing" in text
 
 
 def test_cli_brief_does_not_require_bridge_state(tmp_path: Path, capsys, monkeypatch) -> None:

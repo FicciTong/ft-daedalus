@@ -381,6 +381,35 @@ def _format_daily_package_handoff(package: dict[str, Any] | None) -> list[str]:
     return lines
 
 
+def _format_explosive_posture(payload: dict[str, Any]) -> list[str]:
+    posture = _as_dict(payload.get("explosive_short_cycle_posture"))
+    if not posture:
+        return []
+    setup = _as_dict(posture.get("setup_supply"))
+    tape = _as_dict(posture.get("right_tail_tape"))
+    concentration = _as_dict(posture.get("concentration"))
+    return [
+        "",
+        "短线暴利/右尾温度计:",
+        (
+            f"- state={posture.get('posture_state', 'unknown')} "
+            f"setup={_fmt_num(setup.get('owner_candidate_count'))} "
+            f"watchlist={_fmt_num(setup.get('stock_watchlist_count'))} "
+            f"强封无炸={_fmt_num(setup.get('limit_board_continuation_candidate_count'))} "
+            f"setup_state={setup.get('state', 'unknown')}"
+        ),
+        (
+            f"- tape={tape.get('state', 'unknown')} "
+            f"涨停={_fmt_num(tape.get('limit_up_count'))} "
+            f"高度={_fmt_num(tape.get('highest_continuous_board'))} "
+            f"炸板={_fmt_num(tape.get('broken_limit_up_count'))} "
+            f"top_industry_share={_fmt_pct(concentration.get('top_industry_share_pct'))}"
+        ),
+        f"- passive_timing={setup.get('passive_timing_read', 'unknown')}",
+        "- boundary=setup supply is a thermometer/research input, not position sizing",
+    ]
+
+
 def format_kairos_owner_brief(
     payload: dict[str, Any],
     *,
@@ -446,6 +475,7 @@ def format_kairos_owner_brief(
     ]
 
     lines.extend(_format_daily_package_handoff(daily_package))
+    lines.extend(_format_explosive_posture(payload))
 
     top_industries = concentration.get("top_industries")
     if isinstance(top_industries, list):
