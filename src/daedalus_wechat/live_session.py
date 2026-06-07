@@ -44,7 +44,11 @@ KIMI_SESSION_BANNER_RE = re.compile(
 CODEX_QUEUE_HINT_RE = re.compile(r"\btab to queue message\b", re.IGNORECASE)
 CODEX_BUSY_HINT_RE = re.compile(r"\bWorking\b[\s\S]{0,120}\besc to interrupt\b")
 CODEX_NEXT_TOOL_QUEUE_RE = re.compile(
-    r"(?:Messages to be submitted after next tool call|Queued follow-up inputs)",
+    r"Messages to be submitted after next tool call",
+    re.IGNORECASE,
+)
+CODEX_LEGACY_FOLLOWUP_QUEUE_RE = re.compile(
+    r"Queued follow-up inputs",
     re.IGNORECASE,
 )
 INPUT_COMPOSER_MARKER_RE = re.compile(r"(?m)^[^\n]*(?:[›❯])\s*")
@@ -915,6 +919,11 @@ class LiveCodexSessionManager:
             backend=backend,
         ):
             return
+        self._raise_if_codex_legacy_followup_queue(
+            tmux_session=tmux_session,
+            payload=payload,
+            backend=backend,
+        )
         if backend == CliBackend.CODEX.value and submit_key == "Tab":
             # Busy Codex should enter the owner-visible next-tool-call queue.
             # Falling back to Enter turns the delivery into a different TUI
@@ -927,6 +936,11 @@ class LiveCodexSessionManager:
                 backend=backend,
             ):
                 return
+            self._raise_if_codex_legacy_followup_queue(
+                tmux_session=tmux_session,
+                payload=payload,
+                backend=backend,
+            )
             raise RuntimeError(
                 f"tmux {tmux_session} prompt delivery did not enter Codex "
                 "next-tool-call queue"
@@ -940,6 +954,11 @@ class LiveCodexSessionManager:
             payload=payload,
             backend=backend,
         ):
+            self._raise_if_codex_legacy_followup_queue(
+                tmux_session=tmux_session,
+                payload=payload,
+                backend=backend,
+            )
             raise RuntimeError(
                 f"tmux {tmux_session} prompt delivery did not leave the input composer"
             )
@@ -970,6 +989,11 @@ class LiveCodexSessionManager:
                 screen_tail, payload
             ):
                 return True
+            if (
+                backend == CliBackend.CODEX.value
+                and self._codex_legacy_followup_queue_contains(screen_tail, payload)
+            ):
+                return False
             if not self._prompt_still_in_input_box(screen_tail, payload):
                 return True
         return False
@@ -1003,6 +1027,34 @@ class LiveCodexSessionManager:
         if not anchors:
             return False
         return any(anchor in screen_tail for anchor in anchors)
+
+    def _codex_legacy_followup_queue_contains(
+        self, screen_tail: str, payload: str
+    ) -> bool:
+        if not CODEX_LEGACY_FOLLOWUP_QUEUE_RE.search(screen_tail):
+            return False
+        anchors = self._payload_anchor_fragments(payload)
+        if not anchors:
+            return False
+        return any(anchor in screen_tail for anchor in anchors)
+
+    def _raise_if_codex_legacy_followup_queue(
+        self,
+        *,
+        tmux_session: str,
+        payload: str,
+        backend: str,
+    ) -> None:
+        if backend != CliBackend.CODEX.value:
+            return
+        screen_tail = "\n".join(
+            self._capture_clean_text(tmux_session).splitlines()[-80:]
+        )
+        if self._codex_legacy_followup_queue_contains(screen_tail, payload):
+            raise RuntimeError(
+                f"tmux {tmux_session} prompt delivery entered Codex legacy "
+                "follow-up queue instead of next-tool-call queue"
+            )
 
     def _input_composer_region(self, screen_tail: str) -> str:
         lines = screen_tail.splitlines()
