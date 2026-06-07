@@ -12,6 +12,7 @@ from daedalus_wechat.kairos_readout import (
     format_kairos_today_readout,
     load_kairos_intraday_alert,
     load_kairos_owner_brief,
+    load_kairos_owner_daily_package,
     load_kairos_today_readout,
 )
 
@@ -94,6 +95,43 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                 "next_open_to_close_pct": 0.82,
             }
         ],
+    }
+
+
+def _sample_owner_daily_package_payload() -> dict[str, object]:
+    return {
+        "status": "REPORT_ONLY_SHORT_CYCLE_OWNER_DAILY_PACKAGE",
+        "as_of_date": "2026-06-05",
+        "target_trade_date": "2026-06-08",
+        "accepted_edges": 0,
+        "owner_review_brief": {
+            "source_status": "REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF",
+            "owner_review_candidate_count": 40,
+            "source_markdown_path": "/tmp/short_cycle_owner_review_brief_latest.md",
+        },
+        "intraday_candidate_manifest": {
+            "source_status": "REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST",
+            "candidate_count": 144,
+            "unique_symbol_count": 41,
+            "collection_window_count": 3,
+            "source_markdown_path": "/tmp/short_cycle_intraday_candidate_manifest_latest.md",
+            "edge_collection_contract": {
+                "edge_runtime": "Windows ft-edge",
+                "transport": "file handoff; no DB writes",
+            },
+            "collection_windows": [
+                {
+                    "time_cst": "09:26",
+                    "window_id": "opening_print_0926",
+                    "owner_use": "opening print observation",
+                },
+                {
+                    "time_cst": "09:36",
+                    "window_id": "first5m_preliminary_0936",
+                    "owner_use": "first five minute observation",
+                },
+            ],
+        },
     }
 
 
@@ -250,11 +288,27 @@ def test_load_kairos_owner_brief_reads_latest_report(tmp_path: Path) -> None:
     assert payload["accepted_edges"] == 0
 
 
+def test_load_kairos_owner_daily_package_reads_latest_report(tmp_path: Path) -> None:
+    report_path = tmp_path / "short_cycle_owner_daily_package_latest.json"
+    report_path.write_text(
+        json.dumps(_sample_owner_daily_package_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    payload = load_kairos_owner_daily_package(report_path)
+
+    assert payload["status"] == "REPORT_ONLY_SHORT_CYCLE_OWNER_DAILY_PACKAGE"
+    assert payload["report_path"] == str(report_path)
+    assert payload["accepted_edges"] == 0
+
+
 def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) -> None:
     payload = _sample_owner_brief_payload()
     payload["report_path"] = str(tmp_path / "brief.json")
+    package = _sample_owner_daily_package_payload()
+    package["report_path"] = str(tmp_path / "package.json")
 
-    text = format_kairos_owner_brief(payload)
+    text = format_kairos_owner_brief(payload, daily_package=package)
 
     assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in text
     assert "accepted_edges=0" in text
@@ -263,6 +317,10 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "gross=1.26%" in text
     assert "net=0.99%" in text
     assert "HIGH_INDUSTRY_CONCENTRATION" in text
+    assert "日包总入口" in text
+    assert "intraday_manifest=REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST" in text
+    assert "rows=144 symbols=41 windows=3 edge_runtime=Windows ft-edge" in text
+    assert "09:26 opening_print_0926" in text
 
 
 def test_cli_brief_does_not_require_bridge_state(tmp_path: Path, capsys, monkeypatch) -> None:
@@ -275,12 +333,17 @@ def test_cli_brief_does_not_require_bridge_state(tmp_path: Path, capsys, monkeyp
         "sys.argv",
         ["daedalus-wechat", "brief", "--report-path", str(report_path), "--limit", "1"],
     )
+    monkeypatch.setattr(
+        "daedalus_wechat.cli.load_kairos_owner_daily_package",
+        lambda: _sample_owner_daily_package_payload(),
+    )
 
     rc = main()
 
     assert rc == 0
     out = capsys.readouterr().out
     assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in out
+    assert "日包总入口" in out
     assert "002251.SZ 步步高" in out
 
 
@@ -288,11 +351,15 @@ def test_daemon_brief_command_is_read_only() -> None:
     with patch(
         "daedalus_wechat.daemon.load_kairos_owner_brief",
         return_value=_sample_owner_brief_payload(),
+    ), patch(
+        "daedalus_wechat.daemon.load_kairos_owner_daily_package",
+        return_value=_sample_owner_daily_package_payload(),
     ):
         text = BridgeDaemon._handle_command(BridgeDaemon.__new__(BridgeDaemon), "/brief")
 
     assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in text
     assert "accepted_edges=0" in text
+    assert "intraday_manifest=REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST" in text
 
 
 def test_load_kairos_intraday_alert_reads_latest_report(tmp_path: Path) -> None:

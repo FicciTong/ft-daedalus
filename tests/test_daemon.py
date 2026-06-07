@@ -5066,6 +5066,9 @@ class DaemonTests(unittest.TestCase):
             with patch(
                 "daedalus_wechat.daemon.load_kairos_owner_brief",
                 return_value={"status": "REPORT_ONLY", "accepted_edges": 0},
+            ), patch(
+                "daedalus_wechat.daemon.load_kairos_owner_daily_package",
+                return_value={"status": "REPORT_ONLY", "accepted_edges": 0},
             ):
                 self.assertEqual(
                     daemon._handle_command("/b"),

@@ -26,6 +26,7 @@ from .kairos_readout import (
     format_kairos_today_readout,
     load_kairos_intraday_alert,
     load_kairos_owner_brief,
+    load_kairos_owner_daily_package,
     load_kairos_today_readout,
 )
 from .live_session import LiveCodexSessionManager
@@ -405,7 +406,13 @@ def main() -> int:
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         else:
-            print(format_kairos_owner_brief(payload, candidate_limit=args.limit))
+            print(
+                format_kairos_owner_brief(
+                    payload,
+                    candidate_limit=args.limit,
+                    daily_package=load_kairos_owner_daily_package(),
+                )
+            )
         return 0
     if args.command == "intraday":
         payload = load_kairos_intraday_alert(args.report_path)
