@@ -801,6 +801,48 @@ def _format_long_window_route_examples(payload: dict[str, Any], *, limit: int = 
     return lines
 
 
+def _format_cross_horizon_consensus(payload: dict[str, Any], *, limit: int = 5) -> list[str]:
+    stability = _as_dict(payload.get("long_window_stability"))
+    consensus = _as_dict(stability.get("cross_horizon_right_tail_consensus"))
+    rows = [item for item in _as_list(consensus.get("top_rows")) if isinstance(item, dict)]
+    if not rows:
+        return []
+
+    lines = [
+        "",
+        f"跨horizon右尾共识假设 Top {min(limit, len(rows))}:",
+        (
+            f"- status={consensus.get('status', 'unknown')} "
+            f"support_state={consensus.get('support_state', 'unknown')} "
+            f"hypotheses={_fmt_num(consensus.get('hypothesis_count'))} "
+            f"multi_ready="
+            f"{_fmt_num(consensus.get('both_horizon_multi_window_ready_hypothesis_count'))} "
+            f"min_windows={_fmt_num(consensus.get('multi_window_min_ready_threshold'))} "
+            "diagnostic_only=true"
+        ),
+    ]
+    for item in rows[:limit]:
+        lines.append(
+            f"- {item.get('hypothesis_id', 'unknown')} "
+            f"min_ready={_fmt_num(item.get('min_right_tail_ready_window_count'))} "
+            f"same_close_net="
+            f"{_fmt_pct(item.get('next_open_close_best_net_excess_pct'))} "
+            f"same_close_tail5="
+            f"{_fmt_pct(item.get('next_open_close_tail5_max_share_pct'))} "
+            f"follow_net="
+            f"{_fmt_pct(item.get('next_open_following_close_best_net_excess_pct'))} "
+            f"follow_tail5="
+            f"{_fmt_pct(item.get('next_open_following_close_tail5_max_share_pct'))} "
+            f"windows={_fmt_num(item.get('windows_tested'))} "
+            f"action={item.get('evolution_next_action', 'review')}"
+        )
+    lines.append(
+        "- boundary=report-only consensus; same_close is diagnostic; "
+        "legal horizon still has no validated edge, no GO, no advice"
+    )
+    return lines
+
+
 def _format_forward_shadow_track_record(
     package: dict[str, Any] | None,
     *,
@@ -1068,6 +1110,7 @@ def format_kairos_owner_brief(
     lines.extend(_format_shortest_legal_next_open_horizon(daily_package))
     lines.extend(_format_long_window_route_counts(payload))
     lines.extend(_format_long_window_route_examples(payload))
+    lines.extend(_format_cross_horizon_consensus(payload))
     lines.extend(
         _format_forward_shadow_track_record(
             daily_package,

@@ -168,6 +168,8 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                 },
             ],
             "cross_horizon_right_tail_consensus": {
+                "status": "REPORT_ONLY_CROSS_HORIZON_RIGHT_TAIL_CONSENSUS",
+                "hypothesis_count": 17,
                 "multi_window_min_ready_threshold": 2,
                 "both_horizon_multi_window_ready_hypothesis_count": 0,
                 "both_horizon_single_window_only_hypothesis_count": 17,
@@ -182,6 +184,32 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                     "candidate_count": 17,
                     "min_ready_threshold": 2,
                 },
+                "top_rows": [
+                    {
+                        "hypothesis_id": "prior_limit_gap_hold",
+                        "min_right_tail_ready_window_count": 2,
+                        "next_open_close_best_net_excess_pct": 0.6821,
+                        "next_open_close_tail5_max_share_pct": 35.2941,
+                        "next_open_following_close_best_net_excess_pct": 2.9334,
+                        "next_open_following_close_tail5_max_share_pct": 38.8889,
+                        "windows_tested": 7,
+                        "evolution_next_action": (
+                            "adapt_predicate_or_surface_coverage_before_rerun"
+                        ),
+                    },
+                    {
+                        "hypothesis_id": "deep_shakeout_power_recover",
+                        "min_right_tail_ready_window_count": 7,
+                        "next_open_close_best_net_excess_pct": 0.6658,
+                        "next_open_close_tail5_max_share_pct": 26.6667,
+                        "next_open_following_close_best_net_excess_pct": 0.6206,
+                        "next_open_following_close_tail5_max_share_pct": 30.2326,
+                        "windows_tested": 7,
+                        "evolution_next_action": (
+                            "keep_or_prioritize_for_forward_shadow_observation"
+                        ),
+                    },
+                ],
             },
         },
         "owner_review_candidates": [
@@ -730,6 +758,14 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "cold_world_volume_exhaustion route=PREDICATE_SUPPORT_ADAPTATION" in text
     assert "follow_net=1.72% follow_tail5=40.00%" in text
     assert "route_examples_boundary=examples are research routing samples" in text
+    assert "跨horizon右尾共识假设 Top 2" in text
+    assert "status=REPORT_ONLY_CROSS_HORIZON_RIGHT_TAIL_CONSENSUS" in text
+    assert "support_state=CROSS_HORIZON_SINGLE_WINDOW_ONLY" in text
+    assert "hypotheses=17 multi_ready=0 min_windows=2 diagnostic_only=true" in text
+    assert "prior_limit_gap_hold min_ready=2 same_close_net=0.68%" in text
+    assert "follow_net=2.93% follow_tail5=38.89% windows=7" in text
+    assert "deep_shakeout_power_recover min_ready=7" in text
+    assert "legal horizon still has no validated edge, no GO, no advice" in text
     assert "Forward-shadow闭环" in text
     assert "records=244 fired=0 pending=244 following=0 following_scoreable=0" in text
     assert "pending is not failed trade, not negative edge" in text
