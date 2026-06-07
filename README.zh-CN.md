@@ -439,6 +439,7 @@ journalctl --user -u daedalus-wechat -n 100 --no-pager
 - `/menu`
 - `/status`
 - `/health`
+- `/brief`（短别名 `/b`，查看最新 Kairos short-cycle owner review 日包摘要）
 - `/notify on|off|status`
 - `/recent [n]`
 - `/recent after <seq>`
@@ -507,6 +508,7 @@ uv run daedalus-wechat send-bound --video ~/demo.mp4
 /notify on
 /recent
 /status
+/brief
 /sessions
 /switch 1
 /switch attached-last

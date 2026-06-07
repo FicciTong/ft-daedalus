@@ -19,6 +19,19 @@ def default_kairos_readout_path() -> Path:
     )
 
 
+def default_kairos_owner_brief_path() -> Path:
+    """Return the workbench-local Kairos short-cycle owner brief path."""
+    cosmos_root = Path(__file__).resolve().parents[3]
+    return (
+        cosmos_root
+        / "ft-kairos"
+        / "var"
+        / "reports"
+        / "research_substrate"
+        / "short_cycle_owner_review_brief_latest.json"
+    )
+
+
 def _missing_payload(report_path: Path, *, status: str, reason: str) -> dict[str, Any]:
     return {
         "report_contract": "daedalus_wechat.kairos_today_readout",
@@ -79,6 +92,214 @@ def load_kairos_today_readout(report_path: Path | None = None) -> dict[str, Any]
     return payload
 
 
+def _missing_owner_brief_payload(
+    report_path: Path, *, status: str, reason: str
+) -> dict[str, Any]:
+    return {
+        "contract": "daedalus_wechat.kairos_owner_brief_readout",
+        "readout_source": "fail_closed",
+        "status": status,
+        "report_path": str(report_path),
+        "as_of_date": None,
+        "target_trade_date": None,
+        "accepted_edges": 0,
+        "authority_boundary": {
+            "authority_delta": "none",
+            "owner_advisory_allowed": False,
+            "owner_pnl_claim_allowed": False,
+            "consumer_cutover_allowed": False,
+            "live_broker_allowed": False,
+            "auto_order_allowed": False,
+        },
+        "errors": [reason],
+    }
+
+
+def load_kairos_owner_brief(report_path: Path | None = None) -> dict[str, Any]:
+    path = report_path or default_kairos_owner_brief_path()
+    if not path.is_file():
+        return _missing_owner_brief_payload(
+            path,
+            status="MISSING",
+            reason="Kairos short-cycle owner review brief is missing",
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except JSONDecodeError as exc:
+        return _missing_owner_brief_payload(
+            path,
+            status="BLOCKED",
+            reason=f"Kairos short-cycle owner review brief is invalid JSON: {exc.msg}",
+        )
+    except OSError as exc:
+        return _missing_owner_brief_payload(
+            path,
+            status="BLOCKED",
+            reason=f"Kairos short-cycle owner review brief cannot be read: {exc}",
+        )
+    if not isinstance(payload, dict):
+        return _missing_owner_brief_payload(
+            path,
+            status="BLOCKED",
+            reason="Kairos short-cycle owner review brief root is not an object",
+        )
+    payload = dict(payload)
+    payload["report_path"] = str(path)
+    return payload
+
+
+def _fmt_pct(value: Any) -> str:
+    if value is None:
+        return "None"
+    try:
+        return f"{float(value):.2f}%"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _fmt_num(value: Any) -> str:
+    if value is None:
+        return "None"
+    try:
+        as_float = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if as_float.is_integer():
+        return str(int(as_float))
+    return f"{as_float:.4g}"
+
+
+def format_kairos_owner_brief(
+    payload: dict[str, Any], *, candidate_limit: int = 12
+) -> str:
+    """Render the latest owner review brief as a compact mobile readout."""
+
+    status = str(payload.get("status") or "UNKNOWN")
+    as_of = payload.get("as_of_date") or "unknown"
+    target = payload.get("target_trade_date") or "unknown"
+    accepted_edges = payload.get("accepted_edges", 0)
+    report_path = payload.get("report_path", "unknown")
+    errors = payload.get("errors")
+    if isinstance(errors, list) and errors:
+        return "\n".join(
+            [
+                f"Kairos brief={status}",
+                f"report_path={report_path}",
+                *[f"error={item}" for item in errors[:3]],
+                "boundary=read-only report; not an advisory packet; accepted_edges=0",
+            ]
+        )
+
+    market = payload.get("market_facts")
+    if not isinstance(market, dict):
+        market = {}
+    concentration = payload.get("industry_concentration")
+    if not isinstance(concentration, dict):
+        concentration = {}
+    candidates = payload.get("owner_review_candidates")
+    if not isinstance(candidates, list):
+        candidates = []
+    env_diag = payload.get("environment_diagnostics")
+    if not isinstance(env_diag, dict):
+        env_diag = {}
+    base_rates = payload.get("limit_board_base_rates")
+    if not isinstance(base_rates, list):
+        base_rates = []
+
+    lines = [
+        f"Kairos 日包 brief={status}",
+        f"as_of={as_of} target={target} accepted_edges={accepted_edges}",
+        "boundary=report-only / 不是买卖建议 / 不是 validated edge",
+        "",
+        "市场事实:",
+        (
+            f"- regime={market.get('market_regime', 'unknown')} "
+            f"emotion={market.get('emotion_phase', 'unknown')} "
+            f"breadth={_fmt_pct(market.get('breadth_up_pct'))} "
+            f"涨停={_fmt_num(market.get('limit_up_count'))} "
+            f"炸板={_fmt_num(market.get('broken_limit_up_count'))} "
+            f"首板={_fmt_num(market.get('first_limit_up_count'))} "
+            f"高度={_fmt_num(market.get('highest_continuous_board'))}"
+        ),
+        "",
+        "候选行业集中度:",
+        (
+            f"- state={concentration.get('state', 'unknown')} "
+            f"top_share={_fmt_pct(concentration.get('top_industry_share_pct'))} "
+            f"HHI={_fmt_num(concentration.get('hhi'))}"
+        ),
+    ]
+
+    top_industries = concentration.get("top_industries")
+    if isinstance(top_industries, list):
+        for item in top_industries[:5]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"- {item.get('industry_name', 'unknown')}: "
+                f"{_fmt_num(item.get('candidate_count'))} "
+                f"({_fmt_pct(item.get('candidate_share_pct'))})"
+            )
+
+    lines.extend(["", f"明天值得看 Top {min(candidate_limit, len(candidates))}:"])
+    for item in candidates[:candidate_limit]:
+        if not isinstance(item, dict):
+            continue
+        support = item.get("tactic_support")
+        if not isinstance(support, dict):
+            support = {}
+        net = support.get("net_excess_pct")
+        net_text = _fmt_pct(net) if net is not None else "None"
+        wounds = item.get("evidence_wounds")
+        wound_count = len(wounds) if isinstance(wounds, list) else 0
+        lines.append(
+            f"- #{_fmt_num(item.get('review_rank'))} "
+            f"{item.get('symbol', 'unknown')} {item.get('stock_name', '')} "
+            f"[{item.get('industry_name', 'unknown')}] "
+            f"{item.get('tactic_name', item.get('tactic_id', 'unknown'))} "
+            f"label={item.get('owner_confidence_label', 'unknown')} "
+            f"gross={_fmt_pct(support.get('gross_excess_pct'))} "
+            f"net={net_text} "
+            f"n={_fmt_num(support.get('row_n'))}/days={_fmt_num(support.get('date_block_effective_n'))} "
+            f"wounds={wound_count}"
+        )
+
+    if env_diag:
+        lines.extend(
+            [
+                "",
+                "环境条件化诊断:",
+                (
+                    f"- freshness={env_diag.get('freshness_status', 'unknown')} "
+                    f"current_promising={_fmt_num(env_diag.get('current_promising_count'))} "
+                    f"diagnostic_promising={_fmt_num(env_diag.get('diagnostic_promising_count'))}"
+                ),
+            ]
+        )
+
+    if base_rates:
+        lines.extend(["", "封单/炸板基率:"])
+        for item in base_rates[:4]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"- {item.get('context_state', 'unknown')}: "
+                f"events={_fmt_num(item.get('event_n'))} "
+                f"days={_fmt_num(item.get('date_count'))} "
+                f"次日开到收={_fmt_pct(item.get('next_open_to_close_pct'))}"
+            )
+
+    lines.extend(
+        [
+            "",
+            "禁止误读: rank不是edge; rows不是独立edge; 未行业中性; "
+            "仍需cost/CI/FDR/holdout/forward-shadow; accepted_edges=0",
+            f"artifact={report_path}",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def format_kairos_today_readout(payload: dict[str, Any]) -> str:
     status = str(payload.get("run_status") or "UNKNOWN").upper()
     summary = payload.get("owner_summary")
@@ -123,7 +344,10 @@ def format_kairos_today_readout(payload: dict[str, Any]) -> str:
 
 
 __all__ = [
+    "default_kairos_owner_brief_path",
     "default_kairos_readout_path",
+    "format_kairos_owner_brief",
     "format_kairos_today_readout",
+    "load_kairos_owner_brief",
     "load_kairos_today_readout",
 ]

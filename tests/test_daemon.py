@@ -4945,6 +4945,7 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("/r  /recent", help_text)
             self.assertIn("/lg /log", help_text)
             self.assertIn("/cu /catchup", help_text)
+            self.assertIn("/b /brief", help_text)
             self.assertIn("/flush", help_text)
             self.assertLess(len(help_text.splitlines()), 20)
 
@@ -4967,6 +4968,14 @@ class DaemonTests(unittest.TestCase):
                 daemon._handle_command("/q"),
                 daemon._handle_command("/queue"),
             )
+            with patch(
+                "daedalus_wechat.daemon.load_kairos_owner_brief",
+                return_value={"status": "REPORT_ONLY", "accepted_edges": 0},
+            ):
+                self.assertEqual(
+                    daemon._handle_command("/b"),
+                    daemon._handle_command("/brief"),
+                )
             self.assertIn("status=", daemon._handle_command("/st"))
             self.assertIn("health=", daemon._handle_command("/hl"))
             self.assertEqual(

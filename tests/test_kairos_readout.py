@@ -7,7 +7,9 @@ from unittest.mock import patch
 from daedalus_wechat.cli import main
 from daedalus_wechat.daemon import BridgeDaemon
 from daedalus_wechat.kairos_readout import (
+    format_kairos_owner_brief,
     format_kairos_today_readout,
+    load_kairos_owner_brief,
     load_kairos_today_readout,
 )
 
@@ -30,6 +32,66 @@ def _sample_payload() -> dict[str, object]:
             "owner_advisory_allowed": False,
             "live_broker_allowed": False,
         },
+    }
+
+
+def _sample_owner_brief_payload() -> dict[str, object]:
+    return {
+        "status": "REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF",
+        "as_of_date": "2026-06-05",
+        "target_trade_date": "2026-06-08",
+        "accepted_edges": 0,
+        "market_facts": {
+            "market_regime": "CHOPPY",
+            "emotion_phase": "hot",
+            "breadth_up_pct": 59.63,
+            "limit_up_count": 88,
+            "broken_limit_up_count": 63,
+            "first_limit_up_count": 82,
+            "highest_continuous_board": 5,
+        },
+        "industry_concentration": {
+            "state": "HIGH_INDUSTRY_CONCENTRATION",
+            "top_industry_share_pct": 51.16,
+            "hhi": 0.3077,
+            "top_industries": [
+                {
+                    "industry_name": "元器件",
+                    "candidate_count": 22,
+                    "candidate_share_pct": 51.16,
+                }
+            ],
+        },
+        "owner_review_candidates": [
+            {
+                "review_rank": 1,
+                "symbol": "002251.SZ",
+                "stock_name": "步步高",
+                "industry_name": "超市连锁",
+                "tactic_name": "高开后前30分钟承接",
+                "owner_confidence_label": "可用参考",
+                "evidence_wounds": ["not_industry_neutral_contains_sector_beta"],
+                "tactic_support": {
+                    "gross_excess_pct": 1.2576,
+                    "net_excess_pct": 0.9856,
+                    "row_n": 1005,
+                    "date_block_effective_n": 32,
+                },
+            }
+        ],
+        "environment_diagnostics": {
+            "freshness_status": "STALE_FOR_PACKAGE_AS_OF",
+            "current_promising_count": 0,
+            "diagnostic_promising_count": 6,
+        },
+        "limit_board_base_rates": [
+            {
+                "context_state": "sealed_after_break",
+                "event_n": 7134,
+                "date_count": 811,
+                "next_open_to_close_pct": 0.82,
+            }
+        ],
     }
 
 
@@ -103,3 +165,62 @@ def test_daemon_kairos_today_command_is_read_only() -> None:
 
     assert "Kairos readiness=WARN" in text
     assert "advisory_ready=false" in text
+
+
+def test_load_kairos_owner_brief_reads_latest_report(tmp_path: Path) -> None:
+    report_path = tmp_path / "short_cycle_owner_review_brief_latest.json"
+    report_path.write_text(
+        json.dumps(_sample_owner_brief_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    payload = load_kairos_owner_brief(report_path)
+
+    assert payload["status"] == "REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF"
+    assert payload["report_path"] == str(report_path)
+    assert payload["accepted_edges"] == 0
+
+
+def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) -> None:
+    payload = _sample_owner_brief_payload()
+    payload["report_path"] = str(tmp_path / "brief.json")
+
+    text = format_kairos_owner_brief(payload)
+
+    assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in text
+    assert "accepted_edges=0" in text
+    assert "不是买卖建议" in text
+    assert "002251.SZ 步步高" in text
+    assert "gross=1.26%" in text
+    assert "net=0.99%" in text
+    assert "HIGH_INDUSTRY_CONCENTRATION" in text
+
+
+def test_cli_brief_does_not_require_bridge_state(tmp_path: Path, capsys, monkeypatch) -> None:
+    report_path = tmp_path / "short_cycle_owner_review_brief_latest.json"
+    report_path.write_text(
+        json.dumps(_sample_owner_brief_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["daedalus-wechat", "brief", "--report-path", str(report_path), "--limit", "1"],
+    )
+
+    rc = main()
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in out
+    assert "002251.SZ 步步高" in out
+
+
+def test_daemon_brief_command_is_read_only() -> None:
+    with patch(
+        "daedalus_wechat.daemon.load_kairos_owner_brief",
+        return_value=_sample_owner_brief_payload(),
+    ):
+        text = BridgeDaemon._handle_command(BridgeDaemon.__new__(BridgeDaemon), "/brief")
+
+    assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in text
+    assert "accepted_edges=0" in text
