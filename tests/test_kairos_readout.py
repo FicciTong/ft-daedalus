@@ -116,6 +116,27 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                 },
             }
         ],
+        "weak_signal_review_queue": [
+            {
+                "hypothesis_id": "high_gap_first30m_hold",
+                "window_id": "short_cycle_predicate_2026_q2",
+                "horizon_id": "next_open_to_d5_close",
+                "route": "NEEDS_FORWARD_SHADOW",
+                "gross_excess_pct": 1.2576,
+                "net_excess_pct": 0.9856,
+                "win_rate_pct": 48.36,
+                "row_n": 1005,
+                "date_block_effective_n": 32,
+                "next_action": (
+                    "freeze into forward-shadow and observe before owner ranking claim"
+                ),
+                "wounds": [
+                    "static_cost_stamp_not_fill_simulator",
+                    "needs_date_block_ci",
+                    "needs_fdr_holdout_or_forward_shadow_before_edge_claim",
+                ],
+            }
+        ],
         "environment_diagnostics": {
             "freshness_status": "STALE_FOR_PACKAGE_AS_OF",
             "current_promising_count": 0,
@@ -368,6 +389,14 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "tape=RIGHT_TAIL_TAPE_ACTIVE 涨停=88 高度=5 炸板=63" in text
     assert "not a position-sizing instruction" in text
     assert "not position sizing" in text
+    assert "弱信号观察队列 Top 1" in text
+    assert "pattern-level review queue; not edge, not stock advice" in text
+    assert "high_gap_first30m_hold" in text
+    assert "route=NEEDS_FORWARD_SHADOW" in text
+    assert "gross=1.26%" in text
+    assert "net=0.99%" in text
+    assert "n=1005/days=32" in text
+    assert "wounds=3" in text
 
 
 def test_cli_brief_does_not_require_bridge_state(tmp_path: Path, capsys, monkeypatch) -> None:

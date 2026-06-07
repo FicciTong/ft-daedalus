@@ -410,6 +410,36 @@ def _format_explosive_posture(payload: dict[str, Any]) -> list[str]:
     ]
 
 
+def _format_weak_signal_queue(payload: dict[str, Any], *, limit: int) -> list[str]:
+    queue = _as_list(payload.get("weak_signal_review_queue"))
+    if not queue:
+        return []
+
+    lines = [
+        "",
+        f"弱信号观察队列 Top {min(limit, len(queue))}:",
+        "- boundary=pattern-level review queue; not edge, not stock advice",
+    ]
+    for item in queue[:limit]:
+        if not isinstance(item, dict):
+            continue
+        wounds = _as_list(item.get("wounds"))
+        first_wound = wounds[0] if wounds else "none"
+        lines.append(
+            f"- {item.get('hypothesis_id', 'unknown')} "
+            f"horizon={item.get('horizon_id', 'unknown')} "
+            f"window={item.get('window_id', 'unknown')} "
+            f"route={item.get('route', 'unknown')} "
+            f"gross={_fmt_pct(item.get('gross_excess_pct'))} "
+            f"net={_fmt_pct(item.get('net_excess_pct'))} "
+            f"win={_fmt_pct(item.get('win_rate_pct'))} "
+            f"n={_fmt_num(item.get('row_n'))}/days={_fmt_num(item.get('date_block_effective_n'))} "
+            f"wounds={len(wounds)} first={first_wound} "
+            f"next={item.get('next_action', 'review')}"
+        )
+    return lines
+
+
 def format_kairos_owner_brief(
     payload: dict[str, Any],
     *,
@@ -476,6 +506,7 @@ def format_kairos_owner_brief(
 
     lines.extend(_format_daily_package_handoff(daily_package))
     lines.extend(_format_explosive_posture(payload))
+    lines.extend(_format_weak_signal_queue(payload, limit=min(candidate_limit, 5)))
 
     top_industries = concentration.get("top_industries")
     if isinstance(top_industries, list):
