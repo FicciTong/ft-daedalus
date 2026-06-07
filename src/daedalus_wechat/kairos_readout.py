@@ -857,7 +857,15 @@ def format_kairos_intraday_alert(
     market = _as_dict(payload.get("market_facts"))
     concentration = _as_dict(payload.get("industry_concentration"))
     setup = _as_dict(payload.get("setup_supply"))
+    projection = _as_dict(payload.get("observation_projection_status"))
+    source_counts = _as_dict(projection.get("candidate_source_counts"))
     candidates = _as_list(payload.get("candidate_alerts"))
+    right_tail_supplements = [
+        row
+        for row in candidates
+        if isinstance(row, dict)
+        and row.get("intraday_alert_source") == "cross_horizon_right_tail_supplement"
+    ]
 
     lines = [
         f"Kairos 盘中 alert={status}",
@@ -884,6 +892,11 @@ def format_kairos_intraday_alert(
             f"watchlist={_fmt_num(setup.get('stock_watchlist_count'))} "
             f"sealed={_fmt_num(setup.get('sealed_no_break_watchlist_count'))}"
         ),
+        (
+            f"alert_sources topn={_fmt_num(source_counts.get('topn_owner_review'))} "
+            f"right_tail_supp={_fmt_num(source_counts.get('cross_horizon_right_tail_supplement'))} "
+            f"clusters={_fmt_num(projection.get('cross_horizon_right_tail_cluster_count'))}"
+        ),
         "",
         "时间窗:",
     ]
@@ -905,11 +918,14 @@ def format_kairos_intraday_alert(
             if isinstance(item, dict)
         }
         support = _as_dict(row.get("support_snapshot"))
+        cluster = _as_dict(row.get("cross_horizon_right_tail_cluster"))
         lines.append(
             f"- #{_fmt_num(row.get('rank'))} "
             f"{row.get('symbol', 'unknown')} {row.get('stock_name', '')} "
             f"[{row.get('industry_name', 'unknown')}] "
             f"{row.get('tactic_id', 'unknown')} "
+            f"source={row.get('intraday_alert_source', 'unknown')} "
+            f"cluster={cluster.get('cluster_key', '')} "
             f"label={row.get('owner_confidence_label', 'unknown')} "
             f"net={_fmt_pct(support.get('net_excess_pct'))} "
             f"tail5={_fmt_pct(support.get('right_tail_return_ge_5pct_share_pct'))} "
@@ -918,6 +934,28 @@ def format_kairos_intraday_alert(
             f"30m={_as_dict(checkpoints.get('first30m_confirmation_1001')).get('trigger_status')} "
             f"wounds={len(_as_list(row.get('evidence_wounds')))}"
         )
+
+    if right_tail_supplements:
+        lines.extend(
+            [
+                "",
+                f"右尾补充候选 Top {min(5, len(right_tail_supplements))}:",
+                "- boundary=cluster是相关setup,不是独立股票edge; 只做盘中观察补充",
+            ]
+        )
+        for row in right_tail_supplements[:5]:
+            support = _as_dict(row.get("support_snapshot"))
+            cluster = _as_dict(row.get("cross_horizon_right_tail_cluster"))
+            lines.append(
+                f"- #{_fmt_num(row.get('rank'))} "
+                f"{row.get('symbol', 'unknown')} {row.get('stock_name', '')} "
+                f"[{row.get('industry_name', 'unknown')}] "
+                f"{row.get('tactic_id', 'unknown')} "
+                f"cluster={cluster.get('cluster_key', 'unknown')} "
+                f"net={_fmt_pct(support.get('net_excess_pct'))} "
+                f"tail5={_fmt_pct(support.get('right_tail_return_ge_5pct_share_pct'))} "
+                f"wounds={len(_as_list(row.get('evidence_wounds')))}"
+            )
 
     lines.extend(
         [

@@ -321,7 +321,7 @@ def _sample_intraday_alert_payload() -> dict[str, object]:
         "as_of_date": "2026-06-05",
         "target_trade_date": "2026-06-08",
         "accepted_edges": 0,
-        "candidate_count": 1,
+        "candidate_count": 2,
         "markdown_path": "/tmp/short_cycle_intraday_owner_alert_latest.md",
         "realtime_snapshot_status": {
             "status": "PENDING_REALTIME_SNAPSHOT",
@@ -365,6 +365,7 @@ def _sample_intraday_alert_payload() -> dict[str, object]:
         "candidate_alerts": [
             {
                 "rank": 1,
+                "intraday_alert_source": "topn_owner_review",
                 "symbol": "002251.SZ",
                 "stock_name": "步步高",
                 "industry_name": "超市连锁",
@@ -389,6 +390,27 @@ def _sample_intraday_alert_payload() -> dict[str, object]:
                         "trigger_status": "PENDING_REALTIME_SNAPSHOT",
                     },
                 ],
+            },
+            {
+                "rank": 21,
+                "intraday_alert_source": "cross_horizon_right_tail_supplement",
+                "cross_horizon_right_tail_cluster": {
+                    "cluster_key": "prior_weak_close_reclaim_volume::小金属",
+                },
+                "symbol": "002240.SZ",
+                "stock_name": "盛新锂能",
+                "industry_name": "小金属",
+                "tactic_id": "prior_weak_close_reclaim_volume",
+                "owner_confidence_label": "观察中",
+                "evidence_wounds": [
+                    "row_level_fdr_holdout_not_available",
+                    "cluster_is_correlated_setup_not_independent_edge",
+                ],
+                "support_snapshot": {
+                    "net_excess_pct": 1.6,
+                    "right_tail_return_ge_5pct_share_pct": 30.22,
+                },
+                "runtime_checkpoints": [],
             }
         ],
     }
@@ -529,7 +551,7 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "intraday_manifest=REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST" in text
     assert "rows=144 symbols=41 windows=3 edge_runtime=Windows ft-edge" in text
     assert "intraday_alert=REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT" in text
-    assert "rows=1 observed=2 pending=25 topn=20 right_tail_supp=7 clusters=2" in text
+    assert "rows=2 observed=2 pending=25 topn=20 right_tail_supp=7 clusters=2" in text
     assert "intraday_alert_md=/tmp/short_cycle_intraday_owner_alert_latest.md" in text
     assert "09:26 opening_print_0926" in text
     assert "环境条件化 A/B 伤口" in text
@@ -646,6 +668,10 @@ def test_format_kairos_intraday_alert_keeps_report_only_boundary(
     assert "不是买卖建议" in text
     assert "不是GO" in text
     assert "002251.SZ 步步高" in text
+    assert "alert_sources topn=20 right_tail_supp=7 clusters=2" in text
+    assert "右尾补充候选 Top 1" in text
+    assert "002240.SZ 盛新锂能" in text
+    assert "prior_weak_close_reclaim_volume::小金属" in text
     assert "PENDING_REALTIME_SNAPSHOT" in text
 
 
@@ -677,6 +703,8 @@ def test_cli_intraday_does_not_require_bridge_state(
     out = capsys.readouterr().out
     assert "Kairos 盘中 alert=REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT" in out
     assert "002251.SZ 步步高" in out
+    assert "右尾补充候选 Top 1" in out
+    assert "002240.SZ 盛新锂能" in out
 
 
 def test_daemon_intraday_command_is_read_only() -> None:
