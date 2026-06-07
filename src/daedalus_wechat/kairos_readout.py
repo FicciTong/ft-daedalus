@@ -85,6 +85,19 @@ def default_kairos_hypothesis_scout_readout_path() -> Path:
     )
 
 
+def default_kairos_owner_review_truth_units_path() -> Path:
+    """Return the workbench-local owner-review truth-unit readout path."""
+    cosmos_root = Path(__file__).resolve().parents[3]
+    return (
+        cosmos_root
+        / "ft-kairos"
+        / "var"
+        / "reports"
+        / "research_substrate"
+        / "short_cycle_owner_review_truth_units_from_cached_retry_latest.json"
+    )
+
+
 def default_kairos_forward_shadow_track_record_path() -> Path:
     """Return the workbench-local Kairos forward-shadow track-record path."""
     cosmos_root = Path(__file__).resolve().parents[3]
@@ -298,6 +311,27 @@ def _missing_hypothesis_scout_readout_payload(
     }
 
 
+def _missing_owner_review_truth_units_payload(
+    report_path: Path, *, status: str, reason: str
+) -> dict[str, Any]:
+    return {
+        "contract": "daedalus_wechat.kairos_owner_review_truth_units_readout",
+        "readout_source": "fail_closed",
+        "status": status,
+        "report_path": str(report_path),
+        "accepted_edges": 0,
+        "authority_boundary": {
+            "authority_delta": "none",
+            "owner_advisory_allowed": False,
+            "owner_pnl_claim_allowed": False,
+            "consumer_cutover_allowed": False,
+            "live_broker_allowed": False,
+            "auto_order_allowed": False,
+        },
+        "errors": [reason],
+    }
+
+
 def load_kairos_owner_brief(report_path: Path | None = None) -> dict[str, Any]:
     path = report_path or default_kairos_owner_brief_path()
     if not path.is_file():
@@ -393,6 +427,41 @@ def load_kairos_hypothesis_scout_readout(
             path,
             status="BLOCKED",
             reason="Kairos hypothesis scout readout root is not an object",
+        )
+    payload = dict(payload)
+    payload["report_path"] = str(path)
+    return payload
+
+
+def load_kairos_owner_review_truth_units(
+    report_path: Path | None = None,
+) -> dict[str, Any]:
+    path = report_path or default_kairos_owner_review_truth_units_path()
+    if not path.is_file():
+        return _missing_owner_review_truth_units_payload(
+            path,
+            status="MISSING",
+            reason="Kairos owner-review truth-unit readout is missing",
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except JSONDecodeError as exc:
+        return _missing_owner_review_truth_units_payload(
+            path,
+            status="BLOCKED",
+            reason=f"Kairos owner-review truth-unit readout is invalid JSON: {exc.msg}",
+        )
+    except OSError as exc:
+        return _missing_owner_review_truth_units_payload(
+            path,
+            status="BLOCKED",
+            reason=f"Kairos owner-review truth-unit readout cannot be read: {exc}",
+        )
+    if not isinstance(payload, dict):
+        return _missing_owner_review_truth_units_payload(
+            path,
+            status="BLOCKED",
+            reason="Kairos owner-review truth-unit readout root is not an object",
         )
     payload = dict(payload)
     payload["report_path"] = str(path)
@@ -1228,6 +1297,77 @@ def _format_hypothesis_scout_readout(
     return lines
 
 
+def _format_owner_review_truth_units(
+    truth_units: dict[str, Any] | None,
+    *,
+    limit: int = 4,
+) -> list[str]:
+    if not isinstance(truth_units, dict):
+        return []
+
+    errors = _as_list(truth_units.get("errors"))
+    if errors:
+        return [
+            "",
+            "Owner-review truth units:",
+            (
+                f"- truth_units={truth_units.get('status', 'unknown')} "
+                f"accepted_edges={truth_units.get('accepted_edges', 0)}"
+            ),
+            *[f"- error={item}" for item in errors[:2]],
+            f"- artifact={truth_units.get('report_path', 'unknown')}",
+            "- boundary=truth-unit readout unavailable; no evidence, no edge, no GO, no advice",
+        ]
+
+    top_rows = _as_list(truth_units.get("top_truth_units"))
+    route_counts = _as_dict(truth_units.get("route_counts"))
+    confidence_counts = _as_dict(truth_units.get("confidence_counts"))
+    lines = [
+        "",
+        "Owner-review truth units:",
+        (
+            f"- truth_units={truth_units.get('status', 'unknown')} "
+            f"units={_fmt_num(truth_units.get('truth_unit_count'))} "
+            f"variants={_fmt_num(truth_units.get('variant_truth_unit_count'))} "
+            f"source_results={_fmt_num(truth_units.get('source_result_count'))} "
+            f"accepted_edges={truth_units.get('accepted_edges', 0)}"
+        ),
+        (
+            f"- routes strict={_fmt_num(route_counts.get('strict_candidate_review_only'))} "
+            f"tail_watch={_fmt_num(route_counts.get('owner_review_tail_watch'))} "
+            f"tail_negative={_fmt_num(route_counts.get('right_tail_but_mean_negative_review_only'))} "
+            f"thin={_fmt_num(route_counts.get('needs_support_before_review'))}"
+        ),
+        (
+            f"- confidence usable={_fmt_num(confidence_counts.get('usable_reference_net_ci_positive'))} "
+            f"tail_support={_fmt_num(confidence_counts.get('owner_tail_watch_support_ok'))} "
+            f"sample_ok={_fmt_num(confidence_counts.get('observation_sample_ok_not_confirmed'))}"
+        ),
+    ]
+    for row in top_rows[:limit]:
+        if not isinstance(row, dict):
+            continue
+        lines.append(
+            f"- {row.get('hypothesis_id', 'unknown')} "
+            f"horizon={row.get('horizon_id', 'unknown')} "
+            f"route={row.get('owner_review_route', 'unknown')} "
+            f"latest={row.get('latest_verdict', 'unknown')} "
+            f"net={_fmt_pct(row.get('latest_executable_excess_pct_net_static_cost'))} "
+            f"tail5={_fmt_pct(row.get('latest_right_tail_return_ge_5pct_share_pct'))} "
+            f"p90={_fmt_pct(row.get('latest_right_tail_return_p90_pct'))} "
+            f"n={_fmt_num(row.get('latest_executable_row_n'))}/days={_fmt_num(row.get('latest_date_cluster_n'))} "
+            f"windows={_fmt_num(row.get('observed_window_count'))} "
+            f"ci_cross={row.get('latest_date_block_ci_crosses_zero')}"
+        )
+    report_path = truth_units.get("report_path")
+    if report_path:
+        lines.append(f"- truth_units_artifact={report_path}")
+    lines.append(
+        "- boundary=lower presentation threshold only; score/rank is not evidence, edge, GO, or advice"
+    )
+    return lines
+
+
 def format_kairos_owner_brief(
     payload: dict[str, Any],
     *,
@@ -1237,8 +1377,12 @@ def format_kairos_owner_brief(
     intraday_alert: dict[str, Any] | None = None,
     forward_shadow_track_record: dict[str, Any] | None = None,
     hypothesis_scout_readout: dict[str, Any] | None = None,
+    owner_review_truth_units: dict[str, Any] | None = None,
 ) -> str:
     """Render the latest owner review brief as a compact mobile readout."""
+
+    if owner_review_truth_units is None:
+        owner_review_truth_units = load_kairos_owner_review_truth_units()
 
     status = str(payload.get("status") or "UNKNOWN")
     as_of = payload.get("as_of_date") or "unknown"
@@ -1328,6 +1472,12 @@ def format_kairos_owner_brief(
         )
     )
     lines.extend(_format_explosive_posture(payload))
+    lines.extend(
+        _format_owner_review_truth_units(
+            owner_review_truth_units,
+            limit=min(candidate_limit, 4),
+        )
+    )
     lines.extend(
         _format_hypothesis_scout_readout(
             hypothesis_scout_readout,
@@ -1606,6 +1756,7 @@ __all__ = [
     "default_kairos_hypothesis_scout_readout_path",
     "default_kairos_intraday_candidate_manifest_path",
     "default_kairos_intraday_alert_path",
+    "default_kairos_owner_review_truth_units_path",
     "default_kairos_owner_daily_package_path",
     "default_kairos_owner_brief_path",
     "default_kairos_readout_path",
@@ -1616,6 +1767,7 @@ __all__ = [
     "load_kairos_hypothesis_scout_readout",
     "load_kairos_intraday_candidate_manifest",
     "load_kairos_intraday_alert",
+    "load_kairos_owner_review_truth_units",
     "load_kairos_owner_daily_package",
     "load_kairos_owner_brief",
     "load_kairos_today_readout",

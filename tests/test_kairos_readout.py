@@ -16,6 +16,7 @@ from daedalus_wechat.kairos_readout import (
     load_kairos_intraday_candidate_manifest,
     load_kairos_owner_brief,
     load_kairos_owner_daily_package,
+    load_kairos_owner_review_truth_units,
     load_kairos_today_readout,
 )
 
@@ -492,6 +493,44 @@ def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
     }
 
 
+def _sample_owner_review_truth_units_payload() -> dict[str, object]:
+    return {
+        "status": "REPORT_ONLY_OWNER_REVIEW_TRUTH_UNITS_FROM_CACHED_RETRY",
+        "schema_note": "variant-aware test fixture",
+        "accepted_edges": 0,
+        "truth_unit_count": 120,
+        "variant_truth_unit_count": 2640,
+        "source_result_count": 18480,
+        "report_path": "/tmp/short_cycle_owner_review_truth_units_latest.json",
+        "route_counts": {
+            "strict_candidate_review_only": 9,
+            "owner_review_tail_watch": 23,
+            "right_tail_but_mean_negative_review_only": 29,
+            "needs_support_before_review": 56,
+        },
+        "confidence_counts": {
+            "usable_reference_net_ci_positive": 3,
+            "owner_tail_watch_support_ok": 27,
+            "observation_sample_ok_not_confirmed": 34,
+        },
+        "top_truth_units": [
+            {
+                "hypothesis_id": "high_gap_first30m_hold",
+                "horizon_id": "next_open_to_d5_close",
+                "owner_review_route": "strict_candidate_review_only",
+                "latest_verdict": "CANDIDATE_ONLY",
+                "latest_executable_excess_pct_net_static_cost": 0.4774,
+                "latest_right_tail_return_ge_5pct_share_pct": 34.1672,
+                "latest_right_tail_return_p90_pct": 16.6771,
+                "latest_executable_row_n": 4437,
+                "latest_date_cluster_n": 86,
+                "observed_window_count": 7,
+                "latest_date_block_ci_crosses_zero": False,
+            }
+        ],
+    }
+
+
 def _sample_intraday_alert_payload() -> dict[str, object]:
     return {
         "status": "REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT",
@@ -790,6 +829,22 @@ def test_load_kairos_hypothesis_scout_readout_reads_latest_report(
     assert payload["accepted_edges"] == 0
 
 
+def test_load_kairos_owner_review_truth_units_reads_latest_report(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "short_cycle_owner_review_truth_units_latest.json"
+    report_path.write_text(
+        json.dumps(_sample_owner_review_truth_units_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    payload = load_kairos_owner_review_truth_units(report_path)
+
+    assert payload["status"] == "REPORT_ONLY_OWNER_REVIEW_TRUTH_UNITS_FROM_CACHED_RETRY"
+    assert payload["report_path"] == str(report_path)
+    assert payload["accepted_edges"] == 0
+
+
 def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) -> None:
     payload = _sample_owner_brief_payload()
     payload["report_path"] = str(tmp_path / "brief.json")
@@ -801,6 +856,7 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
         daily_package=package,
         intraday_alert=_sample_intraday_alert_payload(),
         hypothesis_scout_readout=_sample_hypothesis_scout_readout_payload(),
+        owner_review_truth_units=_sample_owner_review_truth_units_payload(),
     )
 
     assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in text
@@ -822,6 +878,11 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "next_follow_net=0.13%" in text
     assert "next_follow_tail5=25.15%" in text
     assert "HIGH_INDUSTRY_CONCENTRATION" in text
+    assert "Owner-review truth units" in text
+    assert "truth_units=REPORT_ONLY_OWNER_REVIEW_TRUTH_UNITS_FROM_CACHED_RETRY" in text
+    assert "strict=9" in text
+    assert "high_gap_first30m_hold horizon=next_open_to_d5_close" in text
+    assert "score/rank is not evidence, edge, GO, or advice" in text
     assert "日包总入口" in text
     assert (
         "owner_brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF "
