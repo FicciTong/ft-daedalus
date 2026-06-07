@@ -311,6 +311,12 @@ def _fmt_num(value: Any) -> str:
     return f"{as_float:.4g}"
 
 
+def _fmt_ci(lower: Any, upper: Any) -> str:
+    if lower is None and upper is None:
+        return "[None,None]"
+    return f"[{_fmt_pct(lower)},{_fmt_pct(upper)}]"
+
+
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -471,6 +477,14 @@ def format_kairos_owner_brief(
             f"label={item.get('owner_confidence_label', 'unknown')} "
             f"gross={_fmt_pct(support.get('gross_excess_pct'))} "
             f"net={net_text} "
+            f"cost={_fmt_pct(support.get('cost_total_pct'))} "
+            f"ci={_fmt_ci(support.get('date_block_ci_lower_pct'), support.get('date_block_ci_upper_pct'))} "
+            f"tail5={_fmt_pct(support.get('right_tail_return_ge_5pct_share_pct'))} "
+            f"p90={_fmt_pct(support.get('right_tail_return_p90_pct'))} "
+            f"next_close_net={_fmt_pct(support.get('next_open_close_net_excess_pct'))} "
+            f"next_close_tail5={_fmt_pct(support.get('next_open_close_right_tail_return_ge_5pct_share_pct'))} "
+            f"next_follow_net={_fmt_pct(support.get('next_open_following_close_net_excess_pct'))} "
+            f"next_follow_tail5={_fmt_pct(support.get('next_open_following_close_right_tail_return_ge_5pct_share_pct'))} "
             f"n={_fmt_num(support.get('row_n'))}/days={_fmt_num(support.get('date_block_effective_n'))} "
             f"wounds={wound_count}"
         )

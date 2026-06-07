@@ -75,8 +75,17 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                 "owner_confidence_label": "可用参考",
                 "evidence_wounds": ["not_industry_neutral_contains_sector_beta"],
                 "tactic_support": {
+                    "cost_total_pct": 0.272,
+                    "date_block_ci_lower_pct": -0.5222,
+                    "date_block_ci_upper_pct": 1.6045,
                     "gross_excess_pct": 1.2576,
                     "net_excess_pct": 0.9856,
+                    "next_open_close_net_excess_pct": -0.0461,
+                    "next_open_close_right_tail_return_ge_5pct_share_pct": 15.0757,
+                    "next_open_following_close_net_excess_pct": 0.1271,
+                    "next_open_following_close_right_tail_return_ge_5pct_share_pct": 25.1481,
+                    "right_tail_return_ge_5pct_share_pct": 43.9801,
+                    "right_tail_return_p90_pct": 19.4347,
                     "row_n": 1005,
                     "date_block_effective_n": 32,
                 },
@@ -316,6 +325,14 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "002251.SZ 步步高" in text
     assert "gross=1.26%" in text
     assert "net=0.99%" in text
+    assert "cost=0.27%" in text
+    assert "ci=[-0.52%,1.60%]" in text
+    assert "tail5=43.98%" in text
+    assert "p90=19.43%" in text
+    assert "next_close_net=-0.05%" in text
+    assert "next_close_tail5=15.08%" in text
+    assert "next_follow_net=0.13%" in text
+    assert "next_follow_tail5=25.15%" in text
     assert "HIGH_INDUSTRY_CONCENTRATION" in text
     assert "日包总入口" in text
     assert "intraday_manifest=REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST" in text
