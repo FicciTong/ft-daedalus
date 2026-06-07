@@ -115,6 +115,18 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                 }
             ],
         },
+        "long_window_stability": {
+            "cross_horizon_right_tail_consensus": {
+                "multi_window_min_ready_threshold": 2,
+                "both_horizon_multi_window_ready_hypothesis_count": 0,
+                "both_horizon_single_window_only_hypothesis_count": 17,
+                "support_state": "CROSS_HORIZON_SINGLE_WINDOW_ONLY",
+                "support_warning": (
+                    "cross-horizon right-tail rows with single-window support are "
+                    "directional review units only, not cross-era stability evidence"
+                ),
+            },
+        },
         "owner_review_candidates": [
             {
                 "review_rank": 1,
@@ -519,6 +531,9 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "not position sizing" in text
     assert "跨horizon右尾交集" in text
     assert "clusters=1 stocks=4 consensus=17 diagnostic_only=true" in text
+    assert "support_state=CROSS_HORIZON_SINGLE_WINDOW_ONLY" in text
+    assert "multi_window_ready=0 single_window_only=17 min_windows=2" in text
+    assert "support_warning=cross-horizon right-tail rows with single-window support" in text
     assert "prior_weak_close_reclaim_volume::小金属" in text
     assert "top=盛新锂能, 中矿资源" in text
     assert "cluster is one correlated setup; not independent stock edges" in text

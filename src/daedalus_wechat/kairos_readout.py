@@ -582,6 +582,8 @@ def _format_weak_signal_queue(payload: dict[str, Any], *, limit: int) -> list[st
 
 def _format_cross_horizon_clusters(payload: dict[str, Any], *, limit: int = 3) -> list[str]:
     clusters = _as_dict(payload.get("cross_horizon_right_tail_candidate_clusters"))
+    stability = _as_dict(payload.get("long_window_stability"))
+    consensus_readout = _as_dict(stability.get("cross_horizon_right_tail_consensus"))
     top_clusters = _as_list(clusters.get("top_clusters"))
     if not top_clusters:
         return []
@@ -596,6 +598,17 @@ def _format_cross_horizon_clusters(payload: dict[str, Any], *, limit: int = 3) -
             "diagnostic_only=true"
         ),
     ]
+    if consensus_readout:
+        lines.append(
+            f"- support_state={consensus_readout.get('support_state', 'unknown')} "
+            f"multi_window_ready="
+            f"{_fmt_num(consensus_readout.get('both_horizon_multi_window_ready_hypothesis_count'))} "
+            f"single_window_only="
+            f"{_fmt_num(consensus_readout.get('both_horizon_single_window_only_hypothesis_count'))} "
+            f"min_windows={_fmt_num(consensus_readout.get('multi_window_min_ready_threshold'))}"
+        )
+        if consensus_readout.get("support_warning"):
+            lines.append(f"- support_warning={consensus_readout.get('support_warning')}")
     for row in top_clusters[:limit]:
         if not isinstance(row, dict):
             continue
