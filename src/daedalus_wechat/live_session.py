@@ -43,6 +43,10 @@ KIMI_SESSION_BANNER_RE = re.compile(
 )
 CODEX_QUEUE_HINT_RE = re.compile(r"\btab to queue message\b", re.IGNORECASE)
 CODEX_BUSY_HINT_RE = re.compile(r"\bWorking\b[\s\S]{0,120}\besc to interrupt\b")
+CODEX_NEXT_TOOL_QUEUE_RE = re.compile(
+    r"(?:Messages to be submitted after next tool call|Queued follow-up inputs)",
+    re.IGNORECASE,
+)
 INPUT_COMPOSER_MARKER_RE = re.compile(r"(?m)^[^\n]*(?:[›❯])\s*")
 
 
@@ -905,19 +909,37 @@ class LiveCodexSessionManager:
         submit_key: str,
     ) -> None:
         self._send_submit_key(tmux_session=tmux_session, submit_key=submit_key)
-        screen_tail = "\n".join(
-            self._capture_clean_text(tmux_session).splitlines()[-80:]
-        )
-        if not self._prompt_still_in_input_box(screen_tail, payload):
+        if self._wait_for_prompt_submission(
+            tmux_session=tmux_session,
+            payload=payload,
+            backend=backend,
+        ):
             return
+        if backend == CliBackend.CODEX.value and submit_key == "Tab":
+            # Busy Codex should enter the owner-visible next-tool-call queue.
+            # Falling back to Enter turns the delivery into a different TUI
+            # action and can leave long WeChat prompts looking like a follow-up
+            # rather than the normal queued owner input.
+            self._send_submit_key(tmux_session=tmux_session, submit_key="Tab")
+            if self._wait_for_prompt_submission(
+                tmux_session=tmux_session,
+                payload=payload,
+                backend=backend,
+            ):
+                return
+            raise RuntimeError(
+                f"tmux {tmux_session} prompt delivery did not enter Codex "
+                "next-tool-call queue"
+            )
         fallback_key = self._fallback_submit_key(
             backend=backend, previous_key=submit_key
         )
         self._send_submit_key(tmux_session=tmux_session, submit_key=fallback_key)
-        screen_tail = "\n".join(
-            self._capture_clean_text(tmux_session).splitlines()[-80:]
-        )
-        if self._prompt_still_in_input_box(screen_tail, payload):
+        if not self._wait_for_prompt_submission(
+            tmux_session=tmux_session,
+            payload=payload,
+            backend=backend,
+        ):
             raise RuntimeError(
                 f"tmux {tmux_session} prompt delivery did not leave the input composer"
             )
@@ -930,6 +952,27 @@ class LiveCodexSessionManager:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+
+    def _wait_for_prompt_submission(
+        self,
+        *,
+        tmux_session: str,
+        payload: str,
+        backend: str,
+        attempts: int = 5,
+    ) -> bool:
+        for _ in range(max(1, attempts)):
+            time.sleep(0.2)
+            screen_tail = "\n".join(
+                self._capture_clean_text(tmux_session).splitlines()[-80:]
+            )
+            if backend == CliBackend.CODEX.value and self._codex_queue_contains(
+                screen_tail, payload
+            ):
+                return True
+            if not self._prompt_still_in_input_box(screen_tail, payload):
+                return True
+        return False
 
     def _codex_submit_key(self, screen_tail: str) -> str:
         """Prefer Codex queue submit while a turn is visibly running."""
@@ -952,6 +995,14 @@ class LiveCodexSessionManager:
         if not composer:
             return False
         return any(anchor in composer for anchor in anchors)
+
+    def _codex_queue_contains(self, screen_tail: str, payload: str) -> bool:
+        if not CODEX_NEXT_TOOL_QUEUE_RE.search(screen_tail):
+            return False
+        anchors = self._payload_anchor_fragments(payload)
+        if not anchors:
+            return False
+        return any(anchor in screen_tail for anchor in anchors)
 
     def _input_composer_region(self, screen_tail: str) -> str:
         lines = screen_tail.splitlines()
