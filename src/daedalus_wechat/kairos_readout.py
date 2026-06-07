@@ -580,6 +580,44 @@ def _format_weak_signal_queue(payload: dict[str, Any], *, limit: int) -> list[st
     return lines
 
 
+def _format_cross_horizon_clusters(payload: dict[str, Any], *, limit: int = 3) -> list[str]:
+    clusters = _as_dict(payload.get("cross_horizon_right_tail_candidate_clusters"))
+    top_clusters = _as_list(clusters.get("top_clusters"))
+    if not top_clusters:
+        return []
+    lines = [
+        "",
+        "跨horizon右尾交集:",
+        (
+            f"- status={clusters.get('status', 'unknown')} "
+            f"clusters={_fmt_num(clusters.get('matched_cluster_count'))} "
+            f"stocks={_fmt_num(clusters.get('matched_stock_candidate_count'))} "
+            f"consensus={_fmt_num(clusters.get('consensus_hypothesis_count'))} "
+            "diagnostic_only=true"
+        ),
+    ]
+    for row in top_clusters[:limit]:
+        if not isinstance(row, dict):
+            continue
+        consensus = _as_dict(row.get("consensus_snapshot"))
+        stocks = ", ".join(
+            str(stock.get("stock_name") or stock.get("symbol"))
+            for stock in _as_list(row.get("top_stocks"))[:4]
+            if isinstance(stock, dict)
+        )
+        lines.append(
+            f"- {row.get('tactic_id', 'unknown')}::{row.get('industry_name', 'unknown')} "
+            f"rows={_fmt_num(row.get('candidate_count'))} "
+            f"top={stocks or 'none'} "
+            f"close_tail5={_fmt_pct(consensus.get('next_open_close_tail5_max_share_pct'))} "
+            f"follow_tail5={_fmt_pct(consensus.get('next_open_following_close_tail5_max_share_pct'))} "
+            f"ready_min={_fmt_num(consensus.get('min_right_tail_ready_window_count'))} "
+            f"action={consensus.get('evolution_next_action', 'review')}"
+        )
+    lines.append("- boundary=cluster is one correlated setup; not independent stock edges")
+    return lines
+
+
 def format_kairos_owner_brief(
     payload: dict[str, Any],
     *,
@@ -662,6 +700,7 @@ def format_kairos_owner_brief(
     lines.extend(_format_forward_shadow_track_record(daily_package))
     lines.extend(_format_explosive_posture(payload))
     lines.extend(_format_weak_signal_queue(payload, limit=min(candidate_limit, 5)))
+    lines.extend(_format_cross_horizon_clusters(payload, limit=3))
 
     top_industries = concentration.get("top_industries")
     if isinstance(top_industries, list):

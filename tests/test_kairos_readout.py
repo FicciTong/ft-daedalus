@@ -90,6 +90,31 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                 "top_industry_share_pct": 51.16,
             },
         },
+        "cross_horizon_right_tail_candidate_clusters": {
+            "status": "REPORT_ONLY_CURRENT_CANDIDATE_CROSS_HORIZON_RIGHT_TAIL_INTERSECTION",
+            "matched_cluster_count": 1,
+            "matched_stock_candidate_count": 4,
+            "consensus_hypothesis_count": 17,
+            "top_clusters": [
+                {
+                    "candidate_count": 4,
+                    "industry_name": "小金属",
+                    "tactic_id": "prior_weak_close_reclaim_volume",
+                    "consensus_snapshot": {
+                        "evolution_next_action": (
+                            "keep_or_prioritize_for_forward_shadow_observation"
+                        ),
+                        "min_right_tail_ready_window_count": 1,
+                        "next_open_close_tail5_max_share_pct": 16.6667,
+                        "next_open_following_close_tail5_max_share_pct": 21.9048,
+                    },
+                    "top_stocks": [
+                        {"stock_name": "盛新锂能", "symbol": "002240.SZ"},
+                        {"stock_name": "中矿资源", "symbol": "002738.SZ"},
+                    ],
+                }
+            ],
+        },
         "owner_review_candidates": [
             {
                 "review_rank": 1,
@@ -492,6 +517,11 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "tape=RIGHT_TAIL_TAPE_ACTIVE 涨停=88 高度=5 炸板=63" in text
     assert "not a position-sizing instruction" in text
     assert "not position sizing" in text
+    assert "跨horizon右尾交集" in text
+    assert "clusters=1 stocks=4 consensus=17 diagnostic_only=true" in text
+    assert "prior_weak_close_reclaim_volume::小金属" in text
+    assert "top=盛新锂能, 中矿资源" in text
+    assert "cluster is one correlated setup; not independent stock edges" in text
     assert "弱信号观察队列 Top 1" in text
     assert "pattern-level review queue; not edge, not stock advice" in text
     assert "high_gap_first30m_hold" in text
