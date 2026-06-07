@@ -843,25 +843,13 @@ def _format_cross_horizon_consensus(payload: dict[str, Any], *, limit: int = 5) 
     return lines
 
 
-def _format_forward_shadow_track_record(
-    package: dict[str, Any] | None,
-    *,
-    track_record: dict[str, Any] | None = None,
-) -> list[str]:
-    track = (
-        _as_dict(package.get("forward_shadow_track_record"))
-        if isinstance(package, dict)
-        else {}
-    )
+def _flatten_forward_shadow_track_record(track: dict[str, Any]) -> dict[str, Any]:
     if not track:
-        track = _as_dict(track_record)
-    if not track:
-        return []
-
+        return {}
     if isinstance(track.get("summary"), dict):
         summary = _as_dict(track.get("summary"))
         observed_from = _as_dict(track.get("observed_from"))
-        track = {
+        return {
             "source_status": track.get("status"),
             "source_report_path": track.get("report_path"),
             "source_markdown_path": track.get("markdown_path"),
@@ -883,6 +871,36 @@ def _format_forward_shadow_track_record(
             "scoreable_candidate_count": summary.get("scoreable_candidate_count"),
             "next_observation_targets": summary.get("next_observation_targets"),
         }
+    return dict(track)
+
+
+def _merge_forward_shadow_track_records(
+    primary: dict[str, Any],
+    fallback: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(primary)
+    for key, value in fallback.items():
+        if merged.get(key) in ("", None) and value not in ("", None):
+            merged[key] = value
+    return merged
+
+
+def _format_forward_shadow_track_record(
+    package: dict[str, Any] | None,
+    *,
+    track_record: dict[str, Any] | None = None,
+) -> list[str]:
+    embedded_track = (
+        _flatten_forward_shadow_track_record(
+            _as_dict(package.get("forward_shadow_track_record"))
+        )
+        if isinstance(package, dict)
+        else {}
+    )
+    fallback_track = _flatten_forward_shadow_track_record(_as_dict(track_record))
+    track = _merge_forward_shadow_track_records(embedded_track, fallback_track)
+    if not track:
+        return []
 
     target_rows: list[str] = []
     for item in _as_list(track.get("next_observation_targets"))[:2]:

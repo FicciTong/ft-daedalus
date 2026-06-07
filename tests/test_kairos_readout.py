@@ -826,6 +826,23 @@ def test_format_kairos_owner_brief_uses_track_record_fallback() -> None:
     assert "pending is not failed trade, not negative edge" in text
 
 
+def test_format_kairos_owner_brief_merges_track_record_fallback_fields() -> None:
+    payload = _sample_owner_brief_payload()
+    package = _sample_owner_daily_package_payload()
+
+    text = format_kairos_owner_brief(
+        payload,
+        daily_package=package,
+        forward_shadow_track_record=_sample_forward_shadow_track_record_payload(),
+    )
+
+    assert "Forward-shadow闭环" in text
+    assert "source=PENDING_SHORT_CYCLE_FORWARD_SHADOW_TRACK_RECORD" in text
+    assert "as_of=2026-06-05 target=2026-06-08" in text
+    assert "open_state_waterline=2026-06-05" in text
+    assert "target_open_state@2026-06-08 count=244" in text
+
+
 def test_format_kairos_owner_brief_falls_back_when_package_lacks_intraday_manifest() -> None:
     payload = _sample_owner_brief_payload()
     package = _sample_owner_daily_package_payload()
