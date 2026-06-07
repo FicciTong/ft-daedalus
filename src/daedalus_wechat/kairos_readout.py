@@ -672,6 +672,7 @@ def format_kairos_owner_brief(
             f"label={item.get('owner_confidence_label', 'unknown')} "
             f"gross={_fmt_pct(support.get('gross_excess_pct'))} "
             f"net={net_text} "
+            f"baseline={support.get('baseline_scope', 'unknown')} "
             f"cost={_fmt_pct(support.get('cost_total_pct'))} "
             f"ci={_fmt_ci(support.get('date_block_ci_lower_pct'), support.get('date_block_ci_upper_pct'))} "
             f"tail5={_fmt_pct(support.get('right_tail_return_ge_5pct_share_pct'))} "

@@ -100,6 +100,12 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                 "owner_confidence_label": "可用参考",
                 "evidence_wounds": ["not_industry_neutral_contains_sector_beta"],
                 "tactic_support": {
+                    "baseline_claim_boundary": (
+                        "cached-retry tactic excess is measured against same-date "
+                        "level-2 industry baseline; candidate rank itself remains "
+                        "a non-industry-neutral watchlist heuristic"
+                    ),
+                    "baseline_scope": "same_date_same_level_2_industry_executable_baseline",
                     "cost_total_pct": 0.272,
                     "date_block_ci_lower_pct": -0.5222,
                     "date_block_ci_upper_pct": 1.6045,
@@ -447,6 +453,7 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "002251.SZ 步步高" in text
     assert "gross=1.26%" in text
     assert "net=0.99%" in text
+    assert "baseline=same_date_same_level_2_industry_executable_baseline" in text
     assert "cost=0.27%" in text
     assert "ci=[-0.52%,1.60%]" in text
     assert "tail5=43.98%" in text
