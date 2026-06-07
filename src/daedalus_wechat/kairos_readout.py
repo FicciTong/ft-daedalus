@@ -609,6 +609,16 @@ def _format_cross_horizon_clusters(payload: dict[str, Any], *, limit: int = 3) -
         )
         if consensus_readout.get("support_warning"):
             lines.append(f"- support_warning={consensus_readout.get('support_warning')}")
+        support_width_backlog = _as_dict(consensus_readout.get("support_width_backlog"))
+        if support_width_backlog.get("candidate_count"):
+            lines.append(
+                "- support_width_backlog "
+                f"status={support_width_backlog.get('status', 'unknown')} "
+                f"count={_fmt_num(support_width_backlog.get('candidate_count'))} "
+                f"route={support_width_backlog.get('route', 'unknown')} "
+                f"min_windows={_fmt_num(support_width_backlog.get('min_ready_threshold'))} "
+                "research_clock_only=true"
+            )
     for row in top_clusters[:limit]:
         if not isinstance(row, dict):
             continue

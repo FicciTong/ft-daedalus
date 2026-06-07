@@ -125,6 +125,12 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                     "cross-horizon right-tail rows with single-window support are "
                     "directional review units only, not cross-era stability evidence"
                 ),
+                "support_width_backlog": {
+                    "status": "REPORT_ONLY_CROSS_HORIZON_SUPPORT_WIDTH_BACKLOG",
+                    "route": "EXPAND_WINDOW_SUPPORT_BEFORE_STABILITY_CLAIM",
+                    "candidate_count": 17,
+                    "min_ready_threshold": 2,
+                },
             },
         },
         "owner_review_candidates": [
@@ -534,6 +540,9 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "support_state=CROSS_HORIZON_SINGLE_WINDOW_ONLY" in text
     assert "multi_window_ready=0 single_window_only=17 min_windows=2" in text
     assert "support_warning=cross-horizon right-tail rows with single-window support" in text
+    assert "support_width_backlog status=REPORT_ONLY_CROSS_HORIZON_SUPPORT_WIDTH_BACKLOG" in text
+    assert "count=17 route=EXPAND_WINDOW_SUPPORT_BEFORE_STABILITY_CLAIM" in text
+    assert "research_clock_only=true" in text
     assert "prior_weak_close_reclaim_volume::小金属" in text
     assert "top=盛新锂能, 中矿资源" in text
     assert "cluster is one correlated setup; not independent stock edges" in text
