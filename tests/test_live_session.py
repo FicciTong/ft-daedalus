@@ -420,6 +420,83 @@ class LiveSessionTests(unittest.TestCase):
             ],
         )
 
+    def test_inject_prompt_rejects_mangled_codex_legacy_followup_queue(
+        self,
+    ) -> None:
+        with (
+            patch.object(
+                self.runner,
+                "_runtime_status_for_tmux",
+                return_value=LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="codex",
+                    thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                    pane_cwd="/tmp",
+                    backend=CliBackend.CODEX.value,
+                ),
+            ),
+            patch.object(
+                self.runner,
+                "_capture_clean_text",
+                side_effect=[
+                    "Ready\n›",
+                    *(["Queued follow-up inputs\n↳ line one lne two"] * 2),
+                ],
+            ),
+            patch("daedalus_wechat.live_session.time.sleep", lambda _: None),
+            patch("daedalus_wechat.live_session.subprocess.run") as run_mock,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "legacy follow-up queue"):
+                self.runner._inject_prompt("codex", "line one\nline two")
+
+        self.assertEqual(
+            run_mock.call_args_list,
+            [
+                call(
+                    ["tmux", "send-keys", "-l", "-t", "codex:0.0", "line one line two"],
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
+                call(
+                    ["tmux", "send-keys", "-t", "codex:0.0", "C-m"],
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
+            ],
+        )
+
+    def test_inject_prompt_rejects_preexisting_codex_legacy_followup_queue(
+        self,
+    ) -> None:
+        with (
+            patch.object(
+                self.runner,
+                "_runtime_status_for_tmux",
+                return_value=LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="codex",
+                    thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                    pane_cwd="/tmp",
+                    backend=CliBackend.CODEX.value,
+                ),
+            ),
+            patch.object(
+                self.runner,
+                "_capture_clean_text",
+                return_value="Queued follow-up inputs\n↳ previous owner message",
+            ),
+            patch("daedalus_wechat.live_session.time.sleep", lambda _: None),
+            patch("daedalus_wechat.live_session.subprocess.run") as run_mock,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "legacy follow-up queue"):
+                self.runner._inject_prompt("codex", "line one\nline two")
+
+        self.assertEqual(run_mock.call_args_list, [])
+
     def test_inject_prompt_fails_when_codex_text_stays_in_input_composer(self) -> None:
         with (
             patch.object(
@@ -477,7 +554,7 @@ class LiveSessionTests(unittest.TestCase):
         )
         self.assertTrue(
             self.runner._codex_legacy_followup_queue_contains(
-                "Queued follow-up inputs\n↳ line one line two",
+                "Queued follow-up inputs\n↳ unrelated old prompt",
                 "line one line two",
             )
         )

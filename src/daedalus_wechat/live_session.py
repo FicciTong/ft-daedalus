@@ -871,6 +871,12 @@ class LiveCodexSessionManager:
             payload = normalized
         if not payload:
             return
+        self._raise_if_codex_legacy_followup_queue(
+            tmux_session=tmux_session,
+            payload=payload,
+            backend=backend,
+            screen_tail=screen_tail,
+        )
         self._inject_payload(
             tmux_session=tmux_session, payload=payload, backend=backend
         )
@@ -964,15 +970,15 @@ class LiveCodexSessionManager:
             screen_tail = "\n".join(
                 self._capture_clean_text(tmux_session).splitlines()[-80:]
             )
-            if backend == CliBackend.CODEX.value and self._codex_queue_contains(
-                screen_tail, payload
-            ):
-                return True
             if (
                 backend == CliBackend.CODEX.value
                 and self._codex_legacy_followup_queue_contains(screen_tail, payload)
             ):
                 return False
+            if backend == CliBackend.CODEX.value and self._codex_queue_contains(
+                screen_tail, payload
+            ):
+                return True
             if not self._prompt_still_in_input_box(screen_tail, payload):
                 return True
         return False
@@ -1012,12 +1018,7 @@ class LiveCodexSessionManager:
     def _codex_legacy_followup_queue_contains(
         self, screen_tail: str, payload: str
     ) -> bool:
-        if not CODEX_LEGACY_FOLLOWUP_QUEUE_RE.search(screen_tail):
-            return False
-        anchors = self._payload_anchor_fragments(payload)
-        if not anchors:
-            return False
-        return any(anchor in screen_tail for anchor in anchors)
+        return CODEX_LEGACY_FOLLOWUP_QUEUE_RE.search(screen_tail) is not None
 
     def _raise_if_codex_legacy_followup_queue(
         self,
@@ -1025,12 +1026,14 @@ class LiveCodexSessionManager:
         tmux_session: str,
         payload: str,
         backend: str,
+        screen_tail: str | None = None,
     ) -> None:
         if backend != CliBackend.CODEX.value:
             return
-        screen_tail = "\n".join(
-            self._capture_clean_text(tmux_session).splitlines()[-80:]
-        )
+        if screen_tail is None:
+            screen_tail = "\n".join(
+                self._capture_clean_text(tmux_session).splitlines()[-80:]
+            )
         if self._codex_legacy_followup_queue_contains(screen_tail, payload):
             raise RuntimeError(
                 f"tmux {tmux_session} prompt delivery entered Codex legacy "
