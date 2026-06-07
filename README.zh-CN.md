@@ -133,15 +133,14 @@ owner.
 Observed adapter rules:
 
 - `claude`: paste buffer, then submit with `C-m`.
-- `codex`: literal typed input, then submit with `C-m` when idle or `Tab` when
-  the Codex UI is visibly running and offers queued follow-up input.
+- `codex`: literal typed input, then submit with `C-m`.
 - `opencode`: literal typed input, then submit with `C-m`.
 
 Delivery proof is result-based, not key-based. A message is accepted only when
 it has left the visible input composer. For Codex specifically,
-`Queued follow-up inputs` means the message has been submitted to Codex's
-queue; text still shown on the bottom `›` / `❯` input line is a stuck composer
-and must be retried or marked failed.
+`Messages to be submitted after next tool call` 是期望的普通队列。
+`Queued follow-up inputs` 是旧 follow-up 队列，必须判失败。底部 `›` / `❯`
+输入框里仍然能看到文本，说明还卡在 composer，必须重试或标记失败。
 
 ## 🧰 前置依赖
 
@@ -578,6 +577,11 @@ Group 模式把一个微信私聊窗口变成虚拟的多 agent 群聊。它是*
 
 显式广播前缀会绕过接线员，直接投递到当前所有 owner 已打开的 live tmux
 session。bridge 仍然会把消息写入本地 room log。
+
+如果内容里已经明显是 group-room 指令，例如 “三方”、“所有 agent”、“大家”、
+“互相讨论”、“一起讨论”，也会绕过接线员直接投递到可见 room 成员。
+如果同时包含 “讨论 5 轮” 这类轮数，room log 会记录为 `mode=debate`，
+并写入 `round_limit=5` 和当前 live tmux 收件人。
 
 ### 语音路由
 

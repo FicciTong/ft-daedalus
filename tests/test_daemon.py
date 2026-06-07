@@ -563,6 +563,100 @@ class DaemonTests(unittest.TestCase):
                 "帮我判断这个 packet 应该让谁 review",
             )
 
+    def test_group_mode_clear_three_agent_review_bypasses_intent_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_codex = "ses_codex"
+            thread_claude = "ses_claude"
+            thread_opencode = "ses_opencode"
+            state = BridgeState(
+                room_mode_enabled=True,
+                room_intent_agent="codex",
+                sessions={},
+            )
+            runner = _FakeRunner()
+            runner.runtime_thread_id = thread_codex
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_codex,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="claude",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_claude,
+                    pane_cwd="/tmp",
+                    backend="claude",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="opencode",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_opencode,
+                    pane_cwd="/tmp",
+                    backend="opencode",
+                ),
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-three-way-review",
+                    "item_list": [
+                        {
+                            "type": 1,
+                            "text_item": {
+                                "text": (
+                                    "三方review一下我们这个chat room，"
+                                    "讨论5轮，owner-visible"
+                                )
+                            },
+                        }
+                    ],
+                }
+            )
+            assert incoming is not None
+
+            daemon._handle_incoming(incoming)
+
+            prompt = "三方review一下我们这个chat room，讨论5轮，owner-visible"
+            self.assertEqual(
+                runner.submitted,
+                [
+                    (thread_codex, prompt),
+                    (thread_claude, prompt),
+                    (thread_opencode, prompt),
+                ],
+            )
+            self.assertIn("已投递到本地 agent-room", fake_wechat.sent[-1][2])
+            self.assertIn("mode=debate", fake_wechat.sent[-1][2])
+            self.assertIn("to=@codex, @claude, @opencode", fake_wechat.sent[-1][2])
+            self.assertIn("round_limit=5", fake_wechat.sent[-1][2])
+            self.assertIn(
+                "terminal_delivered=@codex, @claude, @opencode",
+                fake_wechat.sent[-1][2],
+            )
+            self.assertNotIn("已交给接线员", fake_wechat.sent[-1][2])
+            messages_file = Path(tmpdir) / "agent_room" / "messages.jsonl"
+            payload = json.loads(messages_file.read_text(encoding="utf-8"))
+            self.assertEqual(payload["source"], "wechat-room-broadcast")
+            self.assertEqual(payload["mode"], "debate")
+            self.assertEqual(payload["round_limit"], 5)
+            self.assertEqual(payload["to"], ["codex", "claude", "opencode"])
+            self.assertEqual(payload["metadata"]["route"], "broadcast")
+
     def test_unauthorized_message_does_not_bind_or_submit_prompt(self) -> None:
         class _PollingWeChat(_FakeWeChat):
             def __init__(self) -> None:

@@ -131,14 +131,14 @@ execution surface. The bridge must not create or destroy sessions for the owner.
 Observed adapter rules:
 
 - `claude`: paste buffer, then submit with `C-m`.
-- `codex`: literal typed input, then submit with `C-m` when idle or `Tab` when
-  the Codex UI is visibly running and offers queued follow-up input.
+- `codex`: literal typed input, then submit with `C-m`.
 - `opencode`: literal typed input, then submit with `C-m`.
 
 Delivery proof is result-based, not key-based. A message is accepted only when
 it has left the visible input composer. For Codex specifically,
-`Queued follow-up inputs` means the message has been submitted to Codex's
-queue; text still shown on the bottom `>` / `›` / `❯` input line is a stuck
+`Messages to be submitted after next tool call` is the desired normal queue.
+`Queued follow-up inputs` is the legacy follow-up queue and must be marked
+failed. Text still shown on the bottom `>` / `›` / `❯` input line is a stuck
 composer and must be retried or marked failed.
 
 ## 🧰 Prerequisites
@@ -598,7 +598,10 @@ Shows all currently live tmux sessions with supported runtimes.
 ```
 
 When an intent agent is configured with `/intent <tmux>`, unsigned text or voice
-goes to that tmux session first for owner-intent intake.
+goes to that tmux session first for owner-intent intake, unless the message is
+already a clear group-room instruction such as "三方", "所有 agent", "大家",
+"互相讨论", or "一起讨论". Clear group-room instructions bypass the intent
+agent and are delivered directly to the visible room members.
 
 ### Broadcast to all visible agents
 
@@ -612,6 +615,10 @@ goes to that tmux session first for owner-intent intake.
 Explicit broadcast prefixes bypass the intent agent and are delivered to every
 currently live owner-opened tmux session. The bridge still records the message
 in the local room log.
+
+If the broadcast text includes a bounded round count such as "讨论 5 轮", the
+room log records it as `mode=debate` with `round_limit=5` and the current live
+tmux sessions as recipients.
 
 ### Voice routing
 

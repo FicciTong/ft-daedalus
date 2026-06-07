@@ -191,6 +191,23 @@ def _parse_room_round_count(raw: str) -> int | None:
     return None
 
 
+def _room_implicit_broadcast_requested(text: str) -> bool:
+    """Detect owner wording that is already a group-room instruction.
+
+    This intentionally stays narrower than "any untagged message". The intent
+    agent still handles ambiguous owner notes, but explicit multi-agent wording
+    must not stall behind a second manual routing turn.
+    """
+    body = str(text or "").strip()
+    if not body:
+        return False
+    normalized = _normalize_voice(body)
+    return any(
+        _normalize_voice(marker) in normalized
+        for marker in ROOM_IMPLICIT_BROADCAST_MARKERS
+    )
+
+
 # Voice transcription variant templates, keyed by canonical tmux session name.
 # When a live tmux session matches a template key (or its digit-stripped base,
 # e.g. `kimi0` -> `kimi`), its STT variants are injected into the active
@@ -328,6 +345,24 @@ COMMAND_ALIASES = {
 
 ROOM_BROADCAST_COMMANDS = frozenset({"/broadcast", "/all"})
 ROOM_BROADCAST_PREFIXES = ("广播", "群发", "所有人", "大家", "全员")
+ROOM_IMPLICIT_BROADCAST_MARKERS = (
+    "三方",
+    "三个agent",
+    "所有agent",
+    "所有agents",
+    "全部agent",
+    "全部agents",
+    "多agent",
+    "多agents",
+    "你们三方",
+    "你们几个",
+    "互相讨论",
+    "一起讨论",
+    "group chat",
+    "group模式",
+    "chat room",
+    "chatroom",
+)
 
 HELP_TEXT = """FT bridge（支持 `/` 和 `\\`，缩写参数同原命令）
 /h  /help          帮助
@@ -681,6 +716,9 @@ class BridgeDaemon:
                     videos=incoming.videos,
                 )
                 if self._route_room_message(rewritten, target=voice_match):
+                    return
+            if _room_implicit_broadcast_requested(body):
+                if self._broadcast_room_message(incoming):
                     return
             if self.state.room_intent_agent and self._route_room_intent_message(
                 incoming
@@ -3880,16 +3918,20 @@ class BridgeDaemon:
         text = body
         if attachment_note:
             text = f"{body}\n\n[attachments] {attachment_note}"
+        round_limit = _room_round_limit(text)
+        live_agent_ids = self._room_live_terminal_agent_ids()
+        targets = live_agent_ids if round_limit else []
+        mode = "debate" if round_limit else "announce"
         payload = self._send_agent_room_message(
             incoming=incoming,
-            targets=[],
+            targets=targets,
             text=text,
-            mode="announce",
-            round_limit=None,
+            mode=mode,
+            round_limit=round_limit,
             source="wechat-room-broadcast",
             metadata={
                 "route": "broadcast",
-                "available_sessions": self._room_tmux_agent_ids(),
+                "available_sessions": live_agent_ids,
                 "image_paths": [str(img.path) for img in saved_images],
                 "file_paths": [str(file.path) for file in saved_files],
                 "video_paths": [str(video.path) for video in saved_videos],
@@ -3907,7 +3949,7 @@ class BridgeDaemon:
             },
         )
         terminal_delivery = self._submit_room_terminal_message(
-            targets=self._room_live_terminal_agent_ids(),
+            targets=live_agent_ids,
             text=text,
         )
         self._reply(
@@ -3915,8 +3957,9 @@ class BridgeDaemon:
             incoming.context_token,
             self._room_delivery_ack(
                 payload=payload,
-                targets=[],
-                mode="announce",
+                targets=targets,
+                mode=mode,
+                round_limit=round_limit,
                 terminal_delivery=terminal_delivery,
             ),
             kind="progress",
