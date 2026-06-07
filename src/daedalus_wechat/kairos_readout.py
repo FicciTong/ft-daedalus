@@ -334,7 +334,11 @@ def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
-def _format_daily_package_handoff(package: dict[str, Any] | None) -> list[str]:
+def _format_daily_package_handoff(
+    package: dict[str, Any] | None,
+    *,
+    intraday_alert: dict[str, Any] | None = None,
+) -> list[str]:
     if not isinstance(package, dict):
         return []
 
@@ -386,6 +390,24 @@ def _format_daily_package_handoff(package: dict[str, Any] | None) -> list[str]:
     source_md = intraday_manifest.get("source_markdown_path")
     if source_md:
         lines.append(f"- intraday_md={source_md}")
+    alert = _as_dict(intraday_alert)
+    if alert:
+        projection = _as_dict(alert.get("observation_projection_status"))
+        source_counts = _as_dict(projection.get("candidate_source_counts"))
+        snapshot = _as_dict(alert.get("realtime_snapshot_status"))
+        lines.append(
+            f"- intraday_alert={alert.get('status', 'unknown')} "
+            f"rows={_fmt_num(alert.get('candidate_count'))} "
+            f"observed={_fmt_num(projection.get('observed_candidate_count'))} "
+            f"pending={_fmt_num(projection.get('pending_candidate_count'))} "
+            f"topn={_fmt_num(source_counts.get('topn_owner_review'))} "
+            f"right_tail_supp={_fmt_num(source_counts.get('cross_horizon_right_tail_supplement'))} "
+            f"clusters={_fmt_num(projection.get('cross_horizon_right_tail_cluster_count'))} "
+            f"snapshot={snapshot.get('status', 'unknown')}"
+        )
+        alert_md = alert.get("markdown_path")
+        if alert_md:
+            lines.append(f"- intraday_alert_md={alert_md}")
     lines.append(f"- package_artifact={report_path}")
     return lines
 
@@ -646,6 +668,7 @@ def format_kairos_owner_brief(
     *,
     candidate_limit: int = 12,
     daily_package: dict[str, Any] | None = None,
+    intraday_alert: dict[str, Any] | None = None,
 ) -> str:
     """Render the latest owner review brief as a compact mobile readout."""
 
@@ -717,7 +740,12 @@ def format_kairos_owner_brief(
         f"- top_wounds={_fmt_counter(wound_counts, limit=3)}",
     ]
 
-    lines.extend(_format_daily_package_handoff(daily_package))
+    lines.extend(
+        _format_daily_package_handoff(
+            daily_package,
+            intraday_alert=intraday_alert,
+        )
+    )
     lines.extend(_format_environment_conditioned_diagnostics(daily_package))
     lines.extend(_format_shortest_legal_next_open_horizon(daily_package))
     lines.extend(_format_forward_shadow_track_record(daily_package))

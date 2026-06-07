@@ -411,6 +411,7 @@ def main() -> int:
                     payload,
                     candidate_limit=args.limit,
                     daily_package=load_kairos_owner_daily_package(),
+                    intraday_alert=load_kairos_intraday_alert(),
                 )
             )
         return 0

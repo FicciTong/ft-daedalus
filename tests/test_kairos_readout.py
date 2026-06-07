@@ -321,10 +321,22 @@ def _sample_intraday_alert_payload() -> dict[str, object]:
         "as_of_date": "2026-06-05",
         "target_trade_date": "2026-06-08",
         "accepted_edges": 0,
+        "candidate_count": 1,
+        "markdown_path": "/tmp/short_cycle_intraday_owner_alert_latest.md",
         "realtime_snapshot_status": {
             "status": "PENDING_REALTIME_SNAPSHOT",
             "message": "no realtime snapshot supplied",
             "row_count": 0,
+        },
+        "observation_projection_status": {
+            "candidate_source_counts": {
+                "topn_owner_review": 20,
+                "cross_horizon_right_tail_supplement": 7,
+            },
+            "observed_candidate_count": 2,
+            "pending_candidate_count": 25,
+            "cross_horizon_right_tail_cluster_count": 2,
+            "cross_horizon_right_tail_cluster_candidate_count": 7,
         },
         "market_facts": {
             "market_regime": "CHOPPY",
@@ -488,7 +500,11 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     package = _sample_owner_daily_package_payload()
     package["report_path"] = str(tmp_path / "package.json")
 
-    text = format_kairos_owner_brief(payload, daily_package=package)
+    text = format_kairos_owner_brief(
+        payload,
+        daily_package=package,
+        intraday_alert=_sample_intraday_alert_payload(),
+    )
 
     assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in text
     assert "accepted_edges=0" in text
@@ -512,6 +528,9 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "日包总入口" in text
     assert "intraday_manifest=REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST" in text
     assert "rows=144 symbols=41 windows=3 edge_runtime=Windows ft-edge" in text
+    assert "intraday_alert=REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT" in text
+    assert "rows=1 observed=2 pending=25 topn=20 right_tail_supp=7 clusters=2" in text
+    assert "intraday_alert_md=/tmp/short_cycle_intraday_owner_alert_latest.md" in text
     assert "09:26 opening_print_0926" in text
     assert "环境条件化 A/B 伤口" in text
     assert "denominator=24 posthoc=True" in text
@@ -587,12 +606,16 @@ def test_daemon_brief_command_is_read_only() -> None:
     ), patch(
         "daedalus_wechat.daemon.load_kairos_owner_daily_package",
         return_value=_sample_owner_daily_package_payload(),
+    ), patch(
+        "daedalus_wechat.daemon.load_kairos_intraday_alert",
+        return_value=_sample_intraday_alert_payload(),
     ):
         text = BridgeDaemon._handle_command(BridgeDaemon.__new__(BridgeDaemon), "/brief")
 
     assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in text
     assert "accepted_edges=0" in text
     assert "intraday_manifest=REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST" in text
+    assert "intraday_alert=REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT" in text
     assert "Forward-shadow闭环" in text
 
 

@@ -875,6 +875,7 @@ class BridgeDaemon:
             return format_kairos_owner_brief(
                 load_kairos_owner_brief(),
                 daily_package=load_kairos_owner_daily_package(),
+                intraday_alert=load_kairos_intraday_alert(),
             )
         if command == "/intraday":
             return format_kairos_intraday_alert(load_kairos_intraday_alert())
