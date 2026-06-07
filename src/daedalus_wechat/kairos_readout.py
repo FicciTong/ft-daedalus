@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
@@ -317,6 +318,14 @@ def _fmt_ci(lower: Any, upper: Any) -> str:
     return f"[{_fmt_pct(lower)},{_fmt_pct(upper)}]"
 
 
+def _fmt_counter(counter: Counter[str], *, limit: int = 4) -> str:
+    parts = [
+        f"{name}={_fmt_num(count)}"
+        for name, count in counter.most_common(limit)
+    ]
+    return " ".join(parts) if parts else "none"
+
+
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -604,6 +613,14 @@ def format_kairos_owner_brief(
     candidates = payload.get("owner_review_candidates")
     if not isinstance(candidates, list):
         candidates = []
+    label_counts: Counter[str] = Counter()
+    wound_counts: Counter[str] = Counter()
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        label_counts[str(item.get("owner_confidence_label") or "unknown")] += 1
+        for wound in _as_list(item.get("evidence_wounds")):
+            wound_counts[str(wound)] += 1
     env_diag = payload.get("environment_diagnostics")
     if not isinstance(env_diag, dict):
         env_diag = {}
@@ -633,6 +650,10 @@ def format_kairos_owner_brief(
             f"top_share={_fmt_pct(concentration.get('top_industry_share_pct'))} "
             f"HHI={_fmt_num(concentration.get('hhi'))}"
         ),
+        "",
+        "候选摘要:",
+        f"- rows={_fmt_num(len(candidates))} labels={_fmt_counter(label_counts)}",
+        f"- top_wounds={_fmt_counter(wound_counts, limit=3)}",
     ]
 
     lines.extend(_format_daily_package_handoff(daily_package))

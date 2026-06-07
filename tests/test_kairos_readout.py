@@ -451,6 +451,9 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "accepted_edges=0" in text
     assert "不是买卖建议" in text
     assert "002251.SZ 步步高" in text
+    assert "候选摘要:" in text
+    assert "rows=1 labels=可用参考=1" in text
+    assert "top_wounds=not_industry_neutral_contains_sector_beta=1" in text
     assert "gross=1.26%" in text
     assert "net=0.99%" in text
     assert "baseline=same_date_same_level_2_industry_executable_baseline" in text
