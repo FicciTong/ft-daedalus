@@ -117,6 +117,15 @@ def _sample_owner_brief_payload() -> dict[str, object]:
             ],
         },
         "long_window_stability": {
+            "machine_route_counts": {
+                "STRICT_CANDIDATE_FORWARD_SHADOW_OBSERVATION": 9,
+                "RIGHT_TAIL_FORWARD_SHADOW_OBSERVATION": 8,
+                "PREDICATE_SUPPORT_ADAPTATION": 13,
+            },
+            "adapt_route_counts": {
+                "RIGHT_TAIL_FORWARD_SHADOW_OBSERVATION": 8,
+                "PREDICATE_SUPPORT_ADAPTATION": 13,
+            },
             "cross_horizon_right_tail_consensus": {
                 "multi_window_min_ready_threshold": 2,
                 "both_horizon_multi_window_ready_hypothesis_count": 0,
@@ -609,6 +618,19 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "positive_net=8/30 windows=8 cost_killed=16 right_tail_ready=17" in text
     assert "prior_limit_orderly_digest net=0.88%" in text
     assert "report-only, not edge, not GO, not advice" in text
+    assert "Long-window研究路由" in text
+    assert (
+        "machine_routes PREDICATE_SUPPORT_ADAPTATION=13 "
+        "RIGHT_TAIL_FORWARD_SHADOW_OBSERVATION=8 "
+        "STRICT_CANDIDATE_FORWARD_SHADOW_OBSERVATION=9 "
+        "research_clock_only=true not_GO=true"
+    ) in text
+    assert (
+        "adapt_routes PREDICATE_SUPPORT_ADAPTATION=13 "
+        "RIGHT_TAIL_FORWARD_SHADOW_OBSERVATION=8 "
+        "research_clock_only=true not_GO=true"
+    ) in text
+    assert "machine route counts are research next actions" in text
     assert "Forward-shadow闭环" in text
     assert "records=244 fired=0 pending=244 following=0 following_scoreable=0" in text
     assert "pending is not failed trade, not negative edge" in text

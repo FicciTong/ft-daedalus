@@ -400,6 +400,16 @@ def _fmt_counter(counter: Counter[str], *, limit: int = 4) -> str:
     return " ".join(parts) if parts else "none"
 
 
+def _fmt_count_map(value: Any) -> str:
+    counts = _as_dict(value)
+    if not counts:
+        return "none"
+    return " ".join(
+        f"{key}={_fmt_num(counts[key])}"
+        for key in sorted(counts, key=lambda item: str(item))
+    )
+
+
 def _as_dict(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -648,6 +658,30 @@ def _format_shortest_legal_next_open_horizon(
     return lines
 
 
+def _format_long_window_route_counts(payload: dict[str, Any]) -> list[str]:
+    stability = _as_dict(payload.get("long_window_stability"))
+    machine_routes = _as_dict(stability.get("machine_route_counts"))
+    adapt_routes = _as_dict(stability.get("adapt_route_counts"))
+    if not machine_routes and not adapt_routes:
+        return []
+    return [
+        "",
+        "Long-window研究路由:",
+        (
+            f"- machine_routes {_fmt_count_map(machine_routes)} "
+            "research_clock_only=true not_GO=true"
+        ),
+        (
+            f"- adapt_routes {_fmt_count_map(adapt_routes)} "
+            "research_clock_only=true not_GO=true"
+        ),
+        (
+            "- boundary=machine route counts are research next actions; "
+            "not stock advice, not validated edge"
+        ),
+    ]
+
+
 def _format_forward_shadow_track_record(
     package: dict[str, Any] | None,
 ) -> list[str]:
@@ -857,6 +891,7 @@ def format_kairos_owner_brief(
     )
     lines.extend(_format_environment_conditioned_diagnostics(daily_package))
     lines.extend(_format_shortest_legal_next_open_horizon(daily_package))
+    lines.extend(_format_long_window_route_counts(payload))
     lines.extend(_format_forward_shadow_track_record(daily_package))
     lines.extend(_format_explosive_posture(payload))
     lines.extend(_format_weak_signal_queue(payload, limit=min(candidate_limit, 5)))
