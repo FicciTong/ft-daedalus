@@ -221,6 +221,20 @@ def _sample_owner_daily_package_payload() -> dict[str, object]:
                 ],
             }
         },
+        "forward_shadow_track_record": {
+            "source_status": "PENDING_SHORT_CYCLE_FORWARD_SHADOW_TRACK_RECORD",
+            "freeze_id": "short_cycle_trigger_forward_shadow_20260608_asof_20260605",
+            "candidate_track_count": 244,
+            "trigger_fired_count": 0,
+            "pending_trigger_count": 244,
+            "following_observed_count": 0,
+            "following_scoreable_candidate_count": 0,
+            "d3_observed_count": 0,
+            "d5_observed_count": 0,
+            "scoreable_candidate_count": 0,
+            "lifecycle_state": "PENDING_TARGET_OPEN_STATE",
+            "next_action": "wait for target open-state and first30m fields",
+        },
         "owner_review_brief": {
             "source_status": "REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF",
             "owner_review_candidate_count": 40,
@@ -460,6 +474,9 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "positive_net=8/30 windows=8 cost_killed=16 right_tail_ready=17" in text
     assert "prior_limit_orderly_digest net=0.88%" in text
     assert "report-only, not edge, not GO, not advice" in text
+    assert "Forward-shadow闭环" in text
+    assert "records=244 fired=0 pending=244 following=0 following_scoreable=0" in text
+    assert "pending is not failed trade, not negative edge" in text
     assert "短线暴利/右尾温度计" in text
     assert "setup=43 watchlist=20 强封无炸=12" in text
     assert "tape=RIGHT_TAIL_TAPE_ACTIVE 涨停=88 高度=5 炸板=63" in text
@@ -512,6 +529,7 @@ def test_daemon_brief_command_is_read_only() -> None:
     assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in text
     assert "accepted_edges=0" in text
     assert "intraday_manifest=REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST" in text
+    assert "Forward-shadow闭环" in text
 
 
 def test_load_kairos_intraday_alert_reads_latest_report(tmp_path: Path) -> None:

@@ -511,6 +511,36 @@ def _format_shortest_legal_next_open_horizon(
     return lines
 
 
+def _format_forward_shadow_track_record(
+    package: dict[str, Any] | None,
+) -> list[str]:
+    if not isinstance(package, dict):
+        return []
+    track = _as_dict(package.get("forward_shadow_track_record"))
+    if not track:
+        return []
+    return [
+        "",
+        "Forward-shadow闭环:",
+        (
+            f"- lifecycle={track.get('lifecycle_state', 'unknown')} "
+            f"next={track.get('next_action', 'unknown')}"
+        ),
+        (
+            f"- records={_fmt_num(track.get('candidate_track_count'))} "
+            f"fired={_fmt_num(track.get('trigger_fired_count'))} "
+            f"pending={_fmt_num(track.get('pending_trigger_count'))} "
+            f"following={_fmt_num(track.get('following_observed_count'))} "
+            f"following_scoreable="
+            f"{_fmt_num(track.get('following_scoreable_candidate_count'))} "
+            f"d3={_fmt_num(track.get('d3_observed_count'))} "
+            f"d5={_fmt_num(track.get('d5_observed_count'))} "
+            f"scoreable={_fmt_num(track.get('scoreable_candidate_count'))}"
+        ),
+        "- boundary=frozen candidate track record; pending is not failed trade, not negative edge",
+    ]
+
+
 def _format_weak_signal_queue(payload: dict[str, Any], *, limit: int) -> list[str]:
     queue = _as_list(payload.get("weak_signal_review_queue"))
     if not queue:
@@ -608,6 +638,7 @@ def format_kairos_owner_brief(
     lines.extend(_format_daily_package_handoff(daily_package))
     lines.extend(_format_environment_conditioned_diagnostics(daily_package))
     lines.extend(_format_shortest_legal_next_open_horizon(daily_package))
+    lines.extend(_format_forward_shadow_track_record(daily_package))
     lines.extend(_format_explosive_posture(payload))
     lines.extend(_format_weak_signal_queue(payload, limit=min(candidate_limit, 5)))
 
