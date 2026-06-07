@@ -124,6 +124,25 @@ tmux attach -t codex
 - 如果你在当前 active tmux session 里手动 `resume` 到别的 thread，owner-facing 绑定仍然留在这个 **tmux session** 上，bridge 只是在内部跟随它下面当前 live 的 thread
 - 如果你真的维护多个 live tmux session，可以用 `/sessions` / `/switch` 在微信里切换
 
+### Runtime terminal delivery
+
+Group mode and agent-room delivery use the owner-opened `tmux` sessions as the
+execution surface. The bridge must not create or destroy sessions for the
+owner.
+
+Observed adapter rules:
+
+- `claude`: paste buffer, then submit with `C-m`.
+- `codex`: literal typed input, then submit with `C-m` when idle or `Tab` when
+  the Codex UI is visibly running and offers queued follow-up input.
+- `opencode`: literal typed input, then submit with `C-m`.
+
+Delivery proof is result-based, not key-based. A message is accepted only when
+it has left the visible input composer. For Codex specifically,
+`Queued follow-up inputs` means the message has been submitted to Codex's
+queue; text still shown on the bottom `›` / `❯` input line is a stuck composer
+and must be retried or marked failed.
+
 ## 🧰 前置依赖
 
 装在那台拥有本地 live session 的机器上：
@@ -543,7 +562,20 @@ Group 模式把一个微信私聊窗口变成虚拟的多 agent 群聊。它是*
 @kimi0 算一下 1+5
 ```
 
-Group 模式下**不带 @agent 的消息不会投递**，bridge 会提示你指定对象。
+如果配置了 `/intent <tmux>` 接线员，group 模式下不带 `@agent` 的文字或
+语音会先交给该 tmux session 做 owner-intent intake。
+
+### 广播给所有可见 agent
+
+```text
+广播 大家各自给一轮意见
+所有人 看一下这个问题
+/broadcast review this together
+/all review this together
+```
+
+显式广播前缀会绕过接线员，直接投递到当前所有 owner 已打开的 live tmux
+session。bridge 仍然会把消息写入本地 room log。
 
 ### 语音路由
 

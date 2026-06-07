@@ -123,6 +123,24 @@ So:
 - if you intentionally run multiple live tmux sessions under the workspace,
   `/sessions` and `/switch` let WeChat bind to a different one
 
+### Runtime Terminal Delivery
+
+Group mode and agent-room delivery use the owner-opened `tmux` sessions as the
+execution surface. The bridge must not create or destroy sessions for the owner.
+
+Observed adapter rules:
+
+- `claude`: paste buffer, then submit with `C-m`.
+- `codex`: literal typed input, then submit with `C-m` when idle or `Tab` when
+  the Codex UI is visibly running and offers queued follow-up input.
+- `opencode`: literal typed input, then submit with `C-m`.
+
+Delivery proof is result-based, not key-based. A message is accepted only when
+it has left the visible input composer. For Codex specifically,
+`Queued follow-up inputs` means the message has been submitted to Codex's
+queue; text still shown on the bottom `>` / `›` / `❯` input line is a stuck
+composer and must be retried or marked failed.
+
 ## 🧰 Prerequisites
 
 You need these on the machine that owns the local Codex session:
@@ -579,8 +597,21 @@ Shows all currently live tmux sessions with supported runtimes.
 @kimi0 算一下 1+5
 ```
 
-Messages without `@agent` are **not delivered** in group mode. The bridge
-prompts you to specify a target.
+When an intent agent is configured with `/intent <tmux>`, unsigned text or voice
+goes to that tmux session first for owner-intent intake.
+
+### Broadcast to all visible agents
+
+```text
+广播 大家各自给一轮意见
+所有人 看一下这个问题
+/broadcast review this together
+/all review this together
+```
+
+Explicit broadcast prefixes bypass the intent agent and are delivered to every
+currently live owner-opened tmux session. The bridge still records the message
+in the local room log.
 
 ### Voice routing
 

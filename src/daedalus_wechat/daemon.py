@@ -10,6 +10,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from daedalus_agent_room import AgentRoom, RoomPumpWorker, TmuxRoster
+
 from .cli_backend import CliBackend
 from .config import BridgeConfig
 from .delivery_ledger import (
@@ -66,6 +68,18 @@ STALE_DESKTOP_MIRROR_DROP_SECONDS = 600.0
 ROOM_FOCUS_TIMEOUT_SECONDS = 30.0
 MIRRORED_TEXT_DEDUP_SECONDS = 1800.0
 ROOM_ROUTE_RE = re.compile(r"^[＠@](?P<target>[A-Za-z0-9_.:-]+)\s*(?P<body>[\s\S]*)$")
+ROOM_TARGET_TOKEN_RE = re.compile(
+    r"^[＠@](?P<target>[A-Za-z0-9_.:-]+)(?P<body>[\s\S]*)$"
+)
+ROOM_ROUND_LIMIT_MAX = 20
+ROOM_ROUND_PATTERNS = (
+    re.compile(r"(?P<count>\d{1,3})\s*(?:轮|rounds?)", re.IGNORECASE),
+    re.compile(r"(?P<count>[一二两三四五六七八九十]{1,3})\s*轮"),
+    re.compile(
+        r"(?:讨论|来回|对话|debate)\D{0,8}(?P<count>\d{1,3}|[一二两三四五六七八九十]{1,3})",
+        re.IGNORECASE,
+    ),
+)
 OAI_MEM_CITATION_BLOCK_RE = re.compile(
     r"\n{0,2}<oai-mem-citation>[\s\S]*?</oai-mem-citation>\s*",
     re.IGNORECASE,
@@ -126,6 +140,50 @@ def _normalize_voice(text: str) -> str:
         out = out.replace(cn, digit)
     out = out.replace(" ", "")
     return out
+
+
+def _room_round_limit(text: str) -> int | None:
+    body = str(text or "")
+    for pattern in ROOM_ROUND_PATTERNS:
+        match = pattern.search(body)
+        if not match:
+            continue
+        value = _parse_room_round_count(match.group("count"))
+        if value is None:
+            continue
+        return max(1, min(value, ROOM_ROUND_LIMIT_MAX))
+    return None
+
+
+def _parse_room_round_count(raw: str) -> int | None:
+    value = str(raw or "").strip()
+    if not value:
+        return None
+    if value.isdecimal():
+        return int(value)
+    normalized = value.replace("两", "二")
+    digit_map = {
+        "一": 1,
+        "二": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+    }
+    if normalized == "十":
+        return 10
+    if "十" in normalized:
+        left, _, right = normalized.partition("十")
+        tens = digit_map.get(left, 1 if not left else 0)
+        ones = digit_map.get(right, 0) if right else 0
+        total = tens * 10 + ones
+        return total or None
+    if len(normalized) == 1:
+        return digit_map.get(normalized)
+    return None
 
 
 # Voice transcription variant templates, keyed by canonical tmux session name.
@@ -257,7 +315,13 @@ COMMAND_ALIASES = {
     "/fl": "/flush",
     "/lg": "/log",
     "/kt": "/kairos-today",
+    "/it": "/intent",
+    "/rs": "/room-status",
+    "/bc": "/broadcast",
 }
+
+ROOM_BROADCAST_COMMANDS = frozenset({"/broadcast", "/all"})
+ROOM_BROADCAST_PREFIXES = ("广播", "群发", "所有人", "大家", "全员")
 
 HELP_TEXT = """FT bridge（支持 `/` 和 `\\`，缩写参数同原命令）
 /h  /help          帮助
@@ -276,6 +340,8 @@ HELP_TEXT = """FT bridge（支持 `/` 和 `\\`，缩写参数同原命令）
 /cu /catchup       补看
 /fl /flush         冲洗
 /kt /kairos-today  Kairos
+/it /intent        接线 agent
+/rs /room-status   房间状态；/bc 广播
 """
 
 
@@ -323,11 +389,14 @@ class BridgeDaemon:
         self._bootstrap_runtime()
         self._start_mirror_thread()
         self._start_outbox_thread()
+        self._start_room_pump_thread()
         systemd_notify("READY=1")
         systemd_notify("STATUS=bridge running")
 
     def run_forever(self) -> None:
-        next_poll_timeout_ms = self._bounded_poll_timeout_ms(self.config.poll_timeout_ms)
+        next_poll_timeout_ms = self._bounded_poll_timeout_ms(
+            self.config.poll_timeout_ms
+        )
         consecutive_poll_errors = 0
         while True:
             try:
@@ -440,7 +509,8 @@ class BridgeDaemon:
     def _handle_incoming(self, incoming: IncomingMessage) -> None:
         self._bind_peer(incoming.from_user_id, incoming.context_token)
         body = incoming.body.strip()
-        room_target, _ = self._extract_room_target(body)
+        room_targets, _ = self._extract_room_targets(body)
+        room_target = room_targets[0] if len(room_targets) == 1 else None
         if incoming.is_voice and not incoming.has_transcript:
             self._reply(
                 incoming.from_user_id,
@@ -461,6 +531,26 @@ class BridgeDaemon:
         ):
             self._flush_bound_outbox_if_any()
             return
+        if self._room_mode_enabled():
+            broadcast_body = self._explicit_room_broadcast_body(body)
+            if broadcast_body is not None:
+                if not broadcast_body and not (
+                    incoming.images or incoming.files or incoming.videos
+                ):
+                    self._reply(
+                        incoming.from_user_id,
+                        incoming.context_token,
+                        "用法: 广播 <内容>\n也可用: /broadcast <内容> 或 /all <内容>",
+                        kind="command",
+                        origin="wechat-room-broadcast",
+                        thread_id=None,
+                        tmux_session=None,
+                    )
+                    self._flush_bound_outbox_if_any()
+                    return
+                rewritten = self._incoming_with_body(incoming, broadcast_body)
+                if self._broadcast_room_message(rewritten):
+                    return
         if (
             (body.startswith("/") or body.startswith("\\"))
             and not incoming.images
@@ -481,6 +571,9 @@ class BridgeDaemon:
             )
             self._flush_bound_outbox_if_any()
             return
+        if self._room_mode_enabled() and len(room_targets) > 1:
+            if self._route_room_multi_message(incoming, targets=room_targets):
+                return
         if self._room_mode_enabled() and room_target:
             if self._route_room_message(incoming, target=room_target):
                 return
@@ -583,17 +676,12 @@ class BridgeDaemon:
                 )
                 if self._route_room_message(rewritten, target=voice_match):
                     return
-            self._reply(
-                incoming.from_user_id,
-                incoming.context_token,
-                ("group 模式下请用 @agent 指定对象。\n未署名消息不会默认路由。"),
-                kind="progress",
-                origin="wechat-room-target",
-                thread_id=None,
-                tmux_session=None,
-            )
-            self._flush_bound_outbox_if_any()
-            return
+            if self.state.room_intent_agent and self._route_room_intent_message(
+                incoming
+            ):
+                return
+            if self._broadcast_room_message(incoming):
+                return
         with self._lock:
             if not self.state.active_session_id and not self.state.active_tmux_session:
                 hint = (
@@ -737,6 +825,10 @@ class BridgeDaemon:
             return format_kairos_today_readout(load_kairos_today_readout())
         if command == "/members":
             return self._members_text()
+        if command == "/intent":
+            return self._intent_agent_text(arg)
+        if command == "/room-status":
+            return self._agent_room_status_text()
         if command == "/notify":
             return self._notify_text(arg)
         if command == "/recent":
@@ -1886,6 +1978,16 @@ class BridgeDaemon:
         )
         thread.start()
 
+    def _start_room_pump_thread(self) -> None:
+        if not self.config.agent_room_pump_enabled:
+            return
+        thread = threading.Thread(
+            target=self._room_pump_loop,
+            name="daedalus-agent-room-pump",
+            daemon=True,
+        )
+        thread.start()
+
     def _mirror_loop(self) -> None:
         while True:
             time.sleep(self.config.mirror_poll_interval_seconds)
@@ -1906,6 +2008,82 @@ class BridgeDaemon:
                 self._flush_bound_outbox_if_any()
             except Exception as exc:  # noqa: BLE001
                 self._log_event("outbox_retry_error", {"error": str(exc)})
+
+    def _room_pump_loop(self) -> None:
+        while True:
+            time.sleep(self.config.agent_room_pump_interval_seconds)
+            try:
+                self._room_pump_tick()
+            except Exception as exc:  # noqa: BLE001
+                self._log_event("room_pump_error", {"error": str(exc)})
+
+    def _room_pump_tick(self) -> int:
+        with self._lock:
+            to_user_id = self.state.bound_user_id
+            context_token = self.state.bound_context_token
+        if not to_user_id:
+            return 0
+        room = AgentRoom(self.config.agent_room_dir)
+        delivered = 0
+        for runtime in self.runner.list_tmux_runtime_inventory():
+            agent_id = str(runtime.tmux_session or "").strip()
+            if not agent_id:
+                continue
+            cwd = (
+                Path(runtime.pane_cwd) if runtime.pane_cwd else self.config.default_cwd
+            )
+            worker = self._build_room_pump_worker(
+                room=room,
+                agent_id=agent_id,
+                backend=str(runtime.backend or "unknown"),
+                cwd=cwd,
+            )
+            results = worker.handle_pending_once(
+                limit=self.config.agent_room_pump_limit_per_agent
+            )
+            for result in results:
+                if result.skipped:
+                    continue
+                delivered += 1
+                self._log_event(
+                    "room_pump_reply",
+                    {
+                        "agent": result.agent_id,
+                        "backend": result.backend,
+                        "source_message_id": result.source_message_id,
+                        "topic_id": result.topic_id,
+                    },
+                )
+                self._reply(
+                    to_user_id,
+                    context_token,
+                    f"[{result.agent_id}] {result.reply}",
+                    kind="message",
+                    origin="agent-room-pump",
+                    thread_id=getattr(runtime, "thread_id", None),
+                    tmux_session=agent_id,
+                )
+        if delivered:
+            self._flush_bound_outbox_if_any()
+        return delivered
+
+    def _build_room_pump_worker(
+        self,
+        *,
+        room: AgentRoom,
+        agent_id: str,
+        backend: str,
+        cwd: Path,
+    ) -> RoomPumpWorker:
+        return RoomPumpWorker(
+            room=room,
+            agent_id=agent_id,
+            backend=backend,
+            cwd=cwd,
+            codex_bin=self.config.codex_bin,
+            opencode_bin=self.config.opencode_bin,
+            timeout_seconds=self.config.agent_room_pump_timeout_seconds,
+        )
 
     def _mirror_desktop_final_if_any(self) -> None:
         thread_id = self._current_mirror_thread_id()
@@ -3392,6 +3570,23 @@ class BridgeDaemon:
         remainder = str(match.group("body") or "").strip()
         return (target or None), remainder
 
+    def _extract_room_targets(self, body: str) -> tuple[list[str], str]:
+        rest = str(body or "").strip()
+        targets: list[str] = []
+        while rest:
+            match = ROOM_TARGET_TOKEN_RE.match(rest)
+            if not match:
+                break
+            target = str(match.group("target") or "").strip()
+            if not target:
+                break
+            if target not in targets:
+                targets.append(target)
+            rest = str(match.group("body") or "").lstrip(" \t,，、;；:：")
+            if not (rest.startswith("@") or rest.startswith("＠")):
+                break
+        return targets, rest.strip()
+
     def _room_speaker_label(
         self, *, thread_id: str | None, tmux_session: str | None
     ) -> str | None:
@@ -3471,6 +3666,482 @@ class BridgeDaemon:
             )
         lines.append("use=@agent 消息")
         return "\n".join(lines)
+
+    def _agent_room_status_text(self) -> str:
+        room = AgentRoom(self.config.agent_room_dir)
+        sessions = TmuxRoster().list_sessions()
+        payload = room.status(sessions=sessions)
+        lines = [
+            "room_status=ok",
+            f"room_dir={payload['room_dir']}",
+            f"paused={str(payload['paused']).lower()}",
+            f"messages={payload['message_count']}",
+            f"artifacts={payload['artifact_count']}",
+            f"tmux_sessions={payload['session_count']}",
+        ]
+        if payload["pause_reason"]:
+            lines.append(f"pause_reason={payload['pause_reason']}")
+        for session in payload["sessions"][:20]:
+            lines.append(
+                f"- @{session['agent_id']} source={session['source']} windows={session['windows']}"
+            )
+        if payload["last_messages"]:
+            lines.append("last_messages:")
+            for item in payload["last_messages"][-3:]:
+                recipients = ",".join(str(v) for v in item.get("to", [])) or "all"
+                text = str(item.get("text", "")).replace("\n", " ")[:120]
+                lines.append(
+                    f"- {item.get('mode', item.get('kind', 'message'))} "
+                    f"{item.get('from', '?')}->{recipients} {text}"
+                )
+        return "\n".join(lines)
+
+    def _intent_agent_text(self, arg: str) -> str:
+        value = str(arg or "").strip()
+        if not value:
+            current = self.state.room_intent_agent or "none"
+            return (
+                f"intent_agent={current}\n"
+                "用法: /intent <tmux-session>\n"
+                "关闭: /intent off\n"
+                "说明: group 模式下未署名语音/text 会交给该 session 做接线识别"
+            )
+        if value.lower() in {"off", "none", "clear", "disable"}:
+            self.state.room_intent_agent = None
+            self._save_state()
+            return "intent_agent=none"
+        agent_ids = self._room_live_terminal_agent_ids()
+        agent_id = value.lstrip("@")
+        if agent_id not in agent_ids:
+            return f"intent_agent=blocked\n没有找到 tmux session: {value}\n先用 /members 看当前成员"
+        self.state.room_intent_agent = agent_id
+        self._save_state()
+        return (
+            f"intent_agent={agent_id}\n"
+            "之后 group 模式下未署名语音/text 会进入本地 agent_room，"
+            f"由 @{agent_id} 先识别意图。"
+        )
+
+    def _route_room_intent_message(self, incoming: IncomingMessage) -> bool:
+        target = str(self.state.room_intent_agent or "").strip()
+        if not target:
+            return False
+        if incoming.images or incoming.files or incoming.videos:
+            return False
+        available_agents = self._room_live_terminal_agent_ids()
+        if target not in available_agents:
+            self._reply(
+                incoming.from_user_id,
+                incoming.context_token,
+                f"接线员 @{target} 当前不在线；用 /intent <session> 重新指定。",
+                kind="progress",
+                origin="wechat-intent-router",
+                thread_id=None,
+                tmux_session=None,
+            )
+            self._flush_bound_outbox_if_any()
+            return True
+        agent_id = target
+        room = AgentRoom(self.config.agent_room_dir)
+        body = str(incoming.body or "").strip()
+        source_kind = "voice" if incoming.is_voice else "text"
+        prompt = (
+            "[WeChat owner intent intake]\n"
+            f"source={source_kind}\n"
+            f"available_sessions={', '.join(available_agents) or 'none'}\n\n"
+            "Owner transcript:\n"
+            f"{body}\n\n"
+            "Task: identify the owner's intent, choose the target session(s) if any, "
+            "and draft the next room message. Do not write repo files or DB from this "
+            "intake. If the owner intent is ambiguous, ask one concise clarification."
+        )
+        topic_id = (
+            f"wechat_{incoming.message_id}"
+            if incoming.message_id
+            else f"wechat_{datetime.now(UTC):%Y%m%d}"
+        )
+        payload = room.send_message(
+            from_actor="owner",
+            to=[agent_id],
+            mode="task",
+            topic_id=topic_id,
+            text=prompt,
+            source="wechat-intent-router",
+            metadata={
+                "wechat_from": incoming.from_user_id,
+                "wechat_message_id": incoming.message_id,
+                "source_kind": source_kind,
+                "raw_transcript": body,
+                "available_sessions": available_agents,
+            },
+        )
+        self._log_event(
+            "intent_routed_to_agent_room",
+            {
+                "agent": agent_id,
+                "message_id": incoming.message_id,
+                "room_message_id": payload["id"],
+                "room_dir": str(room.room_dir),
+                "source_kind": source_kind,
+            },
+        )
+        terminal_delivery = self._submit_room_terminal_message(
+            targets=[agent_id],
+            text=prompt,
+        )
+        self._reply(
+            incoming.from_user_id,
+            incoming.context_token,
+            (
+                f"已交给接线员 @{agent_id} 识别意图。\n"
+                f"{self._terminal_delivery_ack_lines(terminal_delivery)}\n"
+                f"room_message={payload['id']}\n"
+                f"room_dir={room.room_dir}"
+            ),
+            kind="progress",
+            origin="wechat-intent-router",
+            thread_id=None,
+            tmux_session=None,
+        )
+        self._flush_bound_outbox_if_any()
+        return True
+
+    def _terminal_delivery_ack_lines(
+        self, terminal_delivery: dict[str, list[str]]
+    ) -> str:
+        delivered = terminal_delivery.get("delivered", [])
+        failed = terminal_delivery.get("failed", [])
+        lines = [
+            "terminal_delivered="
+            + (", ".join(f"@{item}" for item in delivered) if delivered else "none")
+        ]
+        if failed:
+            lines.append("terminal_failed=" + ", ".join(f"@{item}" for item in failed))
+        return "\n".join(lines)
+
+    def _room_tmux_agent_ids(self) -> list[str]:
+        return [session.agent_id for session in TmuxRoster().list_sessions()]
+
+    def _explicit_room_broadcast_body(self, body: str) -> str | None:
+        text = str(body or "").strip()
+        if not text:
+            return None
+        command_text = "/" + text[1:] if text.startswith("\\") else text
+        if command_text.startswith("/"):
+            parts = command_text.split(maxsplit=1)
+            command = COMMAND_ALIASES.get(parts[0].lower(), parts[0].lower())
+            if command in ROOM_BROADCAST_COMMANDS:
+                return parts[1].strip() if len(parts) > 1 else ""
+            return None
+        for prefix in ROOM_BROADCAST_PREFIXES:
+            if text == prefix:
+                return ""
+            if not text.startswith(prefix):
+                continue
+            remainder = text[len(prefix) :].lstrip(" \t,，、:：;；。.!！")
+            return remainder
+        return None
+
+    def _incoming_with_body(
+        self, incoming: IncomingMessage, body: str
+    ) -> IncomingMessage:
+        return IncomingMessage(
+            from_user_id=incoming.from_user_id,
+            context_token=incoming.context_token,
+            body=body,
+            message_id=incoming.message_id,
+            is_voice=incoming.is_voice,
+            has_transcript=incoming.has_transcript,
+            images=incoming.images,
+            files=incoming.files,
+            videos=incoming.videos,
+        )
+
+    def _broadcast_room_message(self, incoming: IncomingMessage) -> bool:
+        body = str(incoming.body or "").strip()
+        if not body:
+            return False
+        saved_images, image_failures = self._materialize_incoming_images(incoming)
+        saved_files, file_failures = self._materialize_incoming_files(incoming)
+        saved_videos, video_failures = self._materialize_incoming_videos(incoming)
+        attachment_note = self._attachment_summary_text(
+            image_count=len(saved_images),
+            file_count=len(saved_files),
+            video_count=len(saved_videos),
+        )
+        text = body
+        if attachment_note:
+            text = f"{body}\n\n[attachments] {attachment_note}"
+        payload = self._send_agent_room_message(
+            incoming=incoming,
+            targets=[],
+            text=text,
+            mode="announce",
+            round_limit=None,
+            source="wechat-room-broadcast",
+            metadata={
+                "route": "broadcast",
+                "available_sessions": self._room_tmux_agent_ids(),
+                "image_paths": [str(img.path) for img in saved_images],
+                "file_paths": [str(file.path) for file in saved_files],
+                "video_paths": [str(video.path) for video in saved_videos],
+                "image_failures": image_failures,
+                "file_failures": file_failures,
+                "video_failures": video_failures,
+            },
+        )
+        self._log_event(
+            "room_broadcast",
+            {
+                "message_id": incoming.message_id,
+                "room_message_id": payload["id"],
+                "room_dir": str(self.config.agent_room_dir),
+            },
+        )
+        terminal_delivery = self._submit_room_terminal_message(
+            targets=self._room_live_terminal_agent_ids(),
+            text=text,
+        )
+        self._reply(
+            incoming.from_user_id,
+            incoming.context_token,
+            self._room_delivery_ack(
+                payload=payload,
+                targets=[],
+                mode="announce",
+                terminal_delivery=terminal_delivery,
+            ),
+            kind="progress",
+            origin="wechat-room-broadcast",
+            thread_id=None,
+            tmux_session=None,
+        )
+        self._flush_bound_outbox_if_any()
+        return True
+
+    def _route_room_multi_message(
+        self, incoming: IncomingMessage, *, targets: list[str]
+    ) -> bool:
+        with self._lock:
+            live_records = self.runner.sync_live_sessions(self.state)
+            self._save_state()
+            resolved_targets: list[str] = []
+            missing_targets: list[str] = []
+            for target in targets:
+                match = self._resolve_session(target, live_records=live_records)
+                if not match:
+                    missing_targets.append(target)
+                    continue
+                record = self.state.sessions[match]
+                resolved_targets.append(self._session_display_name(record) or target)
+        if missing_targets:
+            self._reply(
+                incoming.from_user_id,
+                incoming.context_token,
+                "没有找到参与者: " + ", ".join(missing_targets),
+                kind="progress",
+                origin="wechat-room-target",
+                thread_id=None,
+                tmux_session=None,
+            )
+            self._flush_bound_outbox_if_any()
+            return True
+        _targets, stripped_body = self._extract_room_targets(incoming.body)
+        body = stripped_body or incoming.body
+        round_limit = _room_round_limit(body)
+        mode = "debate" if round_limit else "message"
+        payload = self._send_agent_room_message(
+            incoming=incoming,
+            targets=resolved_targets,
+            text=body,
+            mode=mode,
+            round_limit=round_limit,
+            source="wechat-room-target",
+            metadata={
+                "route": "multi-target",
+                "raw_targets": targets,
+            },
+        )
+        self._log_event(
+            "room_multi_target",
+            {
+                "message_id": incoming.message_id,
+                "room_message_id": payload["id"],
+                "targets": resolved_targets,
+                "mode": mode,
+                "round_limit": round_limit,
+            },
+        )
+        terminal_delivery = self._submit_room_terminal_message(
+            targets=resolved_targets,
+            text=body,
+        )
+        self._reply(
+            incoming.from_user_id,
+            incoming.context_token,
+            self._room_delivery_ack(
+                payload=payload,
+                targets=resolved_targets,
+                mode=mode,
+                round_limit=round_limit,
+                terminal_delivery=terminal_delivery,
+            ),
+            kind="progress",
+            origin="wechat-room-target",
+            thread_id=None,
+            tmux_session=None,
+        )
+        self._flush_bound_outbox_if_any()
+        return True
+
+    def _send_agent_room_message(
+        self,
+        *,
+        incoming: IncomingMessage,
+        targets: list[str],
+        text: str,
+        mode: str,
+        round_limit: int | None,
+        source: str,
+        metadata: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        room = AgentRoom(self.config.agent_room_dir)
+        enriched_metadata: dict[str, object] = {
+            "wechat_from": incoming.from_user_id,
+            "wechat_message_id": incoming.message_id,
+            "is_voice": incoming.is_voice,
+            "has_transcript": incoming.has_transcript,
+            "owner_visible": True,
+        }
+        enriched_metadata.update(metadata or {})
+        topic_id = (
+            f"wechat_{incoming.message_id}"
+            if incoming.message_id
+            else f"wechat_{datetime.now(UTC):%Y%m%d}"
+        )
+        return room.send_message(
+            from_actor="owner",
+            to=targets,
+            mode=mode,
+            topic_id=topic_id,
+            text=text,
+            round_limit=round_limit,
+            write_allowed=False,
+            source=source,
+            metadata=enriched_metadata,
+        )
+
+    def _room_delivery_ack(
+        self,
+        *,
+        payload: dict[str, object],
+        targets: list[str],
+        mode: str,
+        round_limit: int | None = None,
+        terminal_delivery: dict[str, list[str]] | None = None,
+    ) -> str:
+        target_text = (
+            ", ".join(f"@{target}" for target in targets) if targets else "all"
+        )
+        lines = [
+            "已投递到本地 agent-room。",
+            f"mode={mode}",
+            f"to={target_text}",
+        ]
+        if round_limit is not None:
+            lines.append(f"round_limit={round_limit}")
+        if terminal_delivery is not None:
+            lines.append(self._terminal_delivery_ack_lines(terminal_delivery))
+        lines.extend(
+            [
+                f"room_message={payload.get('id', '')}",
+                f"room_dir={self.config.agent_room_dir}",
+                "owner_visible=true",
+            ]
+        )
+        return "\n".join(lines)
+
+    def _submit_room_terminal_message(
+        self,
+        *,
+        targets: list[str],
+        text: str,
+    ) -> dict[str, list[str]]:
+        delivered: list[str] = []
+        failed: list[str] = []
+        if not targets:
+            return {"delivered": delivered, "failed": failed}
+        with self._lock:
+            live_records = self.runner.sync_live_sessions(self.state)
+            self._save_state()
+            target_records: list[tuple[str, SessionRecord]] = []
+            seen_records: set[str] = set()
+            for target in dict.fromkeys(targets):
+                record = self._resolve_terminal_record(
+                    target, live_records=live_records
+                )
+                if not record:
+                    failed.append(target)
+                    continue
+                if record.thread_id in seen_records:
+                    continue
+                seen_records.add(record.thread_id)
+                target_records.append(
+                    (self._session_display_name(record) or target, record)
+                )
+        for display_name, record in target_records:
+            try:
+                refreshed = self.runner.ensure_resumed_session(
+                    thread_id=record.thread_id,
+                    state=self.state,
+                    label=record.label,
+                    source=record.source,
+                )
+                refreshed.updated_at = datetime.now(UTC).isoformat()
+                with self._lock:
+                    self.state.touch_session(
+                        refreshed.thread_id,
+                        label=refreshed.label,
+                        cwd=refreshed.cwd,
+                        source=refreshed.source,
+                        tmux_session=refreshed.tmux_session,
+                    )
+                    self._save_state()
+                self.runner.submit_prompt(record=refreshed, prompt=text)
+                delivered.append(refreshed.tmux_session or display_name)
+            except Exception as exc:  # noqa: BLE001
+                failed.append(display_name)
+                self._log_event(
+                    "room_terminal_delivery_failed",
+                    {"target": display_name, "error": str(exc)[:300]},
+                )
+        return {"delivered": delivered, "failed": failed}
+
+    def _room_live_terminal_agent_ids(self) -> list[str]:
+        with self._lock:
+            live_records = self.runner.sync_live_sessions(self.state)
+            self._save_state()
+        return [
+            self._session_display_name(record)
+            for record in live_records
+            if self._session_display_name(record)
+        ]
+
+    def _resolve_terminal_record(
+        self, target: str, *, live_records: list[SessionRecord]
+    ) -> SessionRecord | None:
+        normalized = str(target or "").strip()
+        if not normalized:
+            return None
+        for attr in ("tmux_session", "thread_id", "label"):
+            matches = [
+                record
+                for record in live_records
+                if str(getattr(record, attr, "") or "").strip() == normalized
+            ]
+            if len(matches) == 1:
+                return matches[0]
+        return None
 
     def _route_room_message(self, incoming: IncomingMessage, *, target: str) -> bool:
         with self._lock:
@@ -3596,6 +4267,22 @@ class BridgeDaemon:
                 images=[str(img.path) for img in saved_images]
                 if saved_images
                 else None,
+            )
+            self._send_agent_room_message(
+                incoming=incoming,
+                targets=[target],
+                text=prompt,
+                mode="message",
+                round_limit=_room_round_limit(effective_body),
+                source="wechat-room-target-terminal",
+                metadata={
+                    "route": "single-target-terminal",
+                    "target": target,
+                    "image_paths": [str(img.path) for img in saved_images],
+                    "file_paths": [str(file.path) for file in saved_files],
+                    "video_paths": [str(video.path) for video in saved_videos],
+                    "terminal_delivery": True,
+                },
             )
         self.runner.submit_prompt(record=refreshed, prompt=prompt)
         self._log_event(
@@ -4694,8 +5381,9 @@ class BridgeDaemon:
                 )
                 lines.append(
                     "recent_effective="
-                    + self._strip_internal_metadata(str(latest.get("text", "")))
-                    .replace("\n", " ")[:120]
+                    + self._strip_internal_metadata(
+                        str(latest.get("text", ""))
+                    ).replace("\n", " ")[:120]
                 )
                 lines.append(
                     "hint=/recent 看最近有效消息；bridge 会后台自动冲洗 backlog"

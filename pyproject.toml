@@ -16,6 +16,7 @@ dev = [
 ]
 
 [project.scripts]
+daedalus-agent-room = "daedalus_agent_room.cli:main"
 daedalus-wechat = "daedalus_wechat.cli:main"
 
 [tool.setuptools]
@@ -37,7 +38,7 @@ select = ["E", "F", "I", "B", "UP"]
 ignore = ["E501", "UP022"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["daedalus_wechat"]
+known-first-party = ["daedalus_agent_room", "daedalus_wechat"]
 
 [tool.uv]
 default-groups = ["dev"]

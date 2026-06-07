@@ -245,7 +245,7 @@ class LiveSessionTests(unittest.TestCase):
             + "Plan\n切到更小的主线切片。\n1. 完成: 检查 bridge 当前状态\n2. 进行中: 实现 plan icon",
         )
 
-    def test_inject_prompt_uses_paste_buffer_for_opencode_runtime_even_in_codex_tmux(
+    def test_inject_prompt_uses_literal_input_for_opencode_runtime_even_in_codex_tmux(
         self,
     ) -> None:
         with (
@@ -261,6 +261,7 @@ class LiveSessionTests(unittest.TestCase):
                     backend=CliBackend.OPENCODE.value,
                 ),
             ),
+            patch.object(self.runner, "_capture_clean_text", return_value="idle"),
             patch("daedalus_wechat.live_session.time.sleep", lambda _: None),
             patch("daedalus_wechat.live_session.subprocess.run") as run_mock,
         ):
@@ -270,14 +271,7 @@ class LiveSessionTests(unittest.TestCase):
             run_mock.call_args_list,
             [
                 call(
-                    ["tmux", "load-buffer", "-"],
-                    input=b"line one line two",
-                    check=True,
-                    stdout=-1,
-                    stderr=-1,
-                ),
-                call(
-                    ["tmux", "paste-buffer", "-d", "-t", "codex:0.0"],
+                    ["tmux", "send-keys", "-l", "-t", "codex:0.0", "line one line two"],
                     check=True,
                     stdout=-1,
                     stderr=-1,
@@ -291,7 +285,7 @@ class LiveSessionTests(unittest.TestCase):
             ],
         )
 
-    def test_inject_prompt_uses_paste_buffer_for_codex_runtime(self) -> None:
+    def test_inject_prompt_uses_literal_input_for_codex_runtime(self) -> None:
         with (
             patch.object(
                 self.runner,
@@ -305,6 +299,7 @@ class LiveSessionTests(unittest.TestCase):
                     backend=CliBackend.CODEX.value,
                 ),
             ),
+            patch.object(self.runner, "_capture_clean_text", return_value="idle"),
             patch("daedalus_wechat.live_session.time.sleep", lambda _: None),
             patch("daedalus_wechat.live_session.subprocess.run") as run_mock,
         ):
@@ -314,14 +309,7 @@ class LiveSessionTests(unittest.TestCase):
             run_mock.call_args_list,
             [
                 call(
-                    ["tmux", "load-buffer", "-"],
-                    input=b"line one line two",
-                    check=True,
-                    stdout=-1,
-                    stderr=-1,
-                ),
-                call(
-                    ["tmux", "paste-buffer", "-d", "-t", "codex:0.0"],
+                    ["tmux", "send-keys", "-l", "-t", "codex:0.0", "line one line two"],
                     check=True,
                     stdout=-1,
                     stderr=-1,
@@ -335,9 +323,9 @@ class LiveSessionTests(unittest.TestCase):
             ],
         )
 
-    def test_inject_prompt_uses_paste_buffer_for_long_codex_prompt(self) -> None:
+    def test_inject_prompt_uses_queue_submit_for_busy_codex_prompt(self) -> None:
         prompt = ("结论先行。" * 700) + "\n" + ("这里是很长的顾问文本。" * 700)
-        expected_payload = (" ".join(prompt.replace("\r\n", "\n").split())).encode()
+        expected_payload = " ".join(prompt.replace("\r\n", "\n").split())
         with (
             patch.object(
                 self.runner,
@@ -350,6 +338,14 @@ class LiveSessionTests(unittest.TestCase):
                     pane_cwd="/tmp",
                     backend=CliBackend.CODEX.value,
                 ),
+            ),
+            patch.object(
+                self.runner,
+                "_capture_clean_text",
+                side_effect=[
+                    "Working (3m 45s • esc to interrupt)\ntab to queue message",
+                    "Queued follow-up inputs\n↳ " + expected_payload[:80],
+                ],
             ),
             patch("daedalus_wechat.live_session.time.sleep", lambda _: None),
             patch("daedalus_wechat.live_session.subprocess.run") as run_mock,
@@ -360,14 +356,55 @@ class LiveSessionTests(unittest.TestCase):
             run_mock.call_args_list,
             [
                 call(
-                    ["tmux", "load-buffer", "-"],
-                    input=expected_payload,
+                    ["tmux", "send-keys", "-l", "-t", "codex:0.0", expected_payload],
                     check=True,
                     stdout=-1,
                     stderr=-1,
                 ),
                 call(
-                    ["tmux", "paste-buffer", "-d", "-t", "codex:0.0"],
+                    ["tmux", "send-keys", "-t", "codex:0.0", "Tab"],
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
+            ],
+        )
+
+    def test_inject_prompt_retries_when_codex_text_stays_in_input_composer(
+        self,
+    ) -> None:
+        with (
+            patch.object(
+                self.runner,
+                "_runtime_status_for_tmux",
+                return_value=LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="codex",
+                    thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                    pane_cwd="/tmp",
+                    backend=CliBackend.CODEX.value,
+                ),
+            ),
+            patch.object(
+                self.runner,
+                "_capture_clean_text",
+                side_effect=[
+                    "Ready\n›",
+                    "Working\n› line one line two",
+                    "Queued follow-up inputs\n↳ line one line two",
+                ],
+            ),
+            patch("daedalus_wechat.live_session.time.sleep", lambda _: None),
+            patch("daedalus_wechat.live_session.subprocess.run") as run_mock,
+        ):
+            self.runner._inject_prompt("codex", "line one\nline two")
+
+        self.assertEqual(
+            run_mock.call_args_list,
+            [
+                call(
+                    ["tmux", "send-keys", "-l", "-t", "codex:0.0", "line one line two"],
                     check=True,
                     stdout=-1,
                     stderr=-1,
@@ -378,7 +415,78 @@ class LiveSessionTests(unittest.TestCase):
                     stdout=-1,
                     stderr=-1,
                 ),
+                call(
+                    ["tmux", "send-keys", "-t", "codex:0.0", "Tab"],
+                    check=True,
+                    stdout=-1,
+                    stderr=-1,
+                ),
             ],
+        )
+
+    def test_inject_prompt_fails_when_codex_text_stays_in_input_composer(self) -> None:
+        with (
+            patch.object(
+                self.runner,
+                "_runtime_status_for_tmux",
+                return_value=LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="codex",
+                    thread_id="019cdfe5-fa14-74a3-aa31-5451128ea58d",
+                    pane_cwd="/tmp",
+                    backend=CliBackend.CODEX.value,
+                ),
+            ),
+            patch.object(
+                self.runner,
+                "_capture_clean_text",
+                side_effect=[
+                    "Ready\n›",
+                    "Working\n› line one line two",
+                    "Working\n› line one line two",
+                ],
+            ),
+            patch("daedalus_wechat.live_session.time.sleep", lambda _: None),
+            patch("daedalus_wechat.live_session.subprocess.run"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "input composer"):
+                self.runner._inject_prompt("codex", "line one\nline two")
+
+    def test_prompt_still_in_input_box_accepts_queued_follow_up_as_submitted(
+        self,
+    ) -> None:
+        self.assertFalse(
+            self.runner._prompt_still_in_input_box(
+                "Queued follow-up inputs\n↳ line one line two",
+                "line one line two",
+            )
+        )
+
+    def test_prompt_still_in_input_box_detects_visible_composer(self) -> None:
+        self.assertTrue(
+            self.runner._prompt_still_in_input_box(
+                "Working\n› line one line two",
+                "line one line two",
+            )
+        )
+
+    def test_codex_submit_key_uses_tab_when_queue_hint_is_visible(self) -> None:
+        self.assertEqual(
+            self.runner._codex_submit_key(
+                "Working (3m 45s • esc to interrupt)\n"
+                "› pending owner message\n"
+                "tab to queue message"
+            ),
+            "Tab",
+        )
+
+    def test_codex_submit_key_uses_enter_when_idle(self) -> None:
+        self.assertEqual(
+            self.runner._codex_submit_key(
+                "› ready for input\nbypass permissions on (shift+tab to cycle)"
+            ),
+            "C-m",
         )
 
     def test_inject_prompt_uses_paste_buffer_for_claude_runtime(self) -> None:
@@ -395,6 +503,7 @@ class LiveSessionTests(unittest.TestCase):
                     backend=CliBackend.CLAUDE.value,
                 ),
             ),
+            patch.object(self.runner, "_capture_clean_text", return_value="idle"),
             patch("daedalus_wechat.live_session.time.sleep", lambda _: None),
             patch("daedalus_wechat.live_session.subprocess.run") as run_mock,
         ):
@@ -1719,7 +1828,9 @@ class LiveSessionTests(unittest.TestCase):
         with patch.object(
             runner, "_list_tmux_sessions", return_value=["codex", "opencode"]
         ):
-            with patch.object(runner, "_runtime_status_for_tmux", side_effect=fake_status):
+            with patch.object(
+                runner, "_runtime_status_for_tmux", side_effect=fake_status
+            ):
                 first = runner.list_tmux_runtime_inventory()
                 second = runner.list_tmux_runtime_inventory()
 
@@ -1744,7 +1855,9 @@ class LiveSessionTests(unittest.TestCase):
         with patch.object(
             self.runner, "_list_tmux_sessions", return_value=["codex", "probe"]
         ):
-            with patch.object(self.runner, "_runtime_status_for_tmux", side_effect=fake_status):
+            with patch.object(
+                self.runner, "_runtime_status_for_tmux", side_effect=fake_status
+            ):
                 inventory = self.runner.list_tmux_runtime_inventory()
 
         self.assertEqual(calls, ["codex", "probe"])

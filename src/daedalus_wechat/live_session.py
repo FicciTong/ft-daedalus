@@ -41,6 +41,9 @@ KIMI_SESSION_FILE_RE = re.compile(
 KIMI_SESSION_BANNER_RE = re.compile(
     r"Session:\s+(?P<session_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"
 )
+CODEX_QUEUE_HINT_RE = re.compile(r"\btab to queue message\b", re.IGNORECASE)
+CODEX_BUSY_HINT_RE = re.compile(r"\bWorking\b[\s\S]{0,120}\besc to interrupt\b")
+INPUT_COMPOSER_MARKER_RE = re.compile(r"(?m)^[^\n]*(?:[›❯])\s*")
 
 
 @dataclass(frozen=True)
@@ -424,9 +427,11 @@ class LiveCodexSessionManager:
 
     def list_tmux_runtime_inventory(self) -> list[TmuxRuntimeInventoryItem]:
         current = time.monotonic()
-        if self._runtime_inventory_cache is not None and (
-            current - self._runtime_inventory_cache_at
-        ) <= self.runtime_inventory_cache_seconds:
+        if (
+            self._runtime_inventory_cache is not None
+            and (current - self._runtime_inventory_cache_at)
+            <= self.runtime_inventory_cache_seconds
+        ):
             return list(self._runtime_inventory_cache)
         inventory = self._list_tmux_runtime_inventory_uncached()
         self._runtime_inventory_cache_at = current
@@ -846,11 +851,36 @@ class LiveCodexSessionManager:
         backend = runtime_status.backend
         if backend == CliBackend.UNKNOWN.value:
             backend = self.expected_backend_for_tmux_session(tmux_session)
+        screen_tail = "\n".join(
+            self._capture_clean_text(tmux_session).splitlines()[-80:]
+        )
+        submit_key = "C-m"
+        if backend == CliBackend.CODEX.value:
+            submit_key = self._codex_submit_key(screen_tail)
         if backend in {CliBackend.OPENCODE.value, CliBackend.CODEX.value}:
             payload = " ".join(normalized.split())
         else:
             payload = normalized
         if not payload:
+            return
+        self._inject_payload(
+            tmux_session=tmux_session, payload=payload, backend=backend
+        )
+        self._submit_injected_payload(
+            tmux_session=tmux_session,
+            payload=payload,
+            backend=backend,
+            submit_key=submit_key,
+        )
+
+    def _inject_payload(self, *, tmux_session: str, payload: str, backend: str) -> None:
+        if backend in {CliBackend.OPENCODE.value, CliBackend.CODEX.value}:
+            subprocess.run(
+                ["tmux", "send-keys", "-l", "-t", f"{tmux_session}:0.0", payload],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
             return
         subprocess.run(
             ["tmux", "load-buffer", "-"],
@@ -865,13 +895,79 @@ class LiveCodexSessionManager:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+
+    def _submit_injected_payload(
+        self,
+        *,
+        tmux_session: str,
+        payload: str,
+        backend: str,
+        submit_key: str,
+    ) -> None:
+        self._send_submit_key(tmux_session=tmux_session, submit_key=submit_key)
+        screen_tail = "\n".join(
+            self._capture_clean_text(tmux_session).splitlines()[-80:]
+        )
+        if not self._prompt_still_in_input_box(screen_tail, payload):
+            return
+        fallback_key = self._fallback_submit_key(
+            backend=backend, previous_key=submit_key
+        )
+        self._send_submit_key(tmux_session=tmux_session, submit_key=fallback_key)
+        screen_tail = "\n".join(
+            self._capture_clean_text(tmux_session).splitlines()[-80:]
+        )
+        if self._prompt_still_in_input_box(screen_tail, payload):
+            raise RuntimeError(
+                f"tmux {tmux_session} prompt delivery did not leave the input composer"
+            )
+
+    def _send_submit_key(self, *, tmux_session: str, submit_key: str) -> None:
         time.sleep(0.2)
         subprocess.run(
-            ["tmux", "send-keys", "-t", f"{tmux_session}:0.0", "C-m"],
+            ["tmux", "send-keys", "-t", f"{tmux_session}:0.0", submit_key],
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
+
+    def _codex_submit_key(self, screen_tail: str) -> str:
+        """Prefer Codex queue submit while a turn is visibly running."""
+        if CODEX_QUEUE_HINT_RE.search(screen_tail):
+            return "Tab"
+        if CODEX_BUSY_HINT_RE.search(screen_tail):
+            return "Tab"
+        return "C-m"
+
+    def _fallback_submit_key(self, *, backend: str, previous_key: str) -> str:
+        if backend == CliBackend.CODEX.value:
+            return "Tab" if previous_key != "Tab" else "C-m"
+        return previous_key
+
+    def _prompt_still_in_input_box(self, screen_tail: str, payload: str) -> bool:
+        anchors = self._payload_anchor_fragments(payload)
+        if not anchors:
+            return False
+        composer = self._input_composer_region(screen_tail)
+        if not composer:
+            return False
+        return any(anchor in composer for anchor in anchors)
+
+    def _input_composer_region(self, screen_tail: str) -> str:
+        lines = screen_tail.splitlines()
+        marker_index: int | None = None
+        for idx, line in enumerate(lines):
+            if INPUT_COMPOSER_MARKER_RE.search(line):
+                marker_index = idx
+        if marker_index is None:
+            return ""
+        return "\n".join(lines[marker_index:])
+
+    def _payload_anchor_fragments(self, payload: str) -> list[str]:
+        normalized = " ".join(str(payload or "").split())
+        if not normalized:
+            return []
+        return [normalized[:80]]
 
     def _collect_response(
         self,

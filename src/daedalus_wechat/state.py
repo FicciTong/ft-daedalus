@@ -43,6 +43,7 @@ class BridgeState:
     room_focus_thread_id: str | None = None
     room_focus_tmux_session: str | None = None
     room_focus_started_at: str = ""
+    room_intent_agent: str | None = None
     get_updates_buf: str = ""
     bound_user_id: str | None = None
     bound_context_token: str | None = None
@@ -121,6 +122,11 @@ class BridgeState:
             room_focus_thread_id=raw.get("room_focus_thread_id"),
             room_focus_tmux_session=raw.get("room_focus_tmux_session"),
             room_focus_started_at=str(raw.get("room_focus_started_at", "")),
+            room_intent_agent=(
+                str(raw["room_intent_agent"]).strip()
+                if raw.get("room_intent_agent")
+                else None
+            ),
             get_updates_buf=raw.get("get_updates_buf", ""),
             bound_user_id=raw.get("bound_user_id"),
             bound_context_token=raw.get("bound_context_token"),
@@ -199,6 +205,7 @@ class BridgeState:
                     "room_focus_thread_id": self.room_focus_thread_id,
                     "room_focus_tmux_session": self.room_focus_tmux_session,
                     "room_focus_started_at": self.room_focus_started_at,
+                    "room_intent_agent": self.room_intent_agent,
                     "get_updates_buf": self.get_updates_buf,
                     "bound_user_id": self.bound_user_id,
                     "bound_context_token": self.bound_context_token,

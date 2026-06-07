@@ -22,11 +22,16 @@ class BridgeConfig:
     codex_state_db_source: str = "default_resolved"
     opencode_state_db: Path = field(default_factory=lambda: default_opencode_state_db())
     opencode_state_db_source: str = "default_resolved"
+    agent_room_dir: Path = field(default_factory=lambda: default_agent_room_dir())
     poll_timeout_ms: int = 35_000
     text_chunk_limit: int = DEFAULT_TEXT_CHUNK_LIMIT
     min_send_interval_seconds: float = 1.5
     outbox_retry_interval_seconds: float = 1.0
     mirror_poll_interval_seconds: float = 2.0
+    agent_room_pump_enabled: bool = False
+    agent_room_pump_interval_seconds: float = 2.0
+    agent_room_pump_timeout_seconds: float = 180.0
+    agent_room_pump_limit_per_agent: int = 1
     runtime_inventory_cache_seconds: float = 2.0
 
     @property
@@ -125,6 +130,10 @@ def default_codex_state_db() -> Path:
 
 def default_opencode_state_db() -> Path:
     return Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+
+
+def default_agent_room_dir() -> Path:
+    return Path.home() / ".local" / "state" / "daedalus-agent-room"
 
 
 def load_config() -> BridgeConfig:
@@ -227,6 +236,34 @@ def load_config() -> BridgeConfig:
         ),
         default=2.0,
     )
+    agent_room_pump_enabled = _parse_bool(
+        os.environ.get(
+            "DAEDALUS_AGENT_ROOM_PUMP_ENABLED",
+            file_env.get("DAEDALUS_AGENT_ROOM_PUMP_ENABLED"),
+        ),
+        default=False,
+    )
+    agent_room_pump_interval_seconds = _parse_float(
+        os.environ.get(
+            "DAEDALUS_AGENT_ROOM_PUMP_INTERVAL_SECONDS",
+            file_env.get("DAEDALUS_AGENT_ROOM_PUMP_INTERVAL_SECONDS"),
+        ),
+        default=2.0,
+    )
+    agent_room_pump_timeout_seconds = _parse_float(
+        os.environ.get(
+            "DAEDALUS_AGENT_ROOM_PUMP_TIMEOUT_SECONDS",
+            file_env.get("DAEDALUS_AGENT_ROOM_PUMP_TIMEOUT_SECONDS"),
+        ),
+        default=180.0,
+    )
+    agent_room_pump_limit_per_agent = _parse_int(
+        os.environ.get(
+            "DAEDALUS_AGENT_ROOM_PUMP_LIMIT_PER_AGENT",
+            file_env.get("DAEDALUS_AGENT_ROOM_PUMP_LIMIT_PER_AGENT"),
+        ),
+        default=1,
+    )
     runtime_inventory_cache_seconds = _parse_float(
         os.environ.get(
             "DAEDALUS_WECHAT_RUNTIME_INVENTORY_CACHE_SECONDS",
@@ -234,6 +271,12 @@ def load_config() -> BridgeConfig:
         ),
         default=2.0,
     )
+    agent_room_dir = Path(
+        os.environ.get(
+            "DAEDALUS_AGENT_ROOM_DIR",
+            file_env.get("DAEDALUS_AGENT_ROOM_DIR", str(default_agent_room_dir())),
+        )
+    ).expanduser()
     return BridgeConfig(
         codex_bin=codex_bin,
         opencode_bin=opencode_bin,
@@ -244,6 +287,7 @@ def load_config() -> BridgeConfig:
         codex_state_db_source=codex_state_db_source,
         opencode_state_db=opencode_state_db,
         opencode_state_db_source=opencode_state_db_source,
+        agent_room_dir=agent_room_dir,
         canonical_tmux_session=canonical_tmux_session,
         allowed_users=allowed_users,
         progress_updates_default=progress_updates_default,
@@ -251,5 +295,9 @@ def load_config() -> BridgeConfig:
         min_send_interval_seconds=min_send_interval_seconds,
         outbox_retry_interval_seconds=outbox_retry_interval_seconds,
         mirror_poll_interval_seconds=max(0.2, mirror_poll_interval_seconds),
+        agent_room_pump_enabled=agent_room_pump_enabled,
+        agent_room_pump_interval_seconds=max(0.5, agent_room_pump_interval_seconds),
+        agent_room_pump_timeout_seconds=max(5.0, agent_room_pump_timeout_seconds),
+        agent_room_pump_limit_per_agent=max(1, agent_room_pump_limit_per_agent),
         runtime_inventory_cache_seconds=max(0.0, runtime_inventory_cache_seconds),
     )

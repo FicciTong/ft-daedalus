@@ -8,6 +8,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+from daedalus_agent_room.core import AgentRoom
+from daedalus_agent_room.pump import RoomPumpWorker
 from daedalus_wechat.config import BridgeConfig
 from daedalus_wechat.daemon import (
     SESSION_EXPIRED_PAUSE_SECONDS,
@@ -374,6 +376,9 @@ class _TestDaemon(BridgeDaemon):
     def _start_outbox_thread(self) -> None:
         return None
 
+    def _start_room_pump_thread(self) -> None:
+        return None
+
 
 class DaemonTests(unittest.TestCase):
     def _make_config(
@@ -387,6 +392,7 @@ class DaemonTests(unittest.TestCase):
             canonical_tmux_session="codex",
             allowed_users=allowed_users,
             progress_updates_default=False,
+            agent_room_dir=state_dir / "agent_room",
         )
 
     def test_authorized_sender_denied_when_allowlist_empty(self) -> None:
@@ -411,6 +417,151 @@ class DaemonTests(unittest.TestCase):
             )
             self.assertTrue(daemon._is_authorized_sender("allowed-user@im.wechat"))
             self.assertFalse(daemon._is_authorized_sender("other-user@im.wechat"))
+
+    def test_intent_command_sets_tmux_session_as_room_intent_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            state = BridgeState(room_mode_enabled=True)
+            daemon = _TestDaemon(
+                config=self._make_config(state_dir, frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=state,
+            )
+            text = daemon._handle_command("/intent codex")
+
+            self.assertIn("intent_agent=codex", text)
+            self.assertEqual(state.room_intent_agent, "codex")
+
+    def test_room_status_command_reports_local_agent_room(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            daemon = _TestDaemon(
+                config=self._make_config(state_dir, frozenset()),
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(room_mode_enabled=True),
+            )
+            daemon._send_agent_room_message(
+                incoming=IncomingMessage(
+                    from_user_id="user@im.wechat",
+                    context_token="ctx-1",
+                    body="hello room",
+                    message_id="m-room",
+                ),
+                targets=[],
+                text="hello room",
+                mode="announce",
+                round_limit=None,
+                source="test",
+            )
+
+            text = daemon._handle_command("/room-status")
+
+            self.assertIn("room_status=ok", text)
+            self.assertIn(f"room_dir={state_dir / 'agent_room'}", text)
+            self.assertIn("messages=1", text)
+            self.assertIn("last_messages:", text)
+
+    def test_room_pump_tick_sends_agent_reply_to_bound_wechat(self) -> None:
+        class _PumpDaemon(_TestDaemon):
+            def _build_room_pump_worker(
+                self,
+                *,
+                room: AgentRoom,
+                agent_id: str,
+                backend: str,
+                cwd: Path,
+            ) -> RoomPumpWorker:
+                return RoomPumpWorker(
+                    room=room,
+                    agent_id=agent_id,
+                    backend=backend,
+                    cwd=cwd,
+                    model_runner=lambda message: f"pong:{message['text']}",
+                )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            state = BridgeState(
+                room_mode_enabled=True,
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-bound",
+            )
+            daemon = _PumpDaemon(
+                config=self._make_config(state_dir, frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            room = AgentRoom(state_dir / "agent_room")
+            room.send_message(
+                from_actor="owner",
+                mode="announce",
+                text="hi",
+                source="wechat-room-broadcast",
+            )
+
+            delivered = daemon._room_pump_tick()
+
+            self.assertEqual(delivered, 1)
+            self.assertEqual(len(fake_wechat.sent), 1)
+            self.assertIn("[codex] pong:hi", fake_wechat.sent[-1][2])
+            rows = [
+                json.loads(line)
+                for line in room.messages_file.read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual(rows[-1]["from"], "codex")
+            self.assertEqual(rows[-1]["mode"], "agent_reply")
+            self.assertEqual(room.pending_for_agent(agent_id="codex"), [])
+
+    def test_group_mode_untagged_voice_routes_to_agent_room_intent_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            fake_wechat = _FakeWeChat()
+            runner = _FakeRunner()
+            state = BridgeState(
+                room_mode_enabled=True,
+                room_intent_agent="codex",
+            )
+            daemon = _TestDaemon(
+                config=self._make_config(state_dir, frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            daemon._handle_incoming(
+                IncomingMessage(
+                    from_user_id="user@im.wechat",
+                    context_token="ctx-voice",
+                    body="帮我判断这个 packet 应该让谁 review",
+                    message_id="msg-voice-intent",
+                    is_voice=True,
+                    has_transcript=True,
+                )
+            )
+
+            self.assertEqual(len(runner.submitted), 1)
+            self.assertEqual(runner.submitted[0][0], runner.runtime_thread_id)
+            self.assertIn(
+                "Owner transcript:\n帮我判断这个 packet 应该让谁 review",
+                runner.submitted[0][1],
+            )
+            self.assertIn("已交给接线员 @codex", fake_wechat.sent[-1][2])
+            self.assertIn("terminal_delivered=@codex", fake_wechat.sent[-1][2])
+            messages_file = state_dir / "agent_room" / "messages.jsonl"
+            rows = messages_file.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(rows), 1)
+            payload = json.loads(rows[0])
+            self.assertEqual(payload["source"], "wechat-intent-router")
+            self.assertEqual(payload["to"], ["codex"])
+            self.assertEqual(payload["metadata"]["source_kind"], "voice")
+            self.assertEqual(
+                payload["metadata"]["raw_transcript"],
+                "帮我判断这个 packet 应该让谁 review",
+            )
 
     def test_unauthorized_message_does_not_bind_or_submit_prompt(self) -> None:
         class _PollingWeChat(_FakeWeChat):
@@ -1583,6 +1734,104 @@ class DaemonTests(unittest.TestCase):
                     "⚙️ 已注入 @kimi1 terminal，等待 [kimi1] 首条回复。",
                 ),
             )
+            messages_file = Path(tmpdir) / "agent_room" / "messages.jsonl"
+            payload = json.loads(messages_file.read_text(encoding="utf-8"))
+            self.assertEqual(payload["source"], "wechat-room-target-terminal")
+            self.assertEqual(payload["to"], ["kimi1"])
+            self.assertTrue(payload["metadata"]["terminal_delivery"])
+
+    def test_group_multi_target_message_writes_debate_to_agent_room(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_codex = "ses_codex"
+            thread_claude = "ses_claude"
+            state = BridgeState(
+                room_mode_enabled=True,
+                sessions={
+                    thread_codex: SessionRecord(
+                        thread_id=thread_codex,
+                        label="codex",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="codex",
+                    ),
+                    thread_claude: SessionRecord(
+                        thread_id=thread_claude,
+                        label="claude",
+                        cwd="/tmp",
+                        source="tmux-live",
+                        created_at="2026-04-04T00:00:00+00:00",
+                        updated_at="2026-04-04T00:00:00+00:00",
+                        tmux_session="claude",
+                    ),
+                },
+            )
+            runner = _FakeRunner()
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_codex,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="claude",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_claude,
+                    pane_cwd="/tmp",
+                    backend="claude",
+                ),
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-1",
+                    "item_list": [
+                        {
+                            "type": 1,
+                            "text_item": {
+                                "text": "@codex @claude 讨论5轮 这个 room 怎么做"
+                            },
+                        }
+                    ],
+                }
+            )
+            assert incoming is not None
+
+            daemon._handle_incoming(incoming)
+
+            self.assertEqual(
+                runner.submitted,
+                [
+                    (runner.runtime_thread_id, "讨论5轮 这个 room 怎么做"),
+                    (thread_claude, "讨论5轮 这个 room 怎么做"),
+                ],
+            )
+            self.assertIn("已投递到本地 agent-room", fake_wechat.sent[-1][2])
+            self.assertIn("mode=debate", fake_wechat.sent[-1][2])
+            self.assertIn("to=@codex, @claude", fake_wechat.sent[-1][2])
+            self.assertIn("round_limit=5", fake_wechat.sent[-1][2])
+            self.assertIn("terminal_delivered=@codex, @claude", fake_wechat.sent[-1][2])
+            messages_file = Path(tmpdir) / "agent_room" / "messages.jsonl"
+            payload = json.loads(messages_file.read_text(encoding="utf-8"))
+            self.assertEqual(payload["source"], "wechat-room-target")
+            self.assertEqual(payload["mode"], "debate")
+            self.assertEqual(payload["round_limit"], 5)
+            self.assertEqual(payload["to"], ["codex", "claude"])
+            self.assertEqual(payload["metadata"]["raw_targets"], ["codex", "claude"])
 
     def test_room_mode_tags_desktop_final_with_speaker(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -2166,10 +2415,13 @@ class DaemonTests(unittest.TestCase):
             )
             assert incoming is not None
             daemon._handle_incoming(incoming)
-            self.assertEqual(runner.submitted, [])
-            self.assertIn("@agent", fake_wechat.sent[-1][2])
+            self.assertEqual(runner.submitted, [(thread_oc, "occlusion check")])
+            self.assertIn("已投递到本地 agent-room", fake_wechat.sent[-1][2])
+            self.assertIn("mode=announce", fake_wechat.sent[-1][2])
+            self.assertIn("to=all", fake_wechat.sent[-1][2])
+            self.assertIn("terminal_delivered=@oc", fake_wechat.sent[-1][2])
 
-    def test_group_mode_voice_no_match_prompts_for_target(self) -> None:
+    def test_group_mode_voice_no_match_broadcasts_to_agent_room(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state = BridgeState(
                 room_mode_enabled=True,
@@ -2196,7 +2448,13 @@ class DaemonTests(unittest.TestCase):
             assert incoming is not None
             daemon._handle_incoming(incoming)
             self.assertEqual(runner.submitted, [])
-            self.assertIn("@agent", fake_wechat.sent[-1][2])
+            self.assertIn("已投递到本地 agent-room", fake_wechat.sent[-1][2])
+            self.assertIn("mode=announce", fake_wechat.sent[-1][2])
+            self.assertIn("terminal_delivered=none", fake_wechat.sent[-1][2])
+            messages_file = Path(tmpdir) / "agent_room" / "messages.jsonl"
+            payload = json.loads(messages_file.read_text(encoding="utf-8"))
+            self.assertEqual(payload["to"], [])
+            self.assertEqual(payload["text"], "你好世界")
 
     def test_group_mode_voice_variant_jiama_routes_to_gamma_when_live(self) -> None:
         """'伽马 你好' (STT of 'Gamma') should route to live tmux 'gamma'."""
@@ -2296,8 +2554,10 @@ class DaemonTests(unittest.TestCase):
             )
             assert incoming is not None
             daemon._handle_incoming(incoming)
-            self.assertEqual(runner.submitted, [])
-            self.assertIn("@agent", fake_wechat.sent[-1][2])
+            self.assertEqual(runner.submitted, [(thread_claude, "伽马 你好")])
+            self.assertIn("已投递到本地 agent-room", fake_wechat.sent[-1][2])
+            self.assertIn("mode=announce", fake_wechat.sent[-1][2])
+            self.assertIn("terminal_delivered=@claude", fake_wechat.sent[-1][2])
 
     def test_group_mode_voice_variant_aerfa_routes_to_alpha(self) -> None:
         """'阿尔法 hello' should route to live tmux 'alpha'."""
@@ -2399,7 +2659,9 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(len(runner.submitted), 1)
             self.assertEqual(runner.submitted[0][0], thread_beta)
 
-    def test_group_mode_plain_text_without_target_prompts_for_target(self) -> None:
+    def test_group_mode_plain_text_without_target_broadcasts_to_agent_room(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             thread_id = "ses_claude"
             state = BridgeState(
@@ -2451,10 +2713,153 @@ class DaemonTests(unittest.TestCase):
 
             daemon._handle_incoming(incoming)
 
-            self.assertEqual(runner.submitted, [])
+            self.assertEqual(runner.submitted, [(thread_id, "hello without at")])
             self.assertIsNone(state.room_focus_tmux_session)
-            self.assertIn("@agent", fake_wechat.sent[-1][2])
-            self.assertIn("不会默认路由", fake_wechat.sent[-1][2])
+            self.assertIn("已投递到本地 agent-room", fake_wechat.sent[-1][2])
+            self.assertIn("mode=announce", fake_wechat.sent[-1][2])
+            self.assertIn("to=all", fake_wechat.sent[-1][2])
+            self.assertIn("terminal_delivered=@claude", fake_wechat.sent[-1][2])
+            messages_file = Path(tmpdir) / "agent_room" / "messages.jsonl"
+            payload = json.loads(messages_file.read_text(encoding="utf-8"))
+            self.assertEqual(payload["source"], "wechat-room-broadcast")
+            self.assertEqual(payload["to"], [])
+            self.assertEqual(payload["text"], "hello without at")
+
+    def test_group_mode_broadcast_prefix_bypasses_intent_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_codex = "ses_codex"
+            thread_claude = "ses_claude"
+            state = BridgeState(
+                room_mode_enabled=True,
+                room_intent_agent="codex",
+                sessions={},
+            )
+            runner = _FakeRunner()
+            runner.runtime_thread_id = thread_codex
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_codex,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                ),
+                LiveRuntimeStatus(
+                    tmux_session="claude",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_claude,
+                    pane_cwd="/tmp",
+                    backend="claude",
+                ),
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-broadcast",
+                    "item_list": [
+                        {"type": 1, "text_item": {"text": "广播 你们都说一句"}}
+                    ],
+                }
+            )
+            assert incoming is not None
+
+            daemon._handle_incoming(incoming)
+
+            self.assertEqual(
+                runner.submitted,
+                [
+                    (thread_codex, "你们都说一句"),
+                    (thread_claude, "你们都说一句"),
+                ],
+            )
+            self.assertIn("mode=announce", fake_wechat.sent[-1][2])
+            self.assertIn("to=all", fake_wechat.sent[-1][2])
+            self.assertIn("terminal_delivered=@codex, @claude", fake_wechat.sent[-1][2])
+            messages_file = Path(tmpdir) / "agent_room" / "messages.jsonl"
+            payload = json.loads(messages_file.read_text(encoding="utf-8"))
+            self.assertEqual(payload["source"], "wechat-room-broadcast")
+            self.assertEqual(payload["text"], "你们都说一句")
+
+    def test_group_mode_slash_broadcast_bypasses_command_handler(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            thread_codex = "ses_codex"
+            state = BridgeState(
+                room_mode_enabled=True,
+                room_intent_agent="codex",
+                sessions={},
+            )
+            runner = _FakeRunner()
+            runner.runtime_thread_id = thread_codex
+            runner.runtime_statuses = [
+                LiveRuntimeStatus(
+                    tmux_session="codex",
+                    exists=True,
+                    pane_command="node",
+                    thread_id=thread_codex,
+                    pane_cwd="/tmp",
+                    backend="codex",
+                )
+            ]
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-all",
+                    "item_list": [{"type": 1, "text_item": {"text": "/all hello"}}],
+                }
+            )
+            assert incoming is not None
+
+            daemon._handle_incoming(incoming)
+
+            self.assertEqual(runner.submitted, [(thread_codex, "hello")])
+            self.assertIn("mode=announce", fake_wechat.sent[-1][2])
+
+    def test_group_mode_empty_broadcast_prefix_returns_usage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(room_mode_enabled=True, room_intent_agent="codex")
+            runner = _FakeRunner()
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=runner,
+                state=state,
+            )
+            incoming = daemon._parse_incoming(
+                {
+                    "message_type": 1,
+                    "from_user_id": "user@im.wechat",
+                    "context_token": "ctx-1",
+                    "message_id": "m-empty-broadcast",
+                    "item_list": [{"type": 1, "text_item": {"text": "广播"}}],
+                }
+            )
+            assert incoming is not None
+
+            daemon._handle_incoming(incoming)
+
+            self.assertEqual(runner.submitted, [])
+            self.assertIn("用法: 广播 <内容>", fake_wechat.sent[-1][2])
 
     def test_group_mode_pending_image_batch_is_claimed_by_next_targeted_message(
         self,
@@ -4551,7 +4956,9 @@ class DaemonTests(unittest.TestCase):
                 runner=_FakeRunner(),
                 state=BridgeState(),
             )
-            self.assertEqual(daemon._handle_command("/h"), daemon._handle_command("/help"))
+            self.assertEqual(
+                daemon._handle_command("/h"), daemon._handle_command("/help")
+            )
             self.assertEqual(
                 daemon._handle_command("/nt status"),
                 daemon._handle_command("/notify status"),
