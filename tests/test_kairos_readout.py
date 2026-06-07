@@ -178,6 +178,12 @@ def _sample_owner_daily_package_payload() -> dict[str, object]:
                 "fdr_tested_case_count": 24,
                 "fdr_q": 0.05,
                 "fdr_procedure": "benjamini_hochberg_on_placebo_rank_rates",
+                "date_block_ci_ready_count": 24,
+                "date_block_ci_crosses_zero_count": 24,
+                "date_block_ci_low_date_support_count": 0,
+                "date_block_ci_method": (
+                    "deterministic_signal_date_block_bootstrap_v1_on_ab_per_date_excess"
+                ),
                 "trusted_axis_count": 4,
                 "similarity_feature_count": 4,
                 "blocked_axes_not_used": [
@@ -422,6 +428,7 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "routes promising=10 placebo_weak=11 not_better=3" in text
     assert "support_insufficient=0" in text
     assert "fdr pass=2 tested=24 q=0.05" in text
+    assert "date_block_ci ready=24 crosses_zero=24 low_support=0" in text
     assert "diagnostic_only=true" in text
     assert "trust_gate=True trusted_axes=4 features=4" in text
     assert "diagnostic routing only; not edge" in text

@@ -448,6 +448,16 @@ def _format_environment_conditioned_diagnostics(
             "diagnostic_only=true"
         ),
         (
+            f"- date_block_ci ready="
+            f"{_fmt_num(wounds.get('date_block_ci_ready_count'))} "
+            f"crosses_zero="
+            f"{_fmt_num(wounds.get('date_block_ci_crosses_zero_count'))} "
+            f"low_support="
+            f"{_fmt_num(wounds.get('date_block_ci_low_date_support_count'))} "
+            f"method={wounds.get('date_block_ci_method', 'unknown')} "
+            "diagnostic_only=true"
+        ),
+        (
             f"- trust_gate={wounds.get('uses_environment_fingerprint_trust_gate', 'unknown')} "
             f"trusted_axes={_fmt_num(wounds.get('trusted_axis_count'))} "
             f"features={_fmt_num(wounds.get('similarity_feature_count'))} "
