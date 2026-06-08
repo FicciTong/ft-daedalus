@@ -1412,6 +1412,10 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
                                 "draft_machine_executable_hypothesis_or_selection_policy": 10,
                                 "verify_surface_or_wound_connection_before_rerun": 8,
                             },
+                            "feedback_source_route_counts": {
+                                "research_card_draft_backlog": 10,
+                                "surface_blocker_triage": 8,
+                            },
                             "forward_shadow_lifecycle_state": "PENDING_TARGET_OPEN_STATE",
                             "forward_shadow_pending_trigger_count": 213,
                             "forward_shadow_trigger_fired_count": 0,
@@ -1522,6 +1526,8 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
         in text
     )
     assert "verify_surface_or_wound_connection_before_rerun=8" in text
+    assert "反馈来源=research_card_draft_backlog=10" in text
+    assert "surface_blocker_triage=8" in text
     assert "forward_shadow=PENDING_TARGET_OPEN_STATE" in text
     assert "shadow_pending=213" in text
     assert "shadow_fired=0" in text

@@ -439,6 +439,11 @@ def _format_archive_day_line(row: dict[str, Any]) -> str:
         label="反馈动作",
         value=summary.get("feedback_research_action_counts"),
     )
+    _append_archive_count_map(
+        pieces,
+        label="反馈来源",
+        value=summary.get("feedback_source_route_counts"),
+    )
     if summary.get("forward_shadow_lifecycle_state"):
         pieces.append(f"forward_shadow={summary.get('forward_shadow_lifecycle_state')}")
     _append_archive_count(
