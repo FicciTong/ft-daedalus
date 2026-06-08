@@ -2542,6 +2542,8 @@ def format_kairos_owner_brief_compact(
     if strategy_hints:
         lines.append(strategy_hints)
 
+    lines.extend(_format_cross_horizon_clusters(payload, limit=2))
+
     lines.append(f"明天重点 Top {min(candidate_limit, len(candidates))}:")
     for item in candidates[:candidate_limit]:
         support = _as_dict(item.get("tactic_support"))

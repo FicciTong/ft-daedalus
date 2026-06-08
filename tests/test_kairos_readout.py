@@ -1614,6 +1614,10 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "明天重点 Top 1" in text
     assert "战法条件: 高开后前30分钟承接: 高开后没有快速转弱" in text
     assert "优先看强势股池、流动性可交易" in text
+    assert "跨horizon右尾交集:" in text
+    assert "prior_weak_close_reclaim_volume::小金属" in text
+    assert "top=盛新锂能, 中矿资源" in text
+    assert "boundary=cluster is one correlated setup" in text
     assert "002251.SZ 步步高" in text
     assert "净超额=" in text
     assert "右尾簇=high_gap_first30m_hold::超市连锁" in text
