@@ -77,6 +77,19 @@ def default_kairos_intraday_candidate_manifest_path() -> Path:
     )
 
 
+def default_kairos_intraday_eod_review_queue_path() -> Path:
+    """Return the workbench-local Kairos intraday EOD replay review path."""
+    cosmos_root = Path(__file__).resolve().parents[3]
+    return (
+        cosmos_root
+        / "ft-kairos"
+        / "var"
+        / "reports"
+        / "research_substrate"
+        / "short_cycle_intraday_eod_review_queue_latest.json"
+    )
+
+
 def default_kairos_owner_daily_archive_root() -> Path:
     """Return the workbench-local dated Kairos owner daily archive root."""
     cosmos_root = Path(__file__).resolve().parents[3]
@@ -101,6 +114,7 @@ def kairos_owner_daily_archive_paths(report_date: str) -> dict[str, Path]:
         "owner_review_brief": root / "owner_review_brief.json",
         "owner_daily_package": root / "owner_daily_package.json",
         "intraday_owner_alert": root / "intraday_owner_alert.json",
+        "intraday_eod_review_queue": root / "intraday_eod_review_queue.json",
     }
 
 
@@ -160,6 +174,11 @@ def load_kairos_owner_daily_archive(report_date: str) -> dict[str, Any]:
                 status="BLOCKED",
                 reason=str(exc),
             ),
+            "intraday_eod_review_queue": _missing_intraday_eod_review_queue_payload(
+                default_kairos_owner_daily_archive_root() / report_date,
+                status="BLOCKED",
+                reason=str(exc),
+            ),
             "accepted_edges": 0,
         }
     return {
@@ -171,6 +190,9 @@ def load_kairos_owner_daily_archive(report_date: str) -> dict[str, Any]:
         ),
         "intraday_owner_alert": load_kairos_intraday_alert(
             paths["intraday_owner_alert"]
+        ),
+        "intraday_eod_review_queue": load_kairos_intraday_eod_review_queue(
+            paths["intraday_eod_review_queue"]
         ),
         "accepted_edges": 0,
     }
@@ -336,6 +358,30 @@ def _missing_intraday_candidate_manifest_payload(
         "as_of_date": None,
         "target_trade_date": None,
         "accepted_edges": 0,
+        "authority_boundary": {
+            "authority_delta": "none",
+            "owner_advisory_allowed": False,
+            "owner_pnl_claim_allowed": False,
+            "consumer_cutover_allowed": False,
+            "live_broker_allowed": False,
+            "auto_order_allowed": False,
+        },
+        "errors": [reason],
+    }
+
+
+def _missing_intraday_eod_review_queue_payload(
+    report_path: Path, *, status: str, reason: str
+) -> dict[str, Any]:
+    return {
+        "contract": "daedalus_wechat.kairos_intraday_eod_review_queue_readout",
+        "readout_source": "fail_closed",
+        "status": status,
+        "report_path": str(report_path),
+        "target_trade_date": None,
+        "accepted_edges": 0,
+        "candidate_review_unit_summary": {},
+        "intraday_universe_observation_scope": {},
         "authority_boundary": {
             "authority_delta": "none",
             "owner_advisory_allowed": False,
@@ -678,6 +724,41 @@ def load_kairos_intraday_candidate_manifest(
     return payload
 
 
+def load_kairos_intraday_eod_review_queue(
+    report_path: Path | None = None,
+) -> dict[str, Any]:
+    path = report_path or default_kairos_intraday_eod_review_queue_path()
+    if not path.is_file():
+        return _missing_intraday_eod_review_queue_payload(
+            path,
+            status="MISSING",
+            reason="Kairos intraday EOD review queue is missing",
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except JSONDecodeError as exc:
+        return _missing_intraday_eod_review_queue_payload(
+            path,
+            status="BLOCKED",
+            reason=f"Kairos intraday EOD review queue is invalid JSON: {exc.msg}",
+        )
+    except OSError as exc:
+        return _missing_intraday_eod_review_queue_payload(
+            path,
+            status="BLOCKED",
+            reason=f"Kairos intraday EOD review queue cannot be read: {exc}",
+        )
+    if not isinstance(payload, dict):
+        return _missing_intraday_eod_review_queue_payload(
+            path,
+            status="BLOCKED",
+            reason="Kairos intraday EOD review queue root is not an object",
+        )
+    payload = dict(payload)
+    payload["report_path"] = str(path)
+    return payload
+
+
 def _fmt_pct(value: Any) -> str:
     if value is None:
         return "None"
@@ -936,6 +1017,78 @@ def _format_compact_intraday_status(
                 f"first30m={_fmt_ratio_pct(first30m.get('first30m_return_pct'))} "
                 f"伤口={_fmt_wound_list(_as_list(row.get('evidence_wounds')), limit=2)}"
             )
+    return lines
+
+
+def _format_compact_intraday_eod_review(
+    review: dict[str, Any] | None,
+) -> list[str]:
+    review = _as_dict(review)
+    if not review:
+        return ["盘中复盘: 暂无 EOD replay review queue"]
+
+    status = str(review.get("status") or "UNKNOWN")
+    accepted_edges = review.get("accepted_edges", 0)
+    target = review.get("target_trade_date") or "unknown"
+    errors = _as_list(review.get("errors"))
+    if errors:
+        return [
+            (
+                "盘中复盘: "
+                f"{status} target={target} accepted_edges={accepted_edges} "
+                f"error={errors[0]}"
+            ),
+            "盘中复盘边界: report-only / 不回填历史latest / 非买卖建议",
+        ]
+
+    summary = _as_dict(review.get("candidate_review_unit_summary"))
+    by_state = _as_dict(summary.get("by_state"))
+    scope = _as_dict(review.get("intraday_universe_observation_scope"))
+    universe = _as_dict(scope.get("universe_summary"))
+    missing_surfaces = _as_list(scope.get("missing_intraday_universe_surfaces"))
+
+    candidate_count = (
+        review.get("candidate_review_unit_count")
+        or summary.get("candidate_review_unit_count")
+    )
+    current_triggered = (
+        summary.get("current_triggered_candidate_count")
+        or review.get("current_triggered_event_count")
+    )
+    lines = [
+        (
+            "盘中EOD复盘: "
+            f"{status} target={target} "
+            f"候选={_fmt_num(candidate_count)} "
+            f"当前触发={_fmt_num(current_triggered)} "
+            f"曾触发={_fmt_num(summary.get('ever_triggered_candidate_count'))} "
+            f"未触发={_fmt_num(summary.get('never_triggered_candidate_count'))} "
+            f"缺字段={_fmt_num(summary.get('pending_or_missing_candidate_count'))} "
+            f"events={_fmt_num(review.get('event_count'))}"
+        )
+    ]
+    if by_state:
+        lines.append(f"盘中EOD状态: {_fmt_count_map(by_state)}")
+    if universe:
+        lines.append(
+            "全A盘中观察: "
+            f"rows={_fmt_num(universe.get('row_count'))} "
+            f"上涨={_fmt_num(universe.get('advancer_count'))} "
+            f"下跌={_fmt_num(universe.get('decliner_count'))} "
+            f"+2={_fmt_num(universe.get('up_2pct_count'))} "
+            f"-2={_fmt_num(universe.get('down_2pct_count'))} "
+            f"候选覆盖={_fmt_num(universe.get('candidate_observed_in_universe_count'))}/"
+            f"{_fmt_num(universe.get('candidate_symbol_count'))}"
+        )
+    if missing_surfaces:
+        lines.append(
+            "全A盘中缺口: "
+            + ",".join(str(item) for item in missing_surfaces[:4])
+        )
+    replay_path = review.get("replay_archive_path")
+    if replay_path:
+        lines.append(f"盘中EOD replay={replay_path}")
+    lines.append("盘中复盘边界: report-only / retained列表不删除旧触发 / accepted_edges=0")
     return lines
 
 
@@ -1922,6 +2075,7 @@ def format_kairos_owner_brief_compact(
     daily_package: dict[str, Any] | None = None,
     intraday_manifest: dict[str, Any] | None = None,
     intraday_alert: dict[str, Any] | None = None,
+    intraday_eod_review_queue: dict[str, Any] | None = None,
     forward_shadow_track_record: dict[str, Any] | None = None,
     hypothesis_scout_readout: dict[str, Any] | None = None,
     owner_review_truth_units: dict[str, Any] | None = None,
@@ -1933,6 +2087,8 @@ def format_kairos_owner_brief_compact(
 
     if owner_review_truth_units is None:
         owner_review_truth_units = load_kairos_owner_review_truth_units()
+    if intraday_eod_review_queue is None:
+        intraday_eod_review_queue = load_kairos_intraday_eod_review_queue()
     if owner_feedback_summary is None:
         owner_feedback_summary = load_owner_feedback_summary()
 
@@ -2011,6 +2167,7 @@ def format_kairos_owner_brief_compact(
             tactic_names_zh=tactic_names_zh,
         )
     )
+    lines.extend(_format_compact_intraday_eod_review(intraday_eod_review_queue))
 
     strategy_hints = _format_compact_strategy_hints(candidates)
     if strategy_hints:
@@ -2089,6 +2246,7 @@ def format_kairos_owner_brief(
     daily_package: dict[str, Any] | None = None,
     intraday_manifest: dict[str, Any] | None = None,
     intraday_alert: dict[str, Any] | None = None,
+    intraday_eod_review_queue: dict[str, Any] | None = None,
     forward_shadow_track_record: dict[str, Any] | None = None,
     hypothesis_scout_readout: dict[str, Any] | None = None,
     owner_review_truth_units: dict[str, Any] | None = None,
@@ -2097,6 +2255,8 @@ def format_kairos_owner_brief(
 
     if owner_review_truth_units is None:
         owner_review_truth_units = load_kairos_owner_review_truth_units()
+    if intraday_eod_review_queue is None:
+        intraday_eod_review_queue = load_kairos_intraday_eod_review_queue()
 
     status = str(payload.get("status") or "UNKNOWN")
     as_of = payload.get("as_of_date") or "unknown"
@@ -2174,6 +2334,8 @@ def format_kairos_owner_brief(
             intraday_alert=intraday_alert,
         )
     )
+    lines.extend(["", "盘中EOD复盘:"])
+    lines.extend(_format_compact_intraday_eod_review(intraday_eod_review_queue))
     lines.extend(_format_environment_conditioned_diagnostics(daily_package))
     lines.extend(_format_shortest_legal_next_open_horizon(daily_package))
     lines.extend(_format_long_window_route_counts(payload))
@@ -2476,6 +2638,7 @@ __all__ = [
     "default_kairos_hypothesis_scout_readout_path",
     "default_kairos_intraday_candidate_manifest_path",
     "default_kairos_intraday_alert_path",
+    "default_kairos_intraday_eod_review_queue_path",
     "default_kairos_owner_daily_archive_root",
     "default_kairos_owner_review_truth_units_path",
     "default_kairos_owner_daily_package_path",
@@ -2492,6 +2655,7 @@ __all__ = [
     "load_kairos_hypothesis_scout_readout",
     "load_kairos_intraday_candidate_manifest",
     "load_kairos_intraday_alert",
+    "load_kairos_intraday_eod_review_queue",
     "load_kairos_owner_daily_archive",
     "load_kairos_owner_review_truth_units",
     "load_kairos_owner_daily_package",

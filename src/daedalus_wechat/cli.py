@@ -30,6 +30,7 @@ from .kairos_readout import (
     load_kairos_hypothesis_scout_readout,
     load_kairos_intraday_alert,
     load_kairos_intraday_candidate_manifest,
+    load_kairos_intraday_eod_review_queue,
     load_kairos_owner_brief,
     load_kairos_owner_daily_archive,
     load_kairos_owner_daily_package,
@@ -464,6 +465,11 @@ def main() -> int:
         intraday_alert = (
             archived["intraday_owner_alert"] if archived else load_kairos_intraday_alert()
         )
+        intraday_eod_review_queue = (
+            archived["intraday_eod_review_queue"]
+            if archived
+            else load_kairos_intraday_eod_review_queue()
+        )
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         else:
@@ -479,6 +485,7 @@ def main() -> int:
                     daily_package=daily_package,
                     intraday_manifest=load_kairos_intraday_candidate_manifest(),
                     intraday_alert=intraday_alert,
+                    intraday_eod_review_queue=intraday_eod_review_queue,
                     forward_shadow_track_record=load_kairos_forward_shadow_track_record(),
                     hypothesis_scout_readout=load_kairos_hypothesis_scout_readout(),
                 )
