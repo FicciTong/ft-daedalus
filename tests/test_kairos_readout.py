@@ -12,6 +12,7 @@ from daedalus_wechat.kairos_readout import (
     format_kairos_owner_brief_compact,
     format_kairos_owner_daily_archive_dates,
     format_kairos_today_readout,
+    list_kairos_owner_daily_archive_days,
     load_kairos_forward_shadow_track_record,
     load_kairos_hypothesis_scout_readout,
     load_kairos_intraday_alert,
@@ -1323,6 +1324,92 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    (tmp_path / "index.json").write_text(
+        json.dumps(
+            {
+                "status": "REPORT_ONLY_OWNER_REPORT_ARCHIVE_READY",
+                "authority_boundary": {
+                    "report_only": True,
+                    "accepted_edges": 0,
+                },
+                "days": [
+                    {
+                        "report_date": "2026-06-07",
+                        "summary": {
+                            "report_date": "2026-06-07",
+                            "surface_count": 1,
+                            "surfaces": ["owner_review_brief"],
+                            "accepted_edges": 0,
+                            "target_trade_date": "2026-06-08",
+                            "as_of_date": "2026-06-05",
+                            "owner_review_candidate_count": 40,
+                            "evidence_tier_counts": {
+                                "VALIDATED_EDGE": 0,
+                                "SUPPORTED_OBSERVATION": 0,
+                                "OBSERVATION": 40,
+                            },
+                            "latest_generated_at_utc": "2026-06-08T02:00:00Z",
+                        },
+                    },
+                    {
+                        "report_date": "2026-06-08",
+                        "summary": {
+                            "report_date": "2026-06-08",
+                            "surface_count": 5,
+                            "surfaces": [
+                                "owner_review_brief",
+                                "owner_daily_package",
+                                "intraday_owner_alert",
+                                "intraday_eod_review_queue",
+                                "intraday_eod_outcome_review",
+                            ],
+                            "accepted_edges": 0,
+                            "target_trade_date": "2026-06-08",
+                            "as_of_date": "2026-06-05",
+                            "owner_review_candidate_count": 40,
+                            "evidence_tier_counts": {
+                                "VALIDATED_EDGE": 0,
+                                "SUPPORTED_OBSERVATION": 1,
+                                "OBSERVATION": 39,
+                            },
+                            "intraday_status": "REPORT_ONLY_INTRADAY_READY",
+                            "intraday_triggered_unit_count": 4,
+                            "intraday_eod_review_status": "PENDING_EOD_REPLAY",
+                            "intraday_eod_outcome_status": "PENDING_EOD_OUTCOME",
+                            "latest_generated_at_utc": "2026-06-08T06:30:00Z",
+                        },
+                    },
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "daedalus_wechat.kairos_readout.default_kairos_owner_daily_archive_root",
+        lambda: tmp_path,
+    )
+
+    days = list_kairos_owner_daily_archive_days()
+    text = format_kairos_owner_daily_archive_dates()
+
+    assert [row["report_date"] for row in days] == ["2026-06-08", "2026-06-07"]
+    assert "Kairos 日报历史: 可回看 2 天" in text
+    assert "- 2026-06-08 target=2026-06-08 as_of=2026-06-05 rows=40" in text
+    assert "tier=验证0/支持1/观察39" in text
+    assert "intraday=REPORT_ONLY_INTRADAY_READY" in text
+    assert "triggered=4" in text
+    assert "eod_queue=PENDING_EOD_REPLAY" in text
+    assert "eod_outcome=PENDING_EOD_OUTCOME" in text
+    assert "surfaces=5" in text
+    assert "/brief YYYY-MM-DD" in text
+    assert "accepted_edges=0" in text
+
+
+def test_format_kairos_owner_daily_archive_dates_falls_back_to_dated_dirs(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
     for day in ("2026-06-08", "2026-06-07"):
         archive_dir = tmp_path / day
         archive_dir.mkdir()
@@ -1335,7 +1422,9 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
     text = format_kairos_owner_daily_archive_dates()
 
     assert "Kairos 日报历史: 可回看 2 天" in text
-    assert "2026-06-08, 2026-06-07" in text
+    assert "- 2026-06-08" in text
+    assert "- 2026-06-07" in text
+    assert "surfaces=1" in text
     assert "/brief YYYY-MM-DD" in text
     assert "accepted_edges=0" in text
 

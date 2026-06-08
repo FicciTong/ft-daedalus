@@ -132,36 +132,127 @@ def kairos_owner_daily_archive_paths(report_date: str) -> dict[str, Path]:
     }
 
 
-def list_kairos_owner_daily_archive_dates(limit: int = 20) -> list[str]:
-    """List dated owner daily archives, newest first."""
+def _load_kairos_owner_daily_archive_index() -> dict[str, Any]:
+    """Load the owner daily archive index if present."""
+    root = default_kairos_owner_daily_archive_root()
+    index_path = root / "index.json"
+    if not index_path.is_file():
+        return {}
+    try:
+        payload = json.loads(index_path.read_text(encoding="utf-8"))
+    except (JSONDecodeError, OSError):
+        return {}
+    return _as_dict(payload)
+
+
+def _fallback_kairos_owner_daily_archive_days(limit: int) -> list[dict[str, Any]]:
     root = default_kairos_owner_daily_archive_root()
     if not root.is_dir():
         return []
-    dates: list[str] = []
+    days: list[dict[str, Any]] = []
     for item in root.iterdir():
         if not item.is_dir() or not ARCHIVE_DATE_RE.match(item.name):
             continue
         if (item / "owner_review_brief.json").is_file():
-            dates.append(item.name)
-    return sorted(dates, reverse=True)[: max(0, limit)]
+            days.append(
+                {
+                    "report_date": item.name,
+                    "summary": {
+                        "report_date": item.name,
+                        "surface_count": 1,
+                        "surfaces": ["owner_review_brief"],
+                        "accepted_edges": 0,
+                        "statuses": {
+                            "owner_review_brief": (
+                                "ARCHIVED_OWNER_REVIEW_BRIEF_PRESENT"
+                            )
+                        },
+                    },
+                }
+            )
+    return sorted(days, key=lambda row: str(row.get("report_date") or ""), reverse=True)[
+        : max(0, limit)
+    ]
+
+
+def list_kairos_owner_daily_archive_days(limit: int = 20) -> list[dict[str, Any]]:
+    """List dated owner daily archives with index summaries, newest first."""
+    index = _load_kairos_owner_daily_archive_index()
+    days: list[dict[str, Any]] = []
+    for item in _as_list(index.get("days")):
+        row = _as_dict(item)
+        report_date = str(row.get("report_date") or "")
+        if not ARCHIVE_DATE_RE.match(report_date):
+            continue
+        days.append(row)
+    if not days:
+        return _fallback_kairos_owner_daily_archive_days(limit)
+    return sorted(days, key=lambda row: str(row.get("report_date") or ""), reverse=True)[
+        : max(0, limit)
+    ]
+
+
+def list_kairos_owner_daily_archive_dates(limit: int = 20) -> list[str]:
+    """List dated owner daily archive dates, newest first."""
+    return [
+        str(row.get("report_date"))
+        for row in list_kairos_owner_daily_archive_days(limit=limit)
+        if row.get("report_date")
+    ]
+
+
+def _format_archive_tier_counts(summary: dict[str, Any]) -> str:
+    tiers = _as_dict(summary.get("evidence_tier_counts"))
+    if not tiers:
+        return "tier=暂无"
+    return (
+        "tier="
+        f"验证{_fmt_num(tiers.get('VALIDATED_EDGE', 0))}/"
+        f"支持{_fmt_num(tiers.get('SUPPORTED_OBSERVATION', 0))}/"
+        f"观察{_fmt_num(tiers.get('OBSERVATION', 0))}"
+    )
+
+
+def _format_archive_day_line(row: dict[str, Any]) -> str:
+    summary = _as_dict(row.get("summary"))
+    report_date = row.get("report_date")
+    pieces = [
+        f"- {report_date}",
+        f"target={summary.get('target_trade_date') or 'None'}",
+        f"as_of={summary.get('as_of_date') or 'None'}",
+        f"rows={_fmt_num(summary.get('owner_review_candidate_count'))}",
+        _format_archive_tier_counts(summary),
+    ]
+    if summary.get("intraday_status"):
+        pieces.append(f"intraday={summary.get('intraday_status')}")
+        if summary.get("intraday_triggered_unit_count") is not None:
+            pieces.append(
+                f"triggered={_fmt_num(summary.get('intraday_triggered_unit_count'))}"
+            )
+    if summary.get("intraday_eod_review_status"):
+        pieces.append(f"eod_queue={summary.get('intraday_eod_review_status')}")
+    if summary.get("intraday_eod_outcome_status"):
+        pieces.append(f"eod_outcome={summary.get('intraday_eod_outcome_status')}")
+    if summary.get("latest_generated_at_utc"):
+        pieces.append(f"latest={summary.get('latest_generated_at_utc')}")
+    pieces.append(f"surfaces={_fmt_num(summary.get('surface_count'))}")
+    pieces.append(f"accepted_edges={_fmt_num(summary.get('accepted_edges', 0))}")
+    return " ".join(pieces)
 
 
 def format_kairos_owner_daily_archive_dates(limit: int = 20) -> str:
-    dates = list_kairos_owner_daily_archive_dates(limit=limit)
-    if not dates:
+    days = list_kairos_owner_daily_archive_days(limit=limit)
+    if not days:
         return (
             "Kairos 日报历史: 暂无可回看日期\n"
             f"archive_root={default_kairos_owner_daily_archive_root()}\n"
             "边界: report-only / accepted_edges=0"
         )
-    return "\n".join(
-        [
-            f"Kairos 日报历史: 可回看 {len(dates)} 天",
-            f"日期: {', '.join(dates)}",
-            "用法: /brief YYYY-MM-DD 或 daedalus-wechat brief --date YYYY-MM-DD",
-            "边界: report-only / accepted_edges=0",
-        ]
-    )
+    lines = [f"Kairos 日报历史: 可回看 {len(days)} 天"]
+    lines.extend(_format_archive_day_line(_as_dict(row)) for row in days)
+    lines.append("用法: /brief YYYY-MM-DD 或 daedalus-wechat brief --date YYYY-MM-DD")
+    lines.append("边界: report-only / accepted_edges=0")
+    return "\n".join(lines)
 
 
 def load_kairos_owner_daily_archive(report_date: str) -> dict[str, Any]:
@@ -3146,6 +3237,7 @@ __all__ = [
     "format_kairos_owner_brief_compact",
     "format_kairos_today_readout",
     "kairos_owner_daily_archive_paths",
+    "list_kairos_owner_daily_archive_days",
     "list_kairos_owner_daily_archive_dates",
     "load_kairos_forward_shadow_track_record",
     "load_kairos_hypothesis_scout_readout",
