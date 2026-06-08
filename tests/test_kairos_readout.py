@@ -277,6 +277,15 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                     "row_n": 1005,
                     "date_block_effective_n": 32,
                 },
+                "cross_horizon_right_tail_membership": {
+                    "status": "REPORT_ONLY_CROSS_HORIZON_RIGHT_TAIL_CLUSTER_MEMBER",
+                    "cluster_key": "high_gap_first30m_hold::超市连锁",
+                    "ranking_effect": "not_applied_to_current_rank",
+                    "claim_boundary": (
+                        "report-only right-tail cluster membership; not a "
+                        "validated edge"
+                    ),
+                },
             }
         ],
         "weak_signal_review_queue": [
@@ -1607,6 +1616,7 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "优先看强势股池、流动性可交易" in text
     assert "002251.SZ 步步高" in text
     assert "净超额=" in text
+    assert "右尾簇=high_gap_first30m_hold::超市连锁" in text
     assert "样本=" in text
     assert "伤口=未行业中性/含板块beta" in text
     assert "研究队列:" in text

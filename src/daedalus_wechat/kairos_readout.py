@@ -960,6 +960,17 @@ def _fmt_ci(lower: Any, upper: Any) -> str:
     return f"[{_fmt_pct(lower)},{_fmt_pct(upper)}]"
 
 
+def _fmt_right_tail_cluster_membership(row: dict[str, Any]) -> str:
+    membership = _as_dict(row.get("cross_horizon_right_tail_membership"))
+    if (
+        membership.get("status")
+        != "REPORT_ONLY_CROSS_HORIZON_RIGHT_TAIL_CLUSTER_MEMBER"
+    ):
+        return ""
+    cluster_key = membership.get("cluster_key") or "matched_cluster"
+    return f"右尾簇={cluster_key}"
+
+
 WOUND_LABEL_ZH = {
     "score_is_watchlist_ranking_heuristic_not_edge_score": "排序分只是观察优先级",
     "row_level_fdr_holdout_not_available": "单票未过FDR/holdout",
@@ -2535,6 +2546,7 @@ def format_kairos_owner_brief_compact(
     for item in candidates[:candidate_limit]:
         support = _as_dict(item.get("tactic_support"))
         wounds = _fmt_wound_list(_as_list(item.get("evidence_wounds")), limit=2)
+        right_tail_cluster = _fmt_right_tail_cluster_membership(item)
         lines.append(
             f"- #{_fmt_num(item.get('review_rank'))} "
             f"{item.get('symbol', 'unknown')} {item.get('stock_name', '')} "
@@ -2543,6 +2555,7 @@ def format_kairos_owner_brief_compact(
             f"{item.get('owner_confidence_label', 'unknown')} "
             f"净超额={_fmt_pct(support.get('net_excess_pct'))} "
             f"右尾5={_fmt_pct(support.get('right_tail_return_ge_5pct_share_pct'))} "
+            f"{right_tail_cluster + ' ' if right_tail_cluster else ''}"
             f"样本={_fmt_num(support.get('row_n'))}/天={_fmt_num(support.get('date_block_effective_n'))} "
             f"伤口={wounds}"
         )
@@ -2748,6 +2761,7 @@ def format_kairos_owner_brief(
         net_text = _fmt_pct(net) if net is not None else "None"
         wounds = item.get("evidence_wounds")
         wound_count = len(wounds) if isinstance(wounds, list) else 0
+        right_tail_cluster = _fmt_right_tail_cluster_membership(item)
         lines.append(
             f"- #{_fmt_num(item.get('review_rank'))} "
             f"{item.get('symbol', 'unknown')} {item.get('stock_name', '')} "
@@ -2765,6 +2779,7 @@ def format_kairos_owner_brief(
             f"next_close_tail5={_fmt_pct(support.get('next_open_close_right_tail_return_ge_5pct_share_pct'))} "
             f"next_follow_net={_fmt_pct(support.get('next_open_following_close_net_excess_pct'))} "
             f"next_follow_tail5={_fmt_pct(support.get('next_open_following_close_right_tail_return_ge_5pct_share_pct'))} "
+            f"{right_tail_cluster + ' ' if right_tail_cluster else ''}"
             f"n={_fmt_num(support.get('row_n'))}/days={_fmt_num(support.get('date_block_effective_n'))} "
             f"wounds={wound_count}"
         )
