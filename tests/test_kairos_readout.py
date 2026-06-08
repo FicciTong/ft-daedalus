@@ -142,6 +142,27 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                 }
             ],
         },
+        "right_tail_cluster_stock_trait_summary": {
+            "status": "REPORT_ONLY_RIGHT_TAIL_CLUSTER_STOCK_TRAIT_SUMMARY",
+            "member_count": 4,
+            "pass_count": 2,
+            "fail_or_incomplete_count": 2,
+            "missing_trait_row_count": 0,
+            "cluster_count": 1,
+            "ranking_effect": "not_applied_to_current_rank",
+            "top_pass_rows": [
+                {
+                    "symbol": "002240.SZ",
+                    "stock_name": "盛新锂能",
+                    "cluster_key": "prior_weak_close_reclaim_volume::小金属",
+                },
+                {
+                    "symbol": "002738.SZ",
+                    "stock_name": "中矿资源",
+                    "cluster_key": "prior_weak_close_reclaim_volume::小金属",
+                },
+            ],
+        },
         "long_window_stability": {
             "machine_route_counts": {
                 "STRICT_CANDIDATE_FORWARD_SHADOW_OBSERVATION": 9,
@@ -1615,6 +1636,8 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "战法条件: 高开后前30分钟承接: 高开后没有快速转弱" in text
     assert "优先看强势股池、流动性可交易" in text
     assert "跨horizon右尾交集:" in text
+    assert "右尾簇股性: 成员=4 通过=2 失败/不完整=2 缺数据=0 簇=1" in text
+    assert "右尾簇股性通过: 盛新锂能, 中矿资源" in text
     assert "prior_weak_close_reclaim_volume::小金属" in text
     assert "top=盛新锂能, 中矿资源" in text
     assert "boundary=cluster is one correlated setup" in text

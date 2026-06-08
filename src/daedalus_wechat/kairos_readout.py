@@ -2000,6 +2000,24 @@ def _format_cross_horizon_clusters(payload: dict[str, Any], *, limit: int = 3) -
                 f"min_windows={_fmt_num(support_width_backlog.get('min_ready_threshold'))} "
                 "research_clock_only=true"
             )
+    trait_summary = _as_dict(payload.get("right_tail_cluster_stock_trait_summary"))
+    if trait_summary:
+        lines.append(
+            "- 右尾簇股性: "
+            f"成员={_fmt_num(trait_summary.get('member_count'))} "
+            f"通过={_fmt_num(trait_summary.get('pass_count'))} "
+            f"失败/不完整={_fmt_num(trait_summary.get('fail_or_incomplete_count'))} "
+            f"缺数据={_fmt_num(trait_summary.get('missing_trait_row_count'))} "
+            f"簇={_fmt_num(trait_summary.get('cluster_count'))} "
+            "排名影响=未应用"
+        )
+        pass_rows = [
+            str(row.get("stock_name") or row.get("symbol"))
+            for row in _as_list(trait_summary.get("top_pass_rows"))[:4]
+            if isinstance(row, dict)
+        ]
+        if pass_rows:
+            lines.append(f"- 右尾簇股性通过: {', '.join(pass_rows)}")
     for row in top_clusters[:limit]:
         if not isinstance(row, dict):
             continue
