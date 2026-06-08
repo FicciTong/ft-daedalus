@@ -1564,6 +1564,25 @@ def _format_compact_scout_needs_spec_hints(
     return "Scout待定义: " + " ".join(parts)
 
 
+def _format_compact_materialized_outcome_summary(
+    scout_surface: dict[str, Any],
+) -> str | None:
+    summary = _as_dict(scout_surface.get("materialized_daywalk_outcome_summary"))
+    route_counts = _as_dict(summary.get("route_counts"))
+    if not route_counts:
+        return None
+    return (
+        "已跑结果: "
+        f"truth_units={_fmt_num(summary.get('truth_unit_count'))} "
+        f"严格={_fmt_num(route_counts.get('strict_candidate_review_only'))} "
+        f"右尾={_fmt_num(route_counts.get('owner_review_tail_watch'))} "
+        f"support不足={_fmt_num(route_counts.get('needs_support_before_review'))} "
+        f"成本缺={_fmt_num(route_counts.get('observation_only_net_cost_missing'))} "
+        f"成本杀={_fmt_num(route_counts.get('observation_only_net_cost_killed'))} "
+        f"右尾负均值={_fmt_num(route_counts.get('right_tail_but_mean_negative_review_only'))}"
+    )
+
+
 def _format_scout_example(row: dict[str, Any]) -> str:
     missing = _as_list(row.get("missing_surface_requirements"))
     missing_text = ",".join(str(item) for item in missing[:3]) if missing else "none"
@@ -1932,6 +1951,11 @@ def format_kairos_owner_brief_compact(
             ),
         ]
     )
+    materialized_outcome_summary = _format_compact_materialized_outcome_summary(
+        scout_surface
+    )
+    if materialized_outcome_summary:
+        lines.append(materialized_outcome_summary)
     scout_condition_hints = _format_compact_scout_condition_hints(scout_surface)
     if scout_condition_hints:
         lines.append(scout_condition_hints)

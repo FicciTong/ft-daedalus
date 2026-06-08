@@ -525,6 +525,25 @@ def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
                 }
             ],
             "needs_executable_spec_examples": [],
+            "materialized_daywalk_outcome_summary": {
+                "status": "REPORT_ONLY_OWNER_REVIEW_TRUTH_UNITS_SUMMARY",
+                "truth_unit_count": 304,
+                "route_counts": {
+                    "strict_candidate_review_only": 35,
+                    "owner_review_tail_watch": 26,
+                    "needs_support_before_review": 120,
+                    "observation_only_net_cost_missing": 69,
+                    "observation_only_net_cost_killed": 5,
+                    "right_tail_but_mean_negative_review_only": 49,
+                },
+                "confidence_counts": {
+                    "usable_reference_net_ci_positive": 3,
+                    "owner_tail_watch_support_ok": 78,
+                    "thin_sample_only": 120,
+                },
+                "accepted_edges": 0,
+                "report_only": True,
+            },
             "pending_surface_examples": [
                 {
                     "hypothesis_id": "northbound_out_active_money_smallcap",
@@ -1311,6 +1330,8 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "研究队列:" in text
     assert "可审单元=120 严格候选=9 右尾观察=23" in text
     assert "专用readout=124 待定义=0" in text
+    assert "已跑结果: truth_units=304 严格=35 右尾=26" in text
+    assert "support不足=120 成本缺=69 成本杀=5 右尾负均值=49" in text
     assert "证据覆盖: 窗口=7 horizon=3 多窗单元=64" in text
     assert "Scout重点:" in text
     assert "执行模板对照=92" in text
