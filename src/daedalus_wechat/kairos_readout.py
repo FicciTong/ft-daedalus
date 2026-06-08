@@ -1529,6 +1529,41 @@ def _format_compact_scout_condition_hints(
     return "Scout条件: " + " | ".join(str(part) for part in parts)
 
 
+def _format_compact_scout_needs_spec_hints(
+    scout_surface: dict[str, Any],
+    scout_counts: dict[str, Any],
+    *,
+    limit: int = 3,
+) -> str | None:
+    examples = _as_list(scout_surface.get("needs_executable_spec_examples"))
+    if not examples:
+        return None
+    names: dict[str, int] = {}
+    for row in examples:
+        if not isinstance(row, dict):
+            continue
+        metadata = _as_dict(row.get("owner_visible_metadata_zh"))
+        name = (
+            metadata.get("hypothesis_name_zh")
+            or row.get("hypothesis_id")
+            or "unknown"
+        )
+        names[str(name)] = names.get(str(name), 0) + 1
+    if not names:
+        return None
+    total = scout_counts.get("needs_executable_spec_cell_count")
+    if len(names) == 1 and total is not None:
+        name = next(iter(names))
+        return f"Scout待定义: {name}={_fmt_num(total)}"
+    parts = [
+        f"{name}={_fmt_num(count)}"
+        for name, count in sorted(names.items(), key=lambda item: (-item[1], item[0]))[
+            :limit
+        ]
+    ]
+    return "Scout待定义: " + " ".join(parts)
+
+
 def _format_scout_example(row: dict[str, Any]) -> str:
     missing = _as_list(row.get("missing_surface_requirements"))
     missing_text = ",".join(str(item) for item in missing[:3]) if missing else "none"
@@ -1900,6 +1935,12 @@ def format_kairos_owner_brief_compact(
     scout_condition_hints = _format_compact_scout_condition_hints(scout_surface)
     if scout_condition_hints:
         lines.append(scout_condition_hints)
+    scout_needs_spec_hints = _format_compact_scout_needs_spec_hints(
+        scout_surface,
+        scout_counts,
+    )
+    if scout_needs_spec_hints:
+        lines.append(scout_needs_spec_hints)
 
     package_path = _as_dict(daily_package).get("report_path")
     if package_path:

@@ -526,17 +526,17 @@ def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
             ],
             "needs_executable_spec_examples": [
                 {
-                    "hypothesis_id": "tail_accumulation_next_open",
-                    "family": "intraday_price_volume",
-                    "horizon_id": "tail_buy_to_next_open",
+                    "hypothesis_id": "d3_vs_d5_decay",
+                    "family": "execution_template_ablation",
+                    "horizon_id": "next_open_to_d3_close",
                     "route": "RESOLVE_BLOCKER",
                     "execution_dispatch": "NEEDS_EXECUTABLE_SPEC",
                     "missing_surface_requirements": [],
                     "next_action": "write_machine_executable_predicate_or_registered_runner_spec",
                     "owner_visible_metadata_zh": {
-                        "hypothesis_name_zh": "尾盘吸筹次日开盘",
-                        "family_name_zh": "盘中量价",
-                        "condition_summary_zh": "观察尾盘吸筹、前30分钟突破、放量突破和VWAP修复。",
+                        "hypothesis_name_zh": "D3对D5衰减",
+                        "family_name_zh": "执行模板对照",
+                        "condition_summary_zh": "比较次日开盘、前5分钟VWAP、尾盘买和持有期差异。",
                     },
                 }
             ],
@@ -1154,7 +1154,7 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
         "family=情绪周期择时/emotion_cycle_timing"
     ) in text
     assert "short_cycle_hypothesis_daywalk_ice_point_repair_first_board" in text
-    assert "needs_spec: 尾盘吸筹次日开盘(tail_accumulation_next_open)" in text
+    assert "needs_spec: D3对D5衰减(d3_vs_d5_decay)" in text
     assert (
         "pending_surface: 北向弱但活跃资金小盘(northbound_out_active_money_smallcap) "
         "family=资金偏好流/fund_preference_flow"
@@ -1331,6 +1331,7 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "执行模板对照=92" in text
     assert "盘中量价=88" in text
     assert "Scout条件: 执行模板对照: 比较次日开盘" in text
+    assert "Scout待定义: D3对D5衰减=16" in text
     assert "REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT" not in text
     assert "first30m_confirmation_1001" not in text
     assert "完整诊断: /brief full；盘中: /intraday" in text
