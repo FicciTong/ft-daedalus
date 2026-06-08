@@ -13,6 +13,10 @@ def test_detect_kimi_by_command():
     assert detect_backend(pane_command="kimi") == CliBackend.KIMI
 
 
+def test_detect_qwen_by_command():
+    assert detect_backend(pane_command="qwen") == CliBackend.QWEN
+
+
 def test_detect_kimi_by_proc_comm():
     with patch(
         "daedalus_wechat.cli_backend._detect_backend_from_proc",
@@ -28,10 +32,22 @@ def test_detect_node_with_kimi_screen():
     assert detect_backend(pane_command="node", screen_text=screen) == CliBackend.KIMI
 
 
+def test_detect_node_with_qwen_screen():
+    screen = "Qwen Code (v0.17.1)\nqwen3.7-max | DashScope"
+    assert detect_backend(pane_command="node", screen_text=screen) == CliBackend.QWEN
+
+
 def test_detect_node_prefers_kimi_start_command():
     assert (
         detect_backend(pane_command="node", pane_start_command="kimi --yolo")
         == CliBackend.KIMI
+    )
+
+
+def test_detect_node_prefers_qwen_start_command():
+    assert (
+        detect_backend(pane_command="node", pane_start_command="qwen")
+        == CliBackend.QWEN
     )
 
 

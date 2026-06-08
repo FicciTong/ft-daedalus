@@ -28,6 +28,7 @@ TMUX_RUNTIME_ID_OPTION = "@daedalus_runtime_id"
 OPENCODE_SESSION_PREFIX = "ses_"
 CLAUDE_SESSION_PREFIX = "claude:"
 KIMI_SESSION_PREFIX = "kimi:"
+QWEN_SESSION_PREFIX = "qwen:"
 PENDING_RUNTIME_PREFIX = "pending:"
 CLAUDE_SESSION_FILE_RE = re.compile(
     r"/\.claude/projects/[^/]+/(?P<session_id>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?: \(deleted\))?$"
@@ -80,7 +81,7 @@ class LiveRuntimeStatus:
     pane_command: str | None
     thread_id: str | None
     pane_cwd: str | None = None
-    backend: str = "codex"  # codex | opencode | unknown
+    backend: str = "codex"  # codex | opencode | claude | kimi | qwen | unknown
 
 
 @dataclass(frozen=True)
@@ -91,7 +92,7 @@ class TmuxRuntimeInventoryItem:
     pane_cwd: str | None
     switchable: bool
     reason: str
-    backend: str = "codex"  # codex | opencode | unknown
+    backend: str = "codex"  # codex | opencode | claude | kimi | qwen | unknown
 
 
 class LiveCodexSessionManager:
@@ -175,6 +176,8 @@ class LiveCodexSessionManager:
             return CliBackend.CLAUDE.value
         if "kimi" in session_name:
             return CliBackend.KIMI.value
+        if "qwen" in session_name:
+            return CliBackend.QWEN.value
         if "opencode" in session_name or session_name.startswith("oc-"):
             return CliBackend.OPENCODE.value
         return CliBackend.CODEX.value
@@ -189,6 +192,8 @@ class LiveCodexSessionManager:
             return CliBackend.CLAUDE.value
         if self._is_kimi_runtime_id(runtime_id):
             return CliBackend.KIMI.value
+        if self._is_qwen_runtime_id(runtime_id):
+            return CliBackend.QWEN.value
         if self._is_opencode_runtime_id(runtime_id):
             return CliBackend.OPENCODE.value
         return CliBackend.CODEX.value
@@ -208,6 +213,8 @@ class LiveCodexSessionManager:
             return CliBackend.CLAUDE.value
         if "kimi" in name:
             return CliBackend.KIMI.value
+        if "qwen" in name:
+            return CliBackend.QWEN.value
         if "opencode" in name or name.startswith("oc-"):
             return CliBackend.OPENCODE.value
         if "codex" in name:
@@ -305,6 +312,8 @@ class LiveCodexSessionManager:
         if status.backend == CliBackend.CLAUDE.value and "claude" not in current_lower:
             return default_label
         if status.backend == CliBackend.KIMI.value and "kimi" not in current_lower:
+            return default_label
+        if status.backend == CliBackend.QWEN.value and "qwen" not in current_lower:
             return default_label
         return existing.label
 
@@ -590,12 +599,17 @@ class LiveCodexSessionManager:
                     "当前没有 canonical Kimi tmux。请先启动一个固定窗口，例如：\n"
                     f"tmux new -s {self.canonical_tmux_session} 'kimi --yolo'"
                 )
+            elif backend == CliBackend.QWEN.value:
+                start_hint = (
+                    "当前没有 canonical Qwen tmux。请先启动一个固定窗口，例如：\n"
+                    f"tmux new -s {self.canonical_tmux_session} 'qwen'"
+                )
             raise RuntimeError(start_hint)
         if status.backend == "unknown":
             raise RuntimeError(
                 f"`tmux {status.tmux_session}` 已存在，但里面当前不是受支持的 live runtime "
                 f"(pane_current_command={status.pane_command or 'unknown'})。"
-                "\n请先 attach 进去并启动 Codex、OpenCode、Claude 或 Kimi。"
+                "\n请先 attach 进去并启动 Codex、OpenCode、Claude、Kimi 或 Qwen。"
             )
         conflict_reason = self.runtime_conflict_reason(status)
         if conflict_reason is not None:
@@ -635,6 +649,25 @@ class LiveCodexSessionManager:
                 raise RuntimeError(
                     f"`tmux {status.tmux_session}` 已打开，但还没有识别到可用的 Kimi session。"
                     "\n请先 attach 进去，确认 Kimi Code CLI 已经进入当前项目会话。"
+                )
+            if status.backend == CliBackend.QWEN.value:
+                existing = self._find_existing_tmux_record(
+                    state=state, tmux_session=status.tmux_session
+                )
+                thread_id = (
+                    existing.thread_id
+                    if existing
+                    else self._qwen_runtime_id(status.tmux_session)
+                )
+                self._set_tmux_runtime_id(status.tmux_session, thread_id)
+                return state.touch_session(
+                    thread_id,
+                    label=self._resolved_live_label(existing=existing, status=status),
+                    cwd=existing.cwd
+                    if existing
+                    else status.pane_cwd or str(self.default_cwd),
+                    source=existing.source if existing else "tmux-live-provisional",
+                    tmux_session=status.tmux_session,
                 )
             raise RuntimeError(
                 f"`tmux {status.tmux_session}` 已打开，但还没有进入任何 Codex thread。"
@@ -752,6 +785,8 @@ class LiveCodexSessionManager:
             return 0
         if self._is_opencode_runtime_id(thread_id):
             return self._opencode_latest_part_rowid(thread_id)
+        if self._is_qwen_runtime_id(thread_id):
+            return 0
         if self._is_claude_runtime_id(thread_id) or self._is_kimi_runtime_id(thread_id):
             session_file = self._resolve_rollout_file(thread_id)
             if session_file and session_file.exists():
@@ -777,6 +812,8 @@ class LiveCodexSessionManager:
             return self._kimi_mirror_since(
                 thread_id=thread_id, start_offset=start_offset
             )
+        if self._is_qwen_runtime_id(thread_id):
+            return None
         rollout_file = self._resolve_rollout_file(thread_id)
         if rollout_file is None or not rollout_file.exists():
             return None
@@ -865,7 +902,11 @@ class LiveCodexSessionManager:
         submit_key = "C-m"
         if backend == CliBackend.CODEX.value:
             submit_key = self._codex_submit_key(screen_tail)
-        if backend in {CliBackend.OPENCODE.value, CliBackend.CODEX.value}:
+        if backend in {
+            CliBackend.OPENCODE.value,
+            CliBackend.CODEX.value,
+            CliBackend.QWEN.value,
+        }:
             payload = " ".join(normalized.split())
         else:
             payload = normalized
@@ -888,7 +929,11 @@ class LiveCodexSessionManager:
         )
 
     def _inject_payload(self, *, tmux_session: str, payload: str, backend: str) -> None:
-        if backend in {CliBackend.OPENCODE.value, CliBackend.CODEX.value}:
+        if backend in {
+            CliBackend.OPENCODE.value,
+            CliBackend.CODEX.value,
+            CliBackend.QWEN.value,
+        }:
             subprocess.run(
                 ["tmux", "send-keys", "-l", "-t", f"{tmux_session}:0.0", payload],
                 check=True,
@@ -1377,6 +1422,8 @@ class LiveCodexSessionManager:
                 reverse=True,
             )
             return matches[0] if matches else None
+        if self._is_qwen_runtime_id(thread_id):
+            return None
         if not self.session_root.exists():
             return None
         matches = sorted(
@@ -1409,6 +1456,8 @@ class LiveCodexSessionManager:
             return self._resolve_claude_session_id(tmux_session=tmux_session)
         if backend == CliBackend.KIMI.value:
             return self._resolve_kimi_session_id(tmux_session=tmux_session)
+        if backend == CliBackend.QWEN.value:
+            return self._resolve_qwen_session_id(tmux_session=tmux_session)
         codex_thread_id = self._resolve_codex_thread_id(tmux_session=tmux_session)
         if codex_thread_id:
             return codex_thread_id
@@ -1481,6 +1530,9 @@ class LiveCodexSessionManager:
     def _is_kimi_runtime_id(self, runtime_id: str | None) -> bool:
         return bool(runtime_id and runtime_id.startswith(KIMI_SESSION_PREFIX))
 
+    def _is_qwen_runtime_id(self, runtime_id: str | None) -> bool:
+        return bool(runtime_id and runtime_id.startswith(QWEN_SESSION_PREFIX))
+
     def _is_pending_runtime_id(self, runtime_id: str | None) -> bool:
         return bool(runtime_id and runtime_id.startswith(PENDING_RUNTIME_PREFIX))
 
@@ -1492,6 +1544,9 @@ class LiveCodexSessionManager:
 
     def _kimi_runtime_id(self, session_id: str) -> str:
         return f"{KIMI_SESSION_PREFIX}{session_id}"
+
+    def _qwen_runtime_id(self, tmux_session: str) -> str:
+        return f"{QWEN_SESSION_PREFIX}{tmux_session}"
 
     def _resolve_claude_session_id(self, *, tmux_session: str) -> str | None:
         session_file = self._current_claude_session_file(tmux_session)
@@ -1533,6 +1588,7 @@ class LiveCodexSessionManager:
             value.startswith(OPENCODE_SESSION_PREFIX)
             or value.startswith(CLAUDE_SESSION_PREFIX)
             or value.startswith(KIMI_SESSION_PREFIX)
+            or value.startswith(QWEN_SESSION_PREFIX)
             or value.startswith(PENDING_RUNTIME_PREFIX)
         ):
             return False
@@ -1709,6 +1765,14 @@ class LiveCodexSessionManager:
         if hinted and self._is_kimi_runtime_id(hinted):
             return hinted
         return None
+
+    def _resolve_qwen_session_id(self, *, tmux_session: str) -> str | None:
+        hinted = self._get_tmux_runtime_id(tmux_session)
+        if hinted and self._is_qwen_runtime_id(hinted):
+            return hinted
+        runtime_id = self._qwen_runtime_id(tmux_session)
+        self._set_tmux_runtime_id(tmux_session, runtime_id)
+        return runtime_id
 
     def find_latest_kimi_session(self, *, pane_cwd: str | None = None) -> str | None:
         workspace_dir = self._kimi_workspace_dir(pane_cwd=pane_cwd)
