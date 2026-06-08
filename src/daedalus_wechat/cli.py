@@ -34,6 +34,7 @@ from .kairos_readout import (
     load_kairos_today_readout,
 )
 from .live_session import LiveCodexSessionManager
+from .owner_feedback import handle_owner_feedback_command
 from .security_drill import run_security_drill
 from .state import BridgeState
 from .wechat_api import WeChatAccount, WeChatClient
@@ -320,6 +321,29 @@ def build_parser() -> argparse.ArgumentParser:
         default=12,
         help="Maximum number of intraday candidate rows to render",
     )
+    feedback = sub.add_parser(
+        "feedback",
+        help="Append or inspect owner feedback for Kairos research routing",
+    )
+    feedback.add_argument(
+        "body",
+        nargs=argparse.REMAINDER,
+        help=(
+            "Feedback body. Example: useful 300319 first30m acceptance worked. "
+            "Use 'status' to inspect the ledger."
+        ),
+    )
+    feedback.add_argument(
+        "--source",
+        default="cli",
+        help="Source label stored in the append-only feedback ledger.",
+    )
+    feedback.add_argument(
+        "--path",
+        type=Path,
+        default=None,
+        help="Optional feedback ledger JSONL path.",
+    )
     send_bound = sub.add_parser(
         "send-bound",
         help="Send text / image / file / video to the currently bound WeChat chat",
@@ -438,6 +462,15 @@ def main() -> int:
             print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         else:
             print(format_kairos_intraday_alert(payload, candidate_limit=args.limit))
+        return 0
+    if args.command == "feedback":
+        print(
+            handle_owner_feedback_command(
+                " ".join(args.body),
+                source=args.source,
+                ledger_path=args.path,
+            )
+        )
         return 0
 
     config = load_config()

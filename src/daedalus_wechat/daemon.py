@@ -49,6 +49,7 @@ from .live_session import (
     LiveCodexSessionManager,
     TmuxRuntimeInventoryItem,
 )
+from .owner_feedback import handle_owner_feedback_command
 from .room_transcript import (
     append_room_message,
 )
@@ -349,6 +350,7 @@ COMMAND_ALIASES = {
     "/it": "/intent",
     "/rs": "/room-status",
     "/bc": "/broadcast",
+    "/fb": "/feedback",
 }
 
 ROOM_BROADCAST_COMMANDS = frozenset({"/broadcast", "/all"})
@@ -389,7 +391,7 @@ HELP_TEXT = """FT bridge（支持 `/` 和 `\\`，缩写参数同原命令）
 /cu /catchup       补看
 /fl /flush         冲洗
 /kt /kairos-today  Kairos；/b /brief 日包；/ia /intraday 盘中
-/it /intent        接线 agent
+/it /intent        接线；/fb /feedback 反馈
 /rs /room-status   房间状态；/bc 广播
 """
 
@@ -891,6 +893,8 @@ class BridgeDaemon:
             )
         if command == "/intraday":
             return format_kairos_intraday_alert(load_kairos_intraday_alert())
+        if command == "/feedback":
+            return handle_owner_feedback_command(arg, source="wechat-command")
         if command == "/members":
             return self._members_text()
         if command == "/intent":

@@ -1306,6 +1306,14 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
         intraday_alert=_sample_intraday_alert_payload_with_triggered_row(),
         hypothesis_scout_readout=_sample_hypothesis_scout_readout_payload(),
         owner_review_truth_units=_sample_owner_review_truth_units_payload(),
+        owner_feedback_summary={
+            "feedback_count": 2,
+            "mark_counts": {"useful": 1, "noise": 1},
+            "recent_feedback": [
+                {"mark": "useful", "text": "高开承接值得继续观察"},
+            ],
+            "accepted_edges": 0,
+        },
         candidate_limit=2,
     )
 
@@ -1332,6 +1340,8 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "专用readout=124 待定义=0" in text
     assert "已跑结果: truth_units=304 严格=35 右尾=26" in text
     assert "support不足=120 成本缺=69 成本杀=5 右尾负均值=49" in text
+    assert "反馈回路: 已记录=2 useful=1 noise=1" in text
+    assert "不改证据门/排名" in text
     assert "证据覆盖: 窗口=7 horizon=3 多窗单元=64" in text
     assert "Scout重点:" in text
     assert "执行模板对照=92" in text

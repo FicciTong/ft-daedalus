@@ -5041,6 +5041,7 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("/cu /catchup", help_text)
             self.assertIn("/b /brief", help_text)
             self.assertIn("/ia /intraday", help_text)
+            self.assertIn("/fb /feedback", help_text)
             self.assertIn("/flush", help_text)
             self.assertLess(len(help_text.splitlines()), 20)
 
@@ -5084,6 +5085,18 @@ class DaemonTests(unittest.TestCase):
                 self.assertEqual(
                     daemon._handle_command("/ia"),
                     daemon._handle_command("/intraday"),
+                )
+            with patch(
+                "daedalus_wechat.daemon.handle_owner_feedback_command",
+                return_value="feedback=recorded",
+            ) as feedback_handler:
+                self.assertEqual(
+                    daemon._handle_command("/fb useful 300319 高开承接"),
+                    "feedback=recorded",
+                )
+                feedback_handler.assert_called_once_with(
+                    "useful 300319 高开承接",
+                    source="wechat-command",
                 )
             self.assertIn("status=", daemon._handle_command("/st"))
             self.assertIn("health=", daemon._handle_command("/hl"))

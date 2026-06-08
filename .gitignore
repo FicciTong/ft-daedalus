@@ -9,3 +9,4 @@ __pycache__/
 .env
 .env.*
 secrets*
+var/reports/kairos_owner_feedback/

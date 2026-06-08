@@ -6,6 +6,8 @@ from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
 
+from .owner_feedback import format_owner_feedback_summary, load_owner_feedback_summary
+
 
 def default_kairos_readout_path() -> Path:
     """Return the workbench-local Kairos owner readiness latest report path."""
@@ -1821,6 +1823,7 @@ def format_kairos_owner_brief_compact(
     forward_shadow_track_record: dict[str, Any] | None = None,
     hypothesis_scout_readout: dict[str, Any] | None = None,
     owner_review_truth_units: dict[str, Any] | None = None,
+    owner_feedback_summary: dict[str, Any] | None = None,
 ) -> str:
     """Render a short owner-visible daily brief for WeChat."""
 
@@ -1828,6 +1831,8 @@ def format_kairos_owner_brief_compact(
 
     if owner_review_truth_units is None:
         owner_review_truth_units = load_kairos_owner_review_truth_units()
+    if owner_feedback_summary is None:
+        owner_feedback_summary = load_owner_feedback_summary()
 
     status = str(payload.get("status") or "UNKNOWN")
     as_of = payload.get("as_of_date") or "unknown"
@@ -1965,6 +1970,7 @@ def format_kairos_owner_brief_compact(
     )
     if scout_needs_spec_hints:
         lines.append(scout_needs_spec_hints)
+    lines.append(format_owner_feedback_summary(owner_feedback_summary))
 
     package_path = _as_dict(daily_package).get("report_path")
     if package_path:
