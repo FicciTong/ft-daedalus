@@ -292,6 +292,22 @@ def _minute_price_volume_maturity_label(summary: dict[str, Any]) -> str | None:
     return None
 
 
+def _minute_price_volume_denominator_label(summary: dict[str, Any]) -> str | None:
+    source = str(summary.get("minute_price_volume_denominator_source") or "")
+    if source == "eod_review_queue":
+        eod_count = summary.get("minute_price_volume_eod_review_candidate_count")
+        manifest_count = summary.get("minute_price_volume_manifest_candidate_count")
+        if eod_count is not None and manifest_count is not None:
+            return f"EOD {_fmt_num(eod_count)}/manifest{_fmt_num(manifest_count)}"
+        return "EOD"
+    if source == "intraday_candidate_manifest":
+        manifest_count = summary.get("minute_price_volume_manifest_candidate_count")
+        if manifest_count is not None:
+            return f"manifest{_fmt_num(manifest_count)}"
+        return "manifest"
+    return None
+
+
 def _short_cycle_job_label(value: Any) -> str:
     job_id = str(value or "")
     labels = {
@@ -614,6 +630,9 @@ def _format_archive_day_line(row: dict[str, Any]) -> str:
             f"{_fmt_num(summary.get('minute_price_volume_ready_count'))}/"
             f"{_fmt_num(summary.get('minute_price_volume_candidate_count'))}"
         )
+    minute_denominator_label = _minute_price_volume_denominator_label(summary)
+    if minute_denominator_label:
+        pieces.append(f"分钟分母={minute_denominator_label}")
     minute_maturity_label = _minute_price_volume_maturity_label(summary)
     minute_pending = minute_maturity_label == "目标日未成熟"
     if minute_maturity_label:

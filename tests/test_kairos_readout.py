@@ -1468,6 +1468,15 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
                                 },
                             ],
                             "minute_price_volume_candidate_count": 21,
+                            "minute_price_volume_denominator_source": (
+                                "eod_review_queue"
+                            ),
+                            "minute_price_volume_manifest_candidate_count": 18,
+                            "minute_price_volume_eod_review_candidate_count": 21,
+                            "minute_price_volume_candidate_source_counts": {
+                                "topn_owner_review": 9,
+                                "intraday_manifest_eod_denominator_supplement": 12,
+                            },
                             "minute_price_volume_ready_count": 0,
                             "minute_price_volume_missing_count": 21,
                             "minute_price_volume_maturity_status": (
@@ -1617,6 +1626,7 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
     assert "EOD回放:等前向日线成熟" in text
     assert "forward-shadow:等开盘/30m字段" in text
     assert "分钟量价=0/21" in text
+    assert "分钟分母=EOD 21/manifest18" in text
     assert "分钟量价状态=目标日未成熟" in text
     assert "分钟量价next=等目标日分钟面" in text
     assert "分钟待成熟=21" in text
