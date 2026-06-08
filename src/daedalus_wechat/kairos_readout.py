@@ -622,6 +622,7 @@ WOUND_LABEL_ZH = {
     "right_tail_not_available_for_source": "未接右尾统计",
     "date_block_ci_crosses_zero": "日期CI穿零",
     "low_date_support": "日期支撑不足",
+    "cluster_is_correlated_setup_not_independent_edge": "同簇相关/非独立机会",
 }
 
 
@@ -723,6 +724,49 @@ def _format_intraday_triggered_rows(
             f"label={row.get('owner_confidence_label', 'unknown')} "
             f"wounds={len(_as_list(row.get('evidence_wounds')))}"
         )
+    return lines
+
+
+def _format_compact_intraday_status(
+    alert: dict[str, Any] | None,
+    *,
+    limit: int = 3,
+) -> list[str]:
+    alert = _as_dict(alert)
+    if not alert:
+        return ["盘中: 暂无 intraday alert artifact"]
+
+    projection = _as_dict(alert.get("observation_projection_status"))
+    readiness = _as_dict(alert.get("trigger_field_readiness_status"))
+    snapshot = _as_dict(alert.get("realtime_snapshot_status"))
+    triggered = _triggered_intraday_rows(alert, limit=limit)
+
+    lines = [
+        (
+            "盘中: "
+            f"status={alert.get('status', 'unknown')} "
+            f"observed={_fmt_num(projection.get('observed_candidate_count'))} "
+            f"pending={_fmt_num(projection.get('pending_candidate_count'))} "
+            f"trigger={readiness.get('status', 'unknown')} "
+            f"snapshot={snapshot.get('status', 'unknown')}"
+        )
+    ]
+    if triggered:
+        lines.append(f"盘中触发 Top {len(triggered)}:")
+        for row, hits in triggered:
+            windows = ",".join(str(hit.get("window_id")) for hit in hits)
+            first30m = {
+                str(hit.get("window_id")): hit for hit in hits
+            }.get("first30m_confirmation_1001", {})
+            lines.append(
+                f"- #{_fmt_num(row.get('rank'))} "
+                f"{row.get('symbol', 'unknown')} {row.get('stock_name', '')} "
+                f"[{row.get('industry_name', 'unknown')}] "
+                f"{row.get('tactic_id', 'unknown')} "
+                f"windows={windows} "
+                f"first30m={_fmt_ratio_pct(first30m.get('first30m_return_pct'))} "
+                f"wounds={_fmt_wound_list(_as_list(row.get('evidence_wounds')), limit=2)}"
+            )
     return lines
 
 
@@ -1581,6 +1625,127 @@ def _format_owner_review_truth_units(
     return lines
 
 
+def format_kairos_owner_brief_compact(
+    payload: dict[str, Any],
+    *,
+    candidate_limit: int = 6,
+    daily_package: dict[str, Any] | None = None,
+    intraday_manifest: dict[str, Any] | None = None,
+    intraday_alert: dict[str, Any] | None = None,
+    forward_shadow_track_record: dict[str, Any] | None = None,
+    hypothesis_scout_readout: dict[str, Any] | None = None,
+    owner_review_truth_units: dict[str, Any] | None = None,
+) -> str:
+    """Render a short owner-visible daily brief for WeChat."""
+
+    _ = intraday_manifest, forward_shadow_track_record
+
+    if owner_review_truth_units is None:
+        owner_review_truth_units = load_kairos_owner_review_truth_units()
+
+    status = str(payload.get("status") or "UNKNOWN")
+    as_of = payload.get("as_of_date") or "unknown"
+    target = payload.get("target_trade_date") or "unknown"
+    accepted_edges = payload.get("accepted_edges", 0)
+    report_path = payload.get("report_path", "unknown")
+    errors = payload.get("errors")
+    if isinstance(errors, list) and errors:
+        return "\n".join(
+            [
+                f"Kairos 日包={status}",
+                f"artifact={report_path}",
+                *[f"error={item}" for item in errors[:3]],
+                "边界: report-only / accepted_edges=0 / 非买卖建议",
+            ]
+        )
+
+    market = _as_dict(payload.get("market_facts"))
+    concentration = _as_dict(payload.get("industry_concentration"))
+    posture = _as_dict(payload.get("explosive_short_cycle_posture"))
+    setup = _as_dict(posture.get("setup_supply"))
+    tape = _as_dict(posture.get("right_tail_tape"))
+    candidates = [
+        item for item in _as_list(payload.get("owner_review_candidates"))
+        if isinstance(item, dict)
+    ]
+    truth_units = _as_dict(owner_review_truth_units)
+    scout = _as_dict(hypothesis_scout_readout)
+    scout_counts = _as_dict(scout.get("counts"))
+    scout_surface = _as_dict(scout.get("owner_review_surface"))
+
+    lines = [
+        f"Kairos 日包 {as_of} -> {target}",
+        f"边界: report-only / accepted_edges={accepted_edges} / 非买卖建议",
+        (
+            "市场: "
+            f"{market.get('market_regime', 'unknown')} "
+            f"emotion={market.get('emotion_phase', 'unknown')} "
+            f"breadth={_fmt_pct(market.get('breadth_up_pct'))} "
+            f"涨停={_fmt_num(market.get('limit_up_count'))} "
+            f"炸板={_fmt_num(market.get('broken_limit_up_count'))} "
+            f"高度={_fmt_num(market.get('highest_continuous_board'))}"
+        ),
+        (
+            "集中度: "
+            f"{concentration.get('state', 'unknown')} "
+            f"top={_fmt_pct(concentration.get('top_industry_share_pct'))} "
+            f"HHI={_fmt_num(concentration.get('hhi'))}"
+        ),
+        (
+            "右尾温度计: "
+            f"setup={_fmt_num(setup.get('owner_candidate_count'))} "
+            f"watchlist={_fmt_num(setup.get('stock_watchlist_count'))} "
+            f"强封无炸={_fmt_num(setup.get('limit_board_continuation_candidate_count'))} "
+            f"涨停={_fmt_num(tape.get('limit_up_count'))} "
+            f"炸板={_fmt_num(tape.get('broken_limit_up_count'))}"
+        ),
+    ]
+
+    lines.extend(_format_compact_intraday_status(intraday_alert, limit=3))
+
+    lines.append(f"明天重点 Top {min(candidate_limit, len(candidates))}:")
+    for item in candidates[:candidate_limit]:
+        support = _as_dict(item.get("tactic_support"))
+        wounds = _fmt_wound_list(_as_list(item.get("evidence_wounds")), limit=2)
+        lines.append(
+            f"- #{_fmt_num(item.get('review_rank'))} "
+            f"{item.get('symbol', 'unknown')} {item.get('stock_name', '')} "
+            f"[{item.get('industry_name', 'unknown')}] "
+            f"{item.get('tactic_name', item.get('tactic_id', 'unknown'))} "
+            f"{item.get('owner_confidence_label', 'unknown')} "
+            f"net={_fmt_pct(support.get('net_excess_pct'))} "
+            f"tail5={_fmt_pct(support.get('right_tail_return_ge_5pct_share_pct'))} "
+            f"n={_fmt_num(support.get('row_n'))}/days={_fmt_num(support.get('date_block_effective_n'))} "
+            f"伤口={wounds}"
+        )
+
+    lines.extend(
+        [
+            (
+                "研究队列: "
+                f"truth_units={_fmt_num(truth_units.get('truth_unit_count'))} "
+                f"strict={_fmt_num(_as_dict(truth_units.get('route_counts')).get('strict_candidate_review_only'))} "
+                f"tail_watch={_fmt_num(_as_dict(truth_units.get('route_counts')).get('owner_review_tail_watch'))} "
+                f"scout_cells={_fmt_num(scout_counts.get('scout_cell_count'))} "
+                f"pending={_fmt_num(scout_counts.get('dispatchable_pending_run_cell_count'))} "
+                f"done={_fmt_num(scout_counts.get('daywalk_report_materialized_cell_count'))}"
+            ),
+            (
+                "Scout重点: "
+                f"{_fmt_named_counts(_as_list(scout_surface.get('top_families')), limit=2)}; "
+                f"{_fmt_named_counts(_as_list(scout_surface.get('top_hypotheses')), limit=2)}"
+            ),
+        ]
+    )
+
+    package_path = _as_dict(daily_package).get("report_path")
+    if package_path:
+        lines.append(f"package={package_path}")
+    lines.append(f"brief={report_path}")
+    lines.append("完整诊断: /brief full；盘中: /intraday")
+    return "\n".join(lines)
+
+
 def format_kairos_owner_brief(
     payload: dict[str, Any],
     *,
@@ -1980,6 +2145,7 @@ __all__ = [
     "default_kairos_readout_path",
     "format_kairos_intraday_alert",
     "format_kairos_owner_brief",
+    "format_kairos_owner_brief_compact",
     "format_kairos_today_readout",
     "load_kairos_forward_shadow_track_record",
     "load_kairos_hypothesis_scout_readout",

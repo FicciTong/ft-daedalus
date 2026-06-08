@@ -33,6 +33,7 @@ from .incoming_media import (
 from .kairos_readout import (
     format_kairos_intraday_alert,
     format_kairos_owner_brief,
+    format_kairos_owner_brief_compact,
     format_kairos_today_readout,
     load_kairos_forward_shadow_track_record,
     load_kairos_hypothesis_scout_readout,
@@ -875,7 +876,12 @@ class BridgeDaemon:
         if command == "/kairos-today":
             return format_kairos_today_readout(load_kairos_today_readout())
         if command == "/brief":
-            return format_kairos_owner_brief(
+            renderer = (
+                format_kairos_owner_brief
+                if arg.lower() in {"full", "debug", "详细", "全部"}
+                else format_kairos_owner_brief_compact
+            )
+            return renderer(
                 load_kairos_owner_brief(),
                 daily_package=load_kairos_owner_daily_package(),
                 intraday_manifest=load_kairos_intraday_candidate_manifest(),

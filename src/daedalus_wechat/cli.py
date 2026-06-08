@@ -23,6 +23,7 @@ from .ilink_auth import (
 from .kairos_readout import (
     format_kairos_intraday_alert,
     format_kairos_owner_brief,
+    format_kairos_owner_brief_compact,
     format_kairos_today_readout,
     load_kairos_forward_shadow_track_record,
     load_kairos_hypothesis_scout_readout,
@@ -290,8 +291,13 @@ def build_parser() -> argparse.ArgumentParser:
     brief.add_argument(
         "--limit",
         type=int,
-        default=12,
+        default=6,
         help="Maximum number of owner candidate rows to render",
+    )
+    brief.add_argument(
+        "--full",
+        action="store_true",
+        help="Render the full diagnostic brief instead of the compact owner view",
     )
     intraday = sub.add_parser(
         "intraday",
@@ -409,8 +415,13 @@ def main() -> int:
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         else:
+            renderer = (
+                format_kairos_owner_brief
+                if args.full
+                else format_kairos_owner_brief_compact
+            )
             print(
-                format_kairos_owner_brief(
+                renderer(
                     payload,
                     candidate_limit=args.limit,
                     daily_package=load_kairos_owner_daily_package(),

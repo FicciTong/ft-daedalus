@@ -9,6 +9,7 @@ from daedalus_wechat.daemon import BridgeDaemon
 from daedalus_wechat.kairos_readout import (
     format_kairos_intraday_alert,
     format_kairos_owner_brief,
+    format_kairos_owner_brief_compact,
     format_kairos_today_readout,
     load_kairos_forward_shadow_track_record,
     load_kairos_hypothesis_scout_readout,
@@ -1264,6 +1265,32 @@ def test_format_kairos_owner_brief_falls_back_when_package_lacks_intraday_manife
     assert "intraday_md=/tmp/short_cycle_intraday_candidate_manifest_latest.md" in text
 
 
+def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
+    text = format_kairos_owner_brief_compact(
+        _sample_owner_brief_payload(),
+        daily_package=_sample_owner_daily_package_payload(),
+        intraday_alert=_sample_intraday_alert_payload_with_triggered_row(),
+        hypothesis_scout_readout=_sample_hypothesis_scout_readout_payload(),
+        owner_review_truth_units=_sample_owner_review_truth_units_payload(),
+        candidate_limit=2,
+    )
+
+    assert "Kairos 日包 2026-06-05 -> 2026-06-08" in text
+    assert "accepted_edges=0" in text
+    assert "非买卖建议" in text
+    assert "市场:" in text
+    assert "集中度:" in text
+    assert "右尾温度计:" in text
+    assert "盘中触发 Top 1" in text
+    assert "明天重点 Top 1" in text
+    assert "002251.SZ 步步高" in text
+    assert "伤口=未行业中性/含板块beta" in text
+    assert "研究队列:" in text
+    assert "Scout重点:" in text
+    assert "完整诊断: /brief full；盘中: /intraday" in text
+    assert "Long-window研究路由" not in text
+
+
 def test_cli_brief_does_not_require_bridge_state(tmp_path: Path, capsys, monkeypatch) -> None:
     report_path = tmp_path / "short_cycle_owner_review_brief_latest.json"
     report_path.write_text(
@@ -1295,10 +1322,56 @@ def test_cli_brief_does_not_require_bridge_state(tmp_path: Path, capsys, monkeyp
 
     assert rc == 0
     out = capsys.readouterr().out
+    assert "Kairos 日包 2026-06-05 -> 2026-06-08" in out
+    assert "研究队列:" in out
+    assert "Scout重点:" in out
+    assert "002251.SZ 步步高" in out
+
+
+def test_cli_brief_full_keeps_diagnostic_view(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    report_path = tmp_path / "short_cycle_owner_review_brief_latest.json"
+    report_path.write_text(
+        json.dumps(_sample_owner_brief_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "daedalus-wechat",
+            "brief",
+            "--report-path",
+            str(report_path),
+            "--limit",
+            "1",
+            "--full",
+        ],
+    )
+    monkeypatch.setattr(
+        "daedalus_wechat.cli.load_kairos_owner_daily_package",
+        lambda: _sample_owner_daily_package_payload(),
+    )
+    monkeypatch.setattr(
+        "daedalus_wechat.cli.load_kairos_intraday_candidate_manifest",
+        lambda: _sample_intraday_manifest_payload(),
+    )
+    monkeypatch.setattr(
+        "daedalus_wechat.cli.load_kairos_forward_shadow_track_record",
+        lambda: _sample_forward_shadow_track_record_payload(),
+    )
+    monkeypatch.setattr(
+        "daedalus_wechat.cli.load_kairos_hypothesis_scout_readout",
+        lambda: _sample_hypothesis_scout_readout_payload(),
+    )
+
+    rc = main()
+
+    assert rc == 0
+    out = capsys.readouterr().out
     assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in out
     assert "日包总入口" in out
     assert "Broad scout intake" in out
-    assert "002251.SZ 步步高" in out
 
 
 def test_daemon_brief_command_is_read_only() -> None:
@@ -1323,10 +1396,36 @@ def test_daemon_brief_command_is_read_only() -> None:
     ):
         text = BridgeDaemon._handle_command(BridgeDaemon.__new__(BridgeDaemon), "/brief")
 
-    assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in text
+    assert "Kairos 日包 2026-06-05 -> 2026-06-08" in text
     assert "accepted_edges=0" in text
-    assert "intraday_manifest=REPORT_ONLY_SHORT_CYCLE_INTRADAY_CANDIDATE_MANIFEST" in text
-    assert "intraday_alert=REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT" in text
+    assert "完整诊断: /brief full；盘中: /intraday" in text
+
+
+def test_daemon_brief_full_command_keeps_diagnostic_view() -> None:
+    with patch(
+        "daedalus_wechat.daemon.load_kairos_owner_brief",
+        return_value=_sample_owner_brief_payload(),
+    ), patch(
+        "daedalus_wechat.daemon.load_kairos_owner_daily_package",
+        return_value=_sample_owner_daily_package_payload(),
+    ), patch(
+        "daedalus_wechat.daemon.load_kairos_intraday_candidate_manifest",
+        return_value=_sample_intraday_manifest_payload(),
+    ), patch(
+        "daedalus_wechat.daemon.load_kairos_intraday_alert",
+        return_value=_sample_intraday_alert_payload(),
+    ), patch(
+        "daedalus_wechat.daemon.load_kairos_forward_shadow_track_record",
+        return_value=_sample_forward_shadow_track_record_payload(),
+    ), patch(
+        "daedalus_wechat.daemon.load_kairos_hypothesis_scout_readout",
+        return_value=_sample_hypothesis_scout_readout_payload(),
+    ):
+        text = BridgeDaemon._handle_command(
+            BridgeDaemon.__new__(BridgeDaemon), "/brief full"
+        )
+
+    assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in text
     assert "Forward-shadow闭环" in text
     assert "Broad scout intake" in text
 
