@@ -292,6 +292,19 @@ def _minute_price_volume_maturity_label(summary: dict[str, Any]) -> str | None:
     return None
 
 
+def _continuous_runner_status_label(value: Any) -> str | None:
+    status = str(value or "")
+    if status == "REPORT_ONLY_SHORT_CYCLE_CONTINUOUS_RUNNER_STATUS_READY":
+        return "ready"
+    if status == (
+        "REPORT_ONLY_SHORT_CYCLE_CONTINUOUS_RUNNER_STATUS_READY_WITH_PENDING_MATURITY"
+    ):
+        return "待成熟"
+    if status == "BLOCKED_SHORT_CYCLE_CONTINUOUS_RUNNER_STATUS":
+        return "blocked"
+    return status or None
+
+
 def _format_archive_day_line(row: dict[str, Any]) -> str:
     summary = _as_dict(row.get("summary"))
     report_date = row.get("report_date")
@@ -398,6 +411,37 @@ def _format_archive_day_line(row: dict[str, Any]) -> str:
         pieces,
         label="shadow_fired",
         value=summary.get("forward_shadow_trigger_fired_count"),
+    )
+    runner_label = _continuous_runner_status_label(
+        summary.get("continuous_runner_status")
+    )
+    if runner_label:
+        pieces.append(f"runner={runner_label}")
+    if summary.get("continuous_runner_job_count") is not None:
+        pieces.append(
+            "runner_ready="
+            f"{_fmt_num(summary.get('continuous_runner_ready_job_count'))}/"
+            f"{_fmt_num(summary.get('continuous_runner_job_count'))}"
+        )
+    _append_archive_count(
+        pieces,
+        label="runner_pending",
+        value=summary.get("continuous_runner_pending_job_count"),
+    )
+    _append_archive_count(
+        pieces,
+        label="runner_blocked",
+        value=summary.get("continuous_runner_blocked_job_count"),
+    )
+    _append_archive_count(
+        pieces,
+        label="runner_missing",
+        value=summary.get("continuous_runner_missing_required_job_count"),
+    )
+    _append_archive_count(
+        pieces,
+        label="heavy",
+        value=summary.get("continuous_runner_heavy_or_whole_market_job_count"),
     )
     if summary.get("minute_price_volume_candidate_count") is not None:
         pieces.append(

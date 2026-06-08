@@ -1400,6 +1400,16 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
                             "forward_shadow_lifecycle_state": "PENDING_TARGET_OPEN_STATE",
                             "forward_shadow_pending_trigger_count": 213,
                             "forward_shadow_trigger_fired_count": 0,
+                            "continuous_runner_status": (
+                                "REPORT_ONLY_SHORT_CYCLE_CONTINUOUS_RUNNER_STATUS_"
+                                "READY_WITH_PENDING_MATURITY"
+                            ),
+                            "continuous_runner_job_count": 10,
+                            "continuous_runner_ready_job_count": 7,
+                            "continuous_runner_pending_job_count": 3,
+                            "continuous_runner_blocked_job_count": 0,
+                            "continuous_runner_missing_required_job_count": 0,
+                            "continuous_runner_heavy_or_whole_market_job_count": 2,
                             "minute_price_volume_candidate_count": 21,
                             "minute_price_volume_ready_count": 0,
                             "minute_price_volume_missing_count": 21,
@@ -1495,6 +1505,12 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
     assert "forward_shadow=PENDING_TARGET_OPEN_STATE" in text
     assert "shadow_pending=213" in text
     assert "shadow_fired=0" in text
+    assert "runner=待成熟" in text
+    assert "runner_ready=7/10" in text
+    assert "runner_pending=3" in text
+    assert "runner_blocked=0" in text
+    assert "runner_missing=0" in text
+    assert "heavy=2" in text
     assert "分钟量价=0/21" in text
     assert "分钟量价状态=目标日未成熟" in text
     assert "分钟待成熟=21" in text
