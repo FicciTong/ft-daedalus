@@ -116,6 +116,24 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                     ],
                 }
             ],
+            "owner_observation_route_backlog": {
+                "status": "REPORT_ONLY_OWNER_OBSERVATION_BACKED_SPEC_BACKLOG",
+                "queue_item_count": 3,
+                "spec_candidate_count": 3,
+                "stock_personality_relevant_candidate_count": 2,
+                "spec_candidates": [
+                    {
+                        "policy_id": "ma_posture_strength_filter",
+                        "name_zh": "均线强势姿态筛选",
+                        "owner_observation_ids": ["OO-20260608-009"],
+                    },
+                    {
+                        "policy_id": "negative_governance_event_problem_stock_filter",
+                        "name_zh": "负面治理事件问题股过滤",
+                        "owner_observation_ids": ["OO-20260608-010"],
+                    },
+                ],
+            },
         },
         "stock_trait_full_candidate_prefilter_summary": {
             "status": "REPORT_ONLY_FULL_CANDIDATE_STOCK_TRAIT_PREFILTER_SUMMARY",
@@ -1690,6 +1708,10 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "ranking_effect=未应用/只显示伤口" in text
     assert "全候选股性: 候选=43 通过=18 失败/不完整=25 缺数据=0" in text
     assert "股性失败样本: #1 002251.SZ 步步高, #8 300319.SZ 麦捷科技" in text
+    assert "观察转规格: REPORT_ONLY_OWNER_OBSERVATION_BACKED_SPEC_BACKLOG" in text
+    assert "queue=3 specs=3 股性相关=2 排名影响=未应用" in text
+    assert "观察规格候选: 均线强势姿态筛选(OO-20260608-009)" in text
+    assert "负面治理事件问题股过滤(OO-20260608-010)" in text
     assert "官方硬风险候选:" in text
     assert "候选=43 硬风险=2 排名影响=未应用 report_only=true" in text
     assert "000536.SZ 华映科技" in text

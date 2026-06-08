@@ -1630,6 +1630,28 @@ def _format_stock_personality_selection_policy_backlog(
         ]
         if fail_rows:
             lines.append(f"- 股性失败样本: {', '.join(fail_rows)}")
+    route_backlog = _as_dict(backlog.get("owner_observation_route_backlog"))
+    if route_backlog:
+        lines.append(
+            "- 观察转规格: "
+            f"{route_backlog.get('status', 'unknown')} "
+            f"queue={_fmt_num(route_backlog.get('queue_item_count'))} "
+            f"specs={_fmt_num(route_backlog.get('spec_candidate_count'))} "
+            f"股性相关={_fmt_num(route_backlog.get('stock_personality_relevant_candidate_count'))} "
+            "排名影响=未应用"
+        )
+        spec_rows = []
+        for row in _as_list(route_backlog.get("spec_candidates"))[:5]:
+            item = _as_dict(row)
+            observation_ids = ",".join(
+                str(value)
+                for value in _as_list(item.get("owner_observation_ids"))[:2]
+            )
+            spec_rows.append(
+                f"{item.get('name_zh') or item.get('policy_id')}({observation_ids})"
+            )
+        if spec_rows:
+            lines.append(f"- 观察规格候选: {', '.join(spec_rows)}")
     return lines
 
 
