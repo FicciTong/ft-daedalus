@@ -88,6 +88,20 @@ def default_owner_feedback_route_queue_path() -> Path:
     )
 
 
+def default_owner_observation_ledger_path() -> Path:
+    """Return the Logos owner-observation ledger path, if present locally."""
+
+    daedalus_root = Path(__file__).resolve().parents[2]
+    return (
+        daedalus_root.parent
+        / "ft-logos"
+        / "knowledge"
+        / "stocks"
+        / "research"
+        / "owner_observation_ledger.md"
+    )
+
+
 def normalize_mark(mark: str) -> str | None:
     normalized = mark.strip().lower()
     if not normalized:
@@ -197,6 +211,163 @@ def _read_entries(path: Path) -> list[dict[str, Any]]:
     return entries
 
 
+def _metadata_value(block: str, key: str) -> str:
+    prefix = f"- {key}:"
+    for line in block.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(prefix):
+            return stripped.removeprefix(prefix).strip()
+    return ""
+
+
+def _observation_preview(block: str, *, limit: int = 12) -> str:
+    capture = False
+    lines: list[str] = []
+    for raw_line in block.splitlines():
+        stripped = raw_line.strip()
+        if stripped in {"- observation:", "- why_it_matters:"}:
+            capture = True
+            continue
+        if stripped.startswith("- evidence_refs:"):
+            capture = False
+        if not capture or not stripped or stripped.startswith("```"):
+            continue
+        cleaned = stripped
+        while cleaned.startswith("- "):
+            cleaned = cleaned[2:].strip()
+        if cleaned:
+            lines.append(cleaned)
+        if len(lines) >= limit:
+            break
+    return " ".join(lines)[:700]
+
+
+def iter_owner_observation_entries(
+    path: Path | None = None,
+) -> list[dict[str, Any]]:
+    """Read Logos owner-observation markdown entries as formal route inputs.
+
+    These entries are challenger input only. They do not mutate evidence gates,
+    rankings, candidates, or any trading authority.
+    """
+
+    ledger_path = path or default_owner_observation_ledger_path()
+    if not ledger_path.exists():
+        return []
+    entries: list[dict[str, Any]] = []
+    current_heading = ""
+    current_lines: list[str] = []
+    for line in ledger_path.read_text(encoding="utf-8").splitlines():
+        if line.startswith("## OO-"):
+            if current_heading and current_lines:
+                entries.append(
+                    _owner_observation_entry_from_block(
+                        current_heading=current_heading,
+                        block="\n".join(current_lines),
+                        ledger_path=ledger_path,
+                    )
+                )
+            current_heading = line.strip().removeprefix("## ").strip()
+            current_lines = []
+            continue
+        if current_heading:
+            current_lines.append(line)
+    if current_heading and current_lines:
+        entries.append(
+            _owner_observation_entry_from_block(
+                current_heading=current_heading,
+                block="\n".join(current_lines),
+                ledger_path=ledger_path,
+            )
+        )
+    return entries
+
+
+def _owner_observation_entry_from_block(
+    *,
+    current_heading: str,
+    block: str,
+    ledger_path: Path,
+) -> dict[str, Any]:
+    observation_id = current_heading.strip()
+    logged_at = _metadata_value(block, "logged_at")
+    posture = _metadata_value(block, "posture")
+    state = _metadata_value(block, "state")
+    family_guess = _metadata_value(block, "family_guess")
+    preview = _observation_preview(block)
+    return {
+        "observation_id": observation_id,
+        "logged_at": logged_at,
+        "posture": posture,
+        "state": state,
+        "family_guess": family_guess,
+        "text": preview or observation_id,
+        "source": "logos_owner_observation_ledger",
+        "source_ref": (
+            "ft-logos/knowledge/stocks/research/owner_observation_ledger.md"
+            f"#{observation_id.lower()}"
+        ),
+        "ledger_path": str(ledger_path),
+    }
+
+
+def _captured_at_from_logged_at(logged_at: str) -> str:
+    clean = logged_at.strip()
+    if not clean:
+        return ""
+    if "T" in clean:
+        return clean
+    return f"{clean}T00:00:00Z"
+
+
+def _mark_for_owner_observation(entry: dict[str, Any]) -> str:
+    text = " ".join(
+        str(entry.get(key) or "")
+        for key in ("family_guess", "posture", "state", "text")
+    ).lower()
+    surface_terms = (
+        "negative",
+        "risk",
+        "wound",
+        "problem",
+        "official",
+        "surface",
+        "case filing",
+        "case-filing",
+        "立案",
+        "负面",
+        "处罚",
+        "监管",
+        "调查",
+        "风险",
+        "数据",
+    )
+    write_card_terms = (
+        "filter",
+        "selection_policy",
+        "pattern",
+        "template",
+        "breakout",
+        "moving_average",
+        "right_tail",
+        "股性",
+        "洗盘",
+        "均线",
+        "形态",
+        "战法",
+        "策略",
+        "突破",
+        "右尾",
+    )
+    if any(term in text for term in surface_terms):
+        return "surface_blocker"
+    if any(term in text for term in write_card_terms):
+        return "write_card"
+    if str(entry.get("posture") or "").strip() == "urgent":
+        return "needs_review"
+    return "needs_review"
+
+
 def _project_feedback_route(entry: dict[str, Any]) -> dict[str, Any]:
     mark = str(entry.get("mark") or "unknown")
     projection = MARK_ROUTE_PROJECTION.get(
@@ -211,6 +382,44 @@ def _project_feedback_route(entry: dict[str, Any]) -> dict[str, Any]:
         "feedback_id": entry.get("feedback_id"),
         "captured_at_utc": entry.get("captured_at_utc"),
         "mark": mark,
+        "route_item_source": "owner_feedback_ledger",
+        "source": entry.get("source"),
+        "route": projection["route"],
+        "next_action": projection["next_action"],
+        "text": text,
+        "text_preview": text[:80],
+        "accepted_edges": 0,
+        "firewall": {
+            "research_queue_direction_only": True,
+            "owner_review_attention_only": True,
+            "evidence_gate_mutation_allowed": False,
+            "ranking_mutation_allowed": False,
+            "candidate_promotion_allowed": False,
+            "trading_authority_allowed": False,
+            "advisory_claim_allowed": False,
+            "owner_pnl_claim_allowed": False,
+        },
+    }
+
+
+def _project_owner_observation_route(entry: dict[str, Any]) -> dict[str, Any]:
+    mark = _mark_for_owner_observation(entry)
+    projection = MARK_ROUTE_PROJECTION[mark]
+    observation_id = str(entry.get("observation_id") or "").strip()
+    text = str(entry.get("text") or "").strip()
+    return {
+        "feedback_id": f"owner_observation_{observation_id.lower()}",
+        "captured_at_utc": _captured_at_from_logged_at(
+            str(entry.get("logged_at") or "")
+        ),
+        "mark": mark,
+        "route_item_source": "owner_observation_ledger",
+        "source": entry.get("source"),
+        "source_ref": entry.get("source_ref"),
+        "observation_id": observation_id,
+        "family_guess": entry.get("family_guess"),
+        "posture": entry.get("posture"),
+        "state": entry.get("state"),
         "route": projection["route"],
         "next_action": projection["next_action"],
         "text": text,
@@ -233,9 +442,15 @@ def _feedback_route_projection(
     entries: list[dict[str, Any]],
     *,
     recent_limit: int,
+    additional_route_items: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    route_items = [_project_feedback_route(entry) for entry in entries]
+    feedback_route_items = [_project_feedback_route(entry) for entry in entries]
+    observation_route_items = additional_route_items or []
+    route_items = feedback_route_items + observation_route_items
     route_counts = Counter(str(item.get("route") or "unknown") for item in route_items)
+    source_counts = Counter(
+        str(item.get("route_item_source") or "unknown") for item in route_items
+    )
     recent = route_items[-recent_limit:] if recent_limit > 0 else []
     return {
         "contract": "daedalus_wechat.owner_feedback_research_route_projection",
@@ -245,7 +460,11 @@ def _feedback_route_projection(
             else "OWNER_FEEDBACK_RESEARCH_ROUTE_PROJECTION_EMPTY"
         ),
         "route_item_count": len(route_items),
+        "feedback_route_item_count": len(feedback_route_items),
+        "owner_observation_route_item_count": len(observation_route_items),
         "route_counts": dict(sorted(route_counts.items())),
+        "source_counts": dict(sorted(source_counts.items())),
+        "route_items": route_items,
         "recent_route_items": recent,
         "accepted_edges": 0,
         "authority_boundary": {
@@ -272,16 +491,34 @@ def export_owner_feedback_route_queue(
     ledger_path: Path | None = None,
     output_path: Path | None = None,
     recent_limit: int = 20,
+    observation_ledger_path: Path | None = None,
+    include_owner_observations: bool = True,
 ) -> dict[str, Any]:
     """Write a derived report-only research-route queue from feedback entries."""
 
     path = ledger_path or default_owner_feedback_path()
     out_path = output_path or default_owner_feedback_route_queue_path()
     entries = _read_entries(path)
-    projection = _feedback_route_projection(entries, recent_limit=recent_limit)
+    owner_observation_path = observation_ledger_path or default_owner_observation_ledger_path()
+    owner_observations = (
+        iter_owner_observation_entries(owner_observation_path)
+        if include_owner_observations
+        else []
+    )
+    observation_routes = [
+        _project_owner_observation_route(entry) for entry in owner_observations
+    ]
+    projection = _feedback_route_projection(
+        entries,
+        recent_limit=recent_limit,
+        additional_route_items=observation_routes,
+    )
     payload = {
         **projection,
         "source_ledger_path": str(path),
+        "owner_observation_ledger_path": str(owner_observation_path),
+        "owner_observation_included": include_owner_observations,
+        "owner_observation_entry_count": len(owner_observations),
         "output_path": str(out_path),
         "generated_at_utc": _utc_now_iso(),
     }

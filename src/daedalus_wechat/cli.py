@@ -372,6 +372,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional output path for --export-routes.",
     )
+    feedback.add_argument(
+        "--owner-observation-ledger",
+        type=Path,
+        default=None,
+        help="Optional Logos owner observation ledger path for --export-routes.",
+    )
+    feedback.add_argument(
+        "--no-owner-observations",
+        action="store_true",
+        help="Do not include Logos owner observations in --export-routes.",
+    )
     send_bound = sub.add_parser(
         "send-bound",
         help="Send text / image / file / video to the currently bound WeChat chat",
@@ -524,6 +535,8 @@ def main() -> int:
             payload = export_owner_feedback_route_queue(
                 ledger_path=args.path,
                 output_path=args.output,
+                observation_ledger_path=args.owner_observation_ledger,
+                include_owner_observations=not args.no_owner_observations,
             )
             print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
             return 0

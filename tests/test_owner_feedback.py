@@ -10,6 +10,7 @@ from daedalus_wechat.owner_feedback import (
     feedback_help_text,
     format_owner_feedback_summary,
     handle_owner_feedback_command,
+    iter_owner_observation_entries,
     load_owner_feedback_summary,
     normalize_mark,
 )
@@ -133,6 +134,7 @@ def test_owner_feedback_exports_research_route_queue(tmp_path: Path) -> None:
     payload = export_owner_feedback_route_queue(
         ledger_path=ledger,
         output_path=output,
+        include_owner_observations=False,
     )
     written = json.loads(output.read_text(encoding="utf-8"))
 
@@ -142,6 +144,7 @@ def test_owner_feedback_exports_research_route_queue(tmp_path: Path) -> None:
         "research_card_draft_backlog": 1,
         "surface_blocker_triage": 1,
     }
+    assert len(payload["route_items"]) == 2
     assert payload["authority_boundary"]["evidence_gate_mutation_allowed"] is False
     assert payload["authority_boundary"]["ranking_mutation_allowed"] is False
     assert payload["authority_boundary"]["candidate_promotion_allowed"] is False
@@ -234,6 +237,7 @@ def test_owner_feedback_cli_exports_routes(
             "--export-routes",
             "--output",
             str(output),
+            "--no-owner-observations",
         ],
     )
 
@@ -244,3 +248,78 @@ def test_owner_feedback_cli_exports_routes(
     assert out["route_counts"] == {"peer_review_backlog": 1}
     assert written["recent_route_items"][0]["route"] == "peer_review_backlog"
     assert written["authority_boundary"]["trading_authority_allowed"] is False
+
+
+def test_owner_observation_ledger_routes_into_research_projection(
+    tmp_path: Path,
+) -> None:
+    feedback_ledger = tmp_path / "owner_feedback.jsonl"
+    observation_ledger = tmp_path / "owner_observation_ledger.md"
+    output = tmp_path / "routes.json"
+    observation_ledger.write_text(
+        """# Owner Observation Ledger
+
+## OO-20260608-010
+
+- logged_at: 2026-06-08
+- posture: urgent
+- state: noted
+- family_guess: negative_governance_event_problem_stock_filter_candidate
+- observation:
+  - target stock: `920249.BJ` / 利尔达
+  - 立案 wound needs screening
+- why_it_matters:
+  - candidate rows need official negative-event wounds before filtering
+- evidence_refs:
+  - owner dialogue only
+
+## OO-20260608-011
+
+- logged_at: 2026-06-08
+- posture: repeat_suspected
+- state: noted
+- family_guess: owner_selected_good_chart_template_batch_stock_personality_selection_policy_candidate
+- observation:
+  - good chart template batch
+  - 股性 selection policy and right_tail context should be row-level dimensions
+- why_it_matters:
+  - use this to draft machine-testable stock personality filters
+- evidence_refs:
+  - owner dialogue only
+""",
+        encoding="utf-8",
+    )
+
+    parsed = iter_owner_observation_entries(observation_ledger)
+    payload = export_owner_feedback_route_queue(
+        ledger_path=feedback_ledger,
+        output_path=output,
+        observation_ledger_path=observation_ledger,
+    )
+
+    assert [entry["observation_id"] for entry in parsed] == [
+        "OO-20260608-010",
+        "OO-20260608-011",
+    ]
+    assert payload["status"] == "OWNER_FEEDBACK_RESEARCH_ROUTE_PROJECTION_READY"
+    assert payload["feedback_route_item_count"] == 0
+    assert payload["owner_observation_entry_count"] == 2
+    assert payload["owner_observation_route_item_count"] == 2
+    assert payload["source_counts"] == {"owner_observation_ledger": 2}
+    assert len(payload["route_items"]) == 2
+    assert payload["route_counts"] == {
+        "research_card_draft_backlog": 1,
+        "surface_blocker_triage": 1,
+    }
+    assert payload["accepted_edges"] == 0
+    assert payload["authority_boundary"]["evidence_gate_mutation_allowed"] is False
+    assert payload["authority_boundary"]["ranking_mutation_allowed"] is False
+    assert payload["authority_boundary"]["candidate_promotion_allowed"] is False
+    assert payload["authority_boundary"]["trading_authority_allowed"] is False
+    item_by_id = {
+        item["observation_id"]: item for item in payload["recent_route_items"]
+    }
+    assert item_by_id["OO-20260608-010"]["mark"] == "surface_blocker"
+    assert item_by_id["OO-20260608-010"]["route"] == "surface_blocker_triage"
+    assert item_by_id["OO-20260608-011"]["mark"] == "write_card"
+    assert item_by_id["OO-20260608-011"]["route"] == "research_card_draft_backlog"
