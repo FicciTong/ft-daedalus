@@ -16,6 +16,7 @@ from daedalus_wechat.kairos_readout import (
     load_kairos_hypothesis_scout_readout,
     load_kairos_intraday_alert,
     load_kairos_intraday_candidate_manifest,
+    load_kairos_intraday_eod_outcome_review,
     load_kairos_intraday_eod_review_queue,
     load_kairos_owner_brief,
     load_kairos_owner_daily_archive,
@@ -918,6 +919,71 @@ def _sample_intraday_eod_review_queue_payload() -> dict[str, object]:
     }
 
 
+def _sample_intraday_eod_outcome_review_payload(
+    *,
+    status: str = "REPORT_ONLY_INTRADAY_EOD_OUTCOME_REVIEW_READY",
+) -> dict[str, object]:
+    blocker = None
+    matched_count = 2
+    if status != "REPORT_ONLY_INTRADAY_EOD_OUTCOME_REVIEW_READY":
+        matched_count = 0
+        blocker = {
+            "blocker_id": "target_trade_date_outcome_rows_not_matured",
+            "target_trade_date": "2026-06-08",
+            "next_action": "rerun forward outcome panel after target-day bars mature",
+        }
+    return {
+        "contract": "ftkairos.research_substrate.short_cycle_intraday_eod_outcome_review",
+        "status": status,
+        "target_trade_date": "2026-06-08",
+        "accepted_edges": 0,
+        "report_only": True,
+        "summary": {
+            "candidate_review_unit_count": 20,
+            "matched_panel_row_count": matched_count,
+            "missing_panel_row_count": 20 - matched_count,
+            "current_triggered_unit_count": 1,
+            "ever_triggered_unit_count": 1,
+            "never_triggered_unit_count": 1,
+            "pending_or_missing_trigger_field_unit_count": 18,
+            "can_compare_triggered_vs_denominator": matched_count == 2,
+        },
+        "blocker": blocker,
+        "group_horizon_stats": {
+            "current_triggered": {
+                "matched_panel_row_count": 1,
+                "horizons": [
+                    {
+                        "horizon_id": "next_open_to_following_close",
+                        "mean_net_static_cost_return_pct": 7.7,
+                        "positive_share_pct": 100.0,
+                    }
+                ],
+            },
+            "never_triggered": {
+                "matched_panel_row_count": 1,
+                "horizons": [
+                    {
+                        "horizon_id": "next_open_to_following_close",
+                        "mean_net_static_cost_return_pct": -2.3,
+                        "positive_share_pct": 0.0,
+                    }
+                ],
+            },
+            "all_candidates": {
+                "matched_panel_row_count": 2,
+                "horizons": [
+                    {
+                        "horizon_id": "next_open_to_following_close",
+                        "mean_net_static_cost_return_pct": 2.7,
+                        "positive_share_pct": 50.0,
+                    }
+                ],
+            },
+        },
+    }
+
+
 def test_load_kairos_today_readout_reads_report(tmp_path: Path) -> None:
     report_path = tmp_path / "owner_readiness_readout_latest.json"
     report_path.write_text(
@@ -1040,6 +1106,10 @@ def test_load_kairos_owner_daily_archive_reads_dated_bundle(
         json.dumps(_sample_intraday_eod_review_queue_payload(), ensure_ascii=False),
         encoding="utf-8",
     )
+    (archive_dir / "intraday_eod_outcome_review.json").write_text(
+        json.dumps(_sample_intraday_eod_outcome_review_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(
         "daedalus_wechat.kairos_readout.default_kairos_owner_daily_archive_root",
         lambda: tmp_path,
@@ -1060,6 +1130,9 @@ def test_load_kairos_owner_daily_archive_reads_dated_bundle(
     )
     assert bundle["intraday_eod_review_queue"]["report_path"] == str(
         archive_dir / "intraday_eod_review_queue.json"
+    )
+    assert bundle["intraday_eod_outcome_review"]["report_path"] == str(
+        archive_dir / "intraday_eod_outcome_review.json"
     )
 
 
@@ -1143,6 +1216,7 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
         daily_package=package,
         intraday_alert=_sample_intraday_alert_payload(),
         intraday_eod_review_queue=_sample_intraday_eod_review_queue_payload(),
+        intraday_eod_outcome_review=_sample_intraday_eod_outcome_review_payload(),
         hypothesis_scout_readout=_sample_hypothesis_scout_readout_payload(),
         owner_review_truth_units=_sample_owner_review_truth_units_payload(),
     )
@@ -1158,6 +1232,8 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "net=0.99%" in text
     assert "baseline=same_date_same_level_2_industry_executable_baseline" in text
     assert "cost=0.27%" in text
+    assert "盘中结果: REPORT_ONLY_INTRADAY_EOD_OUTCOME_REVIEW_READY" in text
+    assert "盘中结果分组:" in text
     assert "ci=[-0.52%,1.60%]" in text
     assert "tail5=43.98%" in text
     assert "p90=19.43%" in text
@@ -1315,6 +1391,9 @@ def test_format_kairos_owner_brief_shows_intraday_triggered_rows(
         daily_package=package,
         intraday_alert=_sample_intraday_alert_payload_with_triggered_row(),
         intraday_eod_review_queue=_sample_intraday_eod_review_queue_payload(),
+        intraday_eod_outcome_review=_sample_intraday_eod_outcome_review_payload(
+            status="PENDING_INTRADAY_EOD_OUTCOME_PANEL_NOT_MATURED"
+        ),
         hypothesis_scout_readout=_sample_hypothesis_scout_readout_payload(),
         owner_review_truth_units=_sample_owner_review_truth_units_payload(),
     )
@@ -1445,6 +1524,8 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "盘中: 观察包就绪 已观察=2 待观察=25" in text
     assert "触发字段=触发字段就绪 快照=实时快照待补" in text
     assert "盘中EOD复盘: PENDING_EOD_INTRADAY_REPLAY_REVIEW" in text
+    assert "盘中结果: PENDING_INTRADAY_EOD_OUTCOME_PANEL_NOT_MATURED" in text
+    assert "盘中结果阻塞: target_trade_date_outcome_rows_not_matured" in text
     assert "全A盘中观察: rows=5208 上涨=699 下跌=4470" in text
     assert "盘中触发 Top 1" in text
     assert "高开后前30分钟承接 窗口=开盘,前5分钟,前30分钟确认" in text
@@ -1698,6 +1779,7 @@ def test_daemon_brief_date_command_reads_archive() -> None:
             "owner_daily_package": _sample_owner_daily_package_payload(),
             "intraday_owner_alert": _sample_intraday_alert_payload_with_triggered_row(),
             "intraday_eod_review_queue": _sample_intraday_eod_review_queue_payload(),
+            "intraday_eod_outcome_review": _sample_intraday_eod_outcome_review_payload(),
             "accepted_edges": 0,
         },
     ) as archive_loader, patch(
@@ -1774,6 +1856,25 @@ def test_load_kairos_intraday_eod_review_queue_reads_latest_report(
     payload = load_kairos_intraday_eod_review_queue(report_path)
 
     assert payload["status"] == "PENDING_EOD_INTRADAY_REPLAY_REVIEW"
+    assert payload["report_path"] == str(report_path)
+    assert payload["accepted_edges"] == 0
+
+
+def test_load_kairos_intraday_eod_outcome_review_reads_latest_report(
+    tmp_path: Path,
+) -> None:
+    report_path = tmp_path / "short_cycle_intraday_eod_outcome_review_latest.json"
+    report_path.write_text(
+        json.dumps(
+            _sample_intraday_eod_outcome_review_payload(),
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    payload = load_kairos_intraday_eod_outcome_review(report_path)
+
+    assert payload["status"] == "REPORT_ONLY_INTRADAY_EOD_OUTCOME_REVIEW_READY"
     assert payload["report_path"] == str(report_path)
     assert payload["accepted_edges"] == 0
 
