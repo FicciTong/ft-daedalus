@@ -8054,6 +8054,41 @@ class DaemonTests(unittest.TestCase):
             )
             self.assertEqual(state.pending_outbox, [])
 
+    def test_flush_bound_outbox_trims_owner_backlog_to_latest_three(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state = BridgeState(
+                bound_user_id="user@im.wechat",
+                bound_context_token="ctx-1",
+                pending_outbox=[
+                    {
+                        "to": "user@im.wechat",
+                        "text": f"old-{idx}",
+                        "created_at": f"2026-03-26T00:00:0{idx}+00:00",
+                        "kind": "final",
+                        "origin": "desktop-mirror",
+                        "thread_id": "",
+                        "tmux_session": "codex" if idx % 2 else "opencode",
+                    }
+                    for idx in range(5)
+                ],
+            )
+            fake_wechat = _FakeWeChat()
+            daemon = _TestDaemon(
+                config=self._make_config(Path(tmpdir), frozenset()),
+                wechat=fake_wechat,
+                runner=_FakeRunner(),
+                state=state,
+            )
+
+            daemon._flush_bound_outbox_if_any()
+
+            self.assertEqual(
+                [entry[2] for entry in fake_wechat.sent],
+                ["old-2", "old-3", "old-4"],
+            )
+            self.assertEqual(state.pending_outbox, [])
+            self.assertEqual(state.pending_outbox_overflow_dropped, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
