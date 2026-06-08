@@ -952,7 +952,7 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "002251.SZ 步步高" in text
     assert "候选摘要:" in text
     assert "rows=1 labels=可用参考=1" in text
-    assert "top_wounds=not_industry_neutral_contains_sector_beta=1" in text
+    assert "top_wounds=未行业中性/含板块beta=1" in text
     assert "gross=1.26%" in text
     assert "net=0.99%" in text
     assert "baseline=same_date_same_level_2_industry_executable_baseline" in text
@@ -972,12 +972,14 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "block_condition_strict_candidates" in text
     assert "retreat_remnant_strength horizon=next_open_to_d5_close" in text
     assert "source=block_condition_daywalk not_edge=true" in text
+    assert "wounds=板块条件daywalk/非主缓存路径,未接净成本,未接日期分块CI" in text
     assert "generic_daywalk_truth_units" in text
     assert (
         "open_auction_volume_price_acceptance family=auction_microstructure "
         "horizon=next_open_to_d5_close"
     ) in text
     assert "source=hypothesis_daywalk not_edge=true" in text
+    assert "wounds=通用daywalk/非主缓存路径,未接净成本,未接日期分块CI" in text
     assert "score/rank is not evidence, edge, GO, or advice" in text
     assert "日包总入口" in text
     assert (

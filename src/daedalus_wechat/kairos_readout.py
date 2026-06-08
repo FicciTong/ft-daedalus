@@ -610,6 +610,39 @@ def _fmt_ci(lower: Any, upper: Any) -> str:
     return f"[{_fmt_pct(lower)},{_fmt_pct(upper)}]"
 
 
+WOUND_LABEL_ZH = {
+    "score_is_watchlist_ranking_heuristic_not_edge_score": "排序分只是观察优先级",
+    "row_level_fdr_holdout_not_available": "单票未过FDR/holdout",
+    "not_industry_neutral_contains_sector_beta": "未行业中性/含板块beta",
+    "static_cost_stamp_not_fill_simulator": "静态成本/非真实成交模拟",
+    "block_condition_daywalk_source_not_cached_retry": "板块条件daywalk/非主缓存路径",
+    "hypothesis_daywalk_source_not_cached_retry": "通用daywalk/非主缓存路径",
+    "net_static_cost_not_available_for_source": "未接净成本",
+    "date_block_ci_not_available_for_source": "未接日期分块CI",
+    "right_tail_not_available_for_source": "未接右尾统计",
+    "date_block_ci_crosses_zero": "日期CI穿零",
+    "low_date_support": "日期支撑不足",
+}
+
+
+def _wound_label(wound: Any) -> str:
+    name = str(wound)
+    return WOUND_LABEL_ZH.get(name, name)
+
+
+def _fmt_wound_counter(counter: Counter[str], *, limit: int = 4) -> str:
+    parts = [
+        f"{_wound_label(name)}={_fmt_num(count)}"
+        for name, count in counter.most_common(limit)
+    ]
+    return " ".join(parts) if parts else "none"
+
+
+def _fmt_wound_list(wounds: list[Any], *, limit: int = 3) -> str:
+    labels = [_wound_label(item) for item in wounds[:limit] if item]
+    return ",".join(labels) if labels else "none"
+
+
 def _format_intraday_snapshot_blocker(
     *,
     snapshot: dict[str, Any],
@@ -699,6 +732,29 @@ def _fmt_counter(counter: Counter[str], *, limit: int = 4) -> str:
         for name, count in counter.most_common(limit)
     ]
     return " ".join(parts) if parts else "none"
+
+
+def _float_or(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _truth_unit_review_sort_key(row: dict[str, Any]) -> tuple[int, float, float, float]:
+    route = row.get("owner_review_route")
+    route_priority = {
+        "strict_candidate_review_only": 4,
+        "owner_review_tail_watch": 3,
+        "right_tail_but_mean_negative_review_only": 2,
+        "observation_only_net_cost_missing": 1,
+    }.get(str(route), 0)
+    return (
+        route_priority,
+        _float_or(row.get("owner_review_score_not_evidence")),
+        _float_or(row.get("latest_executable_excess_pct_gross")),
+        _float_or(row.get("latest_executable_row_n")),
+    )
 
 
 def _fmt_count_map(value: Any) -> str:
@@ -1205,7 +1261,7 @@ def _format_weak_signal_queue(payload: dict[str, Any], *, limit: int) -> list[st
         if not isinstance(item, dict):
             continue
         wounds = _as_list(item.get("wounds"))
-        first_wound = wounds[0] if wounds else "none"
+        first_wound = _wound_label(wounds[0]) if wounds else "none"
         lines.append(
             f"- {item.get('hypothesis_id', 'unknown')} "
             f"horizon={item.get('horizon_id', 'unknown')} "
@@ -1443,11 +1499,7 @@ def _format_owner_review_truth_units(
     if strict_block_rows:
         lines.append("- block_condition_strict_candidates:")
         for row in strict_block_rows:
-            wounds = ",".join(
-                str(item)
-                for item in _as_list(row.get("presentation_wounds"))[:3]
-                if item
-            )
+            wounds = _fmt_wound_list(_as_list(row.get("presentation_wounds")))
             lines.append(
                 f"  - {row.get('hypothesis_id', 'unknown')} "
                 f"horizon={row.get('horizon_id', 'unknown')} "
@@ -1458,20 +1510,31 @@ def _format_owner_review_truth_units(
                 f"source=block_condition_daywalk "
                 f"not_edge=true wounds={wounds}"
             )
-    generic_daywalk_rows = [
+    generic_daywalk_rows_all = [
         row
         for row in _as_list(truth_units.get("all_truth_units"))
         if isinstance(row, dict)
         and row.get("source_type") == "hypothesis_daywalk"
-    ][:3]
+    ]
+    generic_daywalk_candidate_rows = [
+        row
+        for row in generic_daywalk_rows_all
+        if row.get("latest_verdict") == "CANDIDATE_ONLY"
+    ]
+    generic_daywalk_rows_positive = [
+        row
+        for row in generic_daywalk_candidate_rows or generic_daywalk_rows_all
+        if _float_or(row.get("latest_executable_excess_pct_gross"), -1.0) > 0.0
+    ]
+    generic_daywalk_rows = sorted(
+        generic_daywalk_rows_positive or generic_daywalk_rows_all,
+        key=_truth_unit_review_sort_key,
+        reverse=True,
+    )[:3]
     if generic_daywalk_rows:
         lines.append("- generic_daywalk_truth_units:")
         for row in generic_daywalk_rows:
-            wounds = ",".join(
-                str(item)
-                for item in _as_list(row.get("presentation_wounds"))[:3]
-                if item
-            )
+            wounds = _fmt_wound_list(_as_list(row.get("presentation_wounds")))
             lines.append(
                 f"  - {row.get('hypothesis_id', 'unknown')} "
                 f"family={row.get('family', 'unknown')} "
@@ -1573,7 +1636,7 @@ def format_kairos_owner_brief(
         "",
         "候选摘要:",
         f"- rows={_fmt_num(len(candidates))} labels={_fmt_counter(label_counts)}",
-        f"- top_wounds={_fmt_counter(wound_counts, limit=3)}",
+        f"- top_wounds={_fmt_wound_counter(wound_counts, limit=3)}",
     ]
 
     lines.extend(
