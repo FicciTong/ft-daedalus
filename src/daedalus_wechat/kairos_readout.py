@@ -745,6 +745,7 @@ def _format_daily_package_handoff(
     alert = _as_dict(intraday_alert)
     if alert:
         projection = _as_dict(alert.get("observation_projection_status"))
+        readiness = _as_dict(alert.get("trigger_field_readiness_status"))
         source_counts = _as_dict(projection.get("candidate_source_counts"))
         snapshot = _as_dict(alert.get("realtime_snapshot_status"))
         lines.append(
@@ -757,6 +758,13 @@ def _format_daily_package_handoff(
             f"clusters={_fmt_num(projection.get('cross_horizon_right_tail_cluster_count'))} "
             f"snapshot={snapshot.get('status', 'unknown')}"
         )
+        if readiness:
+            lines.append(
+                f"- intraday_trigger_readiness={readiness.get('status', 'unknown')} "
+                f"resolved={_fmt_num(readiness.get('resolved_count'))} "
+                f"pending={_fmt_num(readiness.get('pending_count'))} "
+                f"pending_windows={readiness.get('pending_window_ids')}"
+            )
         blocker = _format_intraday_snapshot_blocker(
             snapshot=snapshot,
             alert=alert,

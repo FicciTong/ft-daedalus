@@ -554,6 +554,15 @@ def _sample_intraday_alert_payload() -> dict[str, object]:
             "cross_horizon_right_tail_cluster_count": 2,
             "cross_horizon_right_tail_cluster_candidate_count": 7,
         },
+        "trigger_field_readiness_status": {
+            "status": "TRIGGER_FIELDS_PENDING",
+            "resolved_count": 2,
+            "pending_count": 25,
+            "pending_window_ids": [
+                "first5m_preliminary_0936",
+                "first30m_confirmation_1001",
+            ],
+        },
         "market_facts": {
             "market_regime": "CHOPPY",
             "emotion_phase": "hot",
@@ -895,6 +904,11 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     )
     assert "intraday_alert=REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT" in text
     assert "rows=2 observed=2 pending=25 topn=20 right_tail_supp=7 clusters=2" in text
+    assert (
+        "intraday_trigger_readiness=TRIGGER_FIELDS_PENDING "
+        "resolved=2 pending=25 pending_windows="
+        "['first5m_preliminary_0936', 'first30m_confirmation_1001']"
+    ) in text
     assert "intraday_alert_md=/tmp/short_cycle_intraday_owner_alert_latest.md" in text
     assert "09:26 opening_print_0926" in text
     assert "环境条件化 A/B 伤口" in text
