@@ -99,6 +99,24 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                 "top_industry_share_pct": 51.16,
             },
         },
+        "stock_personality_selection_policy_backlog": {
+            "status": "REPORT_ONLY_SELECTION_POLICY_BACKLOG_NOT_APPLIED_TO_RANKING",
+            "policy_count": 3,
+            "candidate_row_wounds": [
+                "stock_personality_selection_policy_not_integrated",
+                "context_fit_stock_texture_not_evaluated",
+            ],
+            "policies": [
+                {
+                    "policy_id": "good_stock_personality_texture_filter",
+                    "name_zh": "好股性/好质地筛选",
+                    "owner_observation_ids": [
+                        "OO-20260608-011",
+                        "OO-20260608-006",
+                    ],
+                }
+            ],
+        },
         "cross_horizon_right_tail_candidate_clusters": {
             "status": "REPORT_ONLY_CURRENT_CANDIDATE_CROSS_HORIZON_RIGHT_TAIL_INTERSECTION",
             "matched_cluster_count": 1,
@@ -234,7 +252,10 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                     "execution_template_zh": "次日开盘后观察前30分钟, 只做观察触发, 不是买入指令。",
                 },
                 "owner_confidence_label": "可用参考",
-                "evidence_wounds": ["not_industry_neutral_contains_sector_beta"],
+                "evidence_wounds": [
+                    "not_industry_neutral_contains_sector_beta",
+                    "stock_personality_selection_policy_not_integrated",
+                ],
                 "tactic_support": {
                     "baseline_claim_boundary": (
                         "cached-retry tactic excess is measured against same-date "
@@ -1561,6 +1582,10 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "市场: 震荡 情绪=热" in text
     assert "行业集中: 行业高度集中" in text
     assert "右尾温度计:" in text
+    assert "右尾是每个战法/筛选/执行行内结果维度" in text
+    assert "股性/质地筛选:" in text
+    assert "未接股性/质地筛选" in text
+    assert "ranking_effect=未应用/只显示伤口" in text
     assert "环境诊断: cases=24 当前候选=0 FDR过=2/6" in text
     assert "CI未穿0=2 CI穿0=3 posthoc=6 伤口=4" in text
     assert "边界=report-only" in text

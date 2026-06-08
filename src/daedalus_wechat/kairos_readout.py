@@ -973,6 +973,9 @@ WOUND_LABEL_ZH = {
     "date_block_ci_crosses_zero": "日期CI穿零",
     "low_date_support": "日期支撑不足",
     "cluster_is_correlated_setup_not_independent_edge": "同簇相关/非独立机会",
+    "stock_personality_selection_policy_not_integrated": "未接股性/质地筛选",
+    "context_fit_stock_texture_not_evaluated": "板块符合但个股质地未评估",
+    "ma_posture_strength_filter_not_integrated": "未接均线强势姿态筛选",
 }
 
 MARKET_REGIME_LABEL_ZH = {
@@ -1567,6 +1570,35 @@ def _format_explosive_posture(payload: dict[str, Any]) -> list[str]:
         ),
         f"- passive_timing={setup.get('passive_timing_read', 'unknown')}",
         "- boundary=setup supply is a thermometer/research input, not position sizing",
+        "- 右尾是每个战法/筛选/执行行内结果维度, 不是独立战法 silo",
+    ]
+
+
+def _format_stock_personality_selection_policy_backlog(
+    payload: dict[str, Any],
+) -> list[str]:
+    backlog = _as_dict(payload.get("stock_personality_selection_policy_backlog"))
+    if not backlog:
+        return []
+    policies = _as_list(backlog.get("policies"))
+    first_policy = _as_dict(policies[0]) if policies else {}
+    wounds = ",".join(
+        _wound_label(item) for item in _as_list(backlog.get("candidate_row_wounds"))[:3]
+    )
+    return [
+        "",
+        "股性/质地筛选:",
+        (
+            f"- state={backlog.get('status', 'unknown')} "
+            f"policies={_fmt_num(backlog.get('policy_count'))} "
+            f"row_wounds={wounds or 'none'} "
+            "ranking_effect=未应用/只显示伤口"
+        ),
+        (
+            f"- first={first_policy.get('name_zh', 'unknown')} "
+            f"obs={','.join(str(item) for item in _as_list(first_policy.get('owner_observation_ids'))[:3])} "
+            "boundary=只导研究,未PIT验证前不改排名"
+        ),
     ]
 
 
@@ -2466,6 +2498,7 @@ def format_kairos_owner_brief_compact(
             f"涨停={_fmt_num(tape.get('limit_up_count'))} "
             f"炸板={_fmt_num(tape.get('broken_limit_up_count'))}"
         ),
+        "右尾是每个战法/筛选/执行行内结果维度, 不是独立战法 silo",
     ]
     if env_diag:
         lines.append(
@@ -2481,6 +2514,8 @@ def format_kairos_owner_brief_compact(
             f"fresh={env_diag.get('freshness_status', 'unknown')} "
             "边界=report-only"
         )
+
+    lines.extend(_format_stock_personality_selection_policy_backlog(payload))
 
     lines.extend(
         _format_compact_intraday_status(
