@@ -1591,12 +1591,15 @@ def _format_stock_personality_selection_policy_backlog(
     backlog = _as_dict(payload.get("stock_personality_selection_policy_backlog"))
     if not backlog:
         return []
+    full_summary = _as_dict(
+        payload.get("stock_trait_full_candidate_prefilter_summary")
+    )
     policies = _as_list(backlog.get("policies"))
     first_policy = _as_dict(policies[0]) if policies else {}
     wounds = ",".join(
         _wound_label(item) for item in _as_list(backlog.get("candidate_row_wounds"))[:3]
     )
-    return [
+    lines = [
         "",
         "股性/质地筛选:",
         (
@@ -1611,6 +1614,23 @@ def _format_stock_personality_selection_policy_backlog(
             "boundary=只导研究,未PIT验证前不改排名"
         ),
     ]
+    if full_summary:
+        lines.append(
+            "- 全候选股性: "
+            f"候选={_fmt_num(full_summary.get('candidate_count'))} "
+            f"通过={_fmt_num(full_summary.get('pass_count'))} "
+            f"失败/不完整={_fmt_num(full_summary.get('fail_or_incomplete_count'))} "
+            f"缺数据={_fmt_num(full_summary.get('missing_trait_row_count'))} "
+            "排名影响=未应用"
+        )
+        fail_rows = [
+            f"#{_fmt_num(row.get('rank'))} {row.get('symbol')} {row.get('stock_name')}"
+            for row in _as_list(full_summary.get("top_fail_or_incomplete_rows"))[:5]
+            if isinstance(row, dict)
+        ]
+        if fail_rows:
+            lines.append(f"- 股性失败样本: {', '.join(fail_rows)}")
+    return lines
 
 
 def _format_official_hard_risk_candidate_summary(

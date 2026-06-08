@@ -117,6 +117,32 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                 }
             ],
         },
+        "stock_trait_full_candidate_prefilter_summary": {
+            "status": "REPORT_ONLY_FULL_CANDIDATE_STOCK_TRAIT_PREFILTER_SUMMARY",
+            "candidate_count": 43,
+            "pass_count": 18,
+            "fail_or_incomplete_count": 25,
+            "missing_trait_row_count": 0,
+            "ranking_effect": "not_applied_to_current_rank",
+            "top_fail_or_incomplete_rows": [
+                {
+                    "rank": 1,
+                    "symbol": "002251.SZ",
+                    "stock_name": "步步高",
+                    "evaluation_status": (
+                        "REPORT_ONLY_PREFILTER_FAIL_OR_INCOMPLETE"
+                    ),
+                },
+                {
+                    "rank": 8,
+                    "symbol": "300319.SZ",
+                    "stock_name": "麦捷科技",
+                    "evaluation_status": (
+                        "REPORT_ONLY_PREFILTER_FAIL_OR_INCOMPLETE"
+                    ),
+                },
+            ],
+        },
         "official_hard_risk_candidate_summary": {
             "status": "REPORT_ONLY_OFFICIAL_HARD_RISK_CANDIDATE_SUMMARY",
             "candidate_count": 43,
@@ -1643,6 +1669,8 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "股性/质地筛选:" in text
     assert "未接股性/质地筛选" in text
     assert "ranking_effect=未应用/只显示伤口" in text
+    assert "全候选股性: 候选=43 通过=18 失败/不完整=25 缺数据=0" in text
+    assert "股性失败样本: #1 002251.SZ 步步高, #8 300319.SZ 麦捷科技" in text
     assert "官方硬风险候选:" in text
     assert "候选=43 硬风险=2 排名影响=未应用 report_only=true" in text
     assert "000536.SZ 华映科技" in text
