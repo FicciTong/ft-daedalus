@@ -1036,10 +1036,21 @@ WINDOW_LABEL_ZH = {
     "first30m_confirmation_1001": "前30分钟确认",
 }
 
+EVIDENCE_TIER_LABEL_ZH = {
+    "VALIDATED_EDGE": "已验证边际",
+    "SUPPORTED_OBSERVATION": "支持观察",
+    "OBSERVATION": "普通观察",
+}
+
 
 def _wound_label(wound: Any) -> str:
     name = str(wound)
     return WOUND_LABEL_ZH.get(name, name)
+
+
+def _evidence_tier_label(tier: Any) -> str:
+    key = str(tier or "OBSERVATION")
+    return EVIDENCE_TIER_LABEL_ZH.get(key, key)
 
 
 def _zh_label(value: Any, labels: dict[str, str]) -> str:
@@ -2401,6 +2412,7 @@ def _format_owner_review_truth_units(
     top_rows = _as_list(truth_units.get("top_truth_units"))
     route_counts = _as_dict(truth_units.get("route_counts"))
     confidence_counts = _as_dict(truth_units.get("confidence_counts"))
+    tier_counts = _as_dict(truth_units.get("evidence_tier_counts"))
     lines = [
         "",
         "Owner-review truth units:",
@@ -2422,6 +2434,11 @@ def _format_owner_review_truth_units(
             f"tail_support={_fmt_num(confidence_counts.get('owner_tail_watch_support_ok'))} "
             f"sample_ok={_fmt_num(confidence_counts.get('observation_sample_ok_not_confirmed'))}"
         ),
+        (
+            f"- evidence_tiers supported={_fmt_num(tier_counts.get('SUPPORTED_OBSERVATION', 0))} "
+            f"observation={_fmt_num(tier_counts.get('OBSERVATION', 0))} "
+            f"validated={_fmt_num(tier_counts.get('VALIDATED_EDGE', 0))}"
+        ),
     ]
     for row in top_rows[:limit]:
         if not isinstance(row, dict):
@@ -2429,6 +2446,7 @@ def _format_owner_review_truth_units(
         lines.append(
             f"- {row.get('hypothesis_id', 'unknown')} "
             f"horizon={row.get('horizon_id', 'unknown')} "
+            f"证据层={_evidence_tier_label(row.get('evidence_tier'))} "
             f"route={row.get('owner_review_route', 'unknown')} "
             f"latest={row.get('latest_verdict', 'unknown')} "
             f"net={_fmt_pct(row.get('latest_executable_excess_pct_net_static_cost'))} "
@@ -2457,6 +2475,7 @@ def _format_owner_review_truth_units(
                 f"n={_fmt_num(row.get('latest_executable_row_n'))}/"
                 f"days={_fmt_num(row.get('latest_date_cluster_n'))} "
                 f"source=block_condition_daywalk "
+                f"证据层={_evidence_tier_label(row.get('evidence_tier'))} "
                 f"not_edge=true wounds={wounds}"
             )
     generic_daywalk_rows_all = [
@@ -2493,6 +2512,7 @@ def _format_owner_review_truth_units(
                 f"n={_fmt_num(row.get('latest_executable_row_n'))}/"
                 f"days={_fmt_num(row.get('latest_date_cluster_n'))} "
                 f"source=hypothesis_daywalk "
+                f"证据层={_evidence_tier_label(row.get('evidence_tier'))} "
                 f"not_edge=true wounds={wounds}"
             )
     report_path = truth_units.get("report_path")
@@ -2648,6 +2668,7 @@ def format_kairos_owner_brief_compact(
             f"{item.get('symbol', 'unknown')} {item.get('stock_name', '')} "
             f"[{item.get('industry_name', 'unknown')}] "
             f"{item.get('tactic_name', item.get('tactic_id', 'unknown'))} "
+            f"证据层={_evidence_tier_label(item.get('evidence_tier'))} "
             f"{item.get('owner_confidence_label', 'unknown')} "
             f"净超额={_fmt_pct(support.get('net_excess_pct'))} "
             f"右尾5={_fmt_pct(support.get('right_tail_return_ge_5pct_share_pct'))} "
@@ -2861,6 +2882,7 @@ def format_kairos_owner_brief(
             f"{item.get('symbol', 'unknown')} {item.get('stock_name', '')} "
             f"[{item.get('industry_name', 'unknown')}] "
             f"{item.get('tactic_name', item.get('tactic_id', 'unknown'))} "
+            f"证据层={_evidence_tier_label(item.get('evidence_tier'))} "
             f"label={item.get('owner_confidence_label', 'unknown')} "
             f"gross={_fmt_pct(support.get('gross_excess_pct'))} "
             f"net={net_text} "

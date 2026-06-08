@@ -53,6 +53,11 @@ def _sample_owner_brief_payload() -> dict[str, object]:
         "as_of_date": "2026-06-05",
         "target_trade_date": "2026-06-08",
         "accepted_edges": 0,
+        "evidence_tier_counts": {
+            "SUPPORTED_OBSERVATION": 1,
+            "OBSERVATION": 0,
+            "VALIDATED_EDGE": 0,
+        },
         "market_facts": {
             "market_regime": "CHOPPY",
             "emotion_phase": "hot",
@@ -344,6 +349,12 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                     "execution_template_zh": "次日开盘后观察前30分钟, 只做观察触发, 不是买入指令。",
                 },
                 "owner_confidence_label": "可用参考",
+                "evidence_tier": "SUPPORTED_OBSERVATION",
+                "evidence_tier_zh": "支持观察",
+                "tier_reason": (
+                    "net_cost_positive_date_block_ci_non_crossing_support_ok_"
+                    "report_only_missing_fdr_holdout_forward_shadow"
+                ),
                 "evidence_wounds": [
                     "not_industry_neutral_contains_sector_beta",
                     "stock_personality_selection_policy_not_integrated",
@@ -735,6 +746,11 @@ def _sample_owner_review_truth_units_payload() -> dict[str, object]:
             "right_tail_but_mean_negative_review_only": 29,
             "needs_support_before_review": 56,
         },
+        "evidence_tier_counts": {
+            "SUPPORTED_OBSERVATION": 30,
+            "OBSERVATION": 90,
+            "VALIDATED_EDGE": 0,
+        },
         "confidence_counts": {
             "usable_reference_net_ci_positive": 3,
             "owner_tail_watch_support_ok": 27,
@@ -764,6 +780,7 @@ def _sample_owner_review_truth_units_payload() -> dict[str, object]:
                 "hypothesis_id": "high_gap_first30m_hold",
                 "horizon_id": "next_open_to_d5_close",
                 "owner_review_route": "strict_candidate_review_only",
+                "evidence_tier": "SUPPORTED_OBSERVATION",
                 "latest_verdict": "CANDIDATE_ONLY",
                 "latest_executable_excess_pct_net_static_cost": 0.4774,
                 "latest_right_tail_return_ge_5pct_share_pct": 34.1672,
@@ -780,6 +797,7 @@ def _sample_owner_review_truth_units_payload() -> dict[str, object]:
                 "horizon_id": "next_open_to_d5_close",
                 "source_type": "cached_retry",
                 "owner_review_route": "strict_candidate_review_only",
+                "evidence_tier": "SUPPORTED_OBSERVATION",
                 "latest_verdict": "CANDIDATE_ONLY",
                 "latest_executable_excess_pct_gross": 0.75,
                 "latest_executable_row_n": 4437,
@@ -792,6 +810,7 @@ def _sample_owner_review_truth_units_payload() -> dict[str, object]:
                 "horizon_id": "next_open_to_d5_close",
                 "source_type": "block_condition_daywalk",
                 "owner_review_route": "strict_candidate_review_only",
+                "evidence_tier": "OBSERVATION",
                 "latest_verdict": "CANDIDATE_ONLY",
                 "latest_executable_excess_pct_gross": 0.5178,
                 "latest_executable_row_n": 36575,
@@ -808,6 +827,7 @@ def _sample_owner_review_truth_units_payload() -> dict[str, object]:
                 "horizon_id": "next_open_to_d5_close",
                 "source_type": "hypothesis_daywalk",
                 "owner_review_route": "strict_candidate_review_only",
+                "evidence_tier": "OBSERVATION",
                 "latest_verdict": "CANDIDATE_ONLY",
                 "latest_executable_excess_pct_gross": 0.5727,
                 "latest_executable_row_n": 1885,
@@ -1408,17 +1428,19 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "Owner-review truth units" in text
     assert "truth_units=REPORT_ONLY_OWNER_REVIEW_TRUTH_UNITS_FROM_CACHED_RETRY" in text
     assert "strict=9" in text
+    assert "evidence_tiers supported=30 observation=90 validated=0" in text
     assert "high_gap_first30m_hold horizon=next_open_to_d5_close" in text
+    assert "证据层=支持观察 route=strict_candidate_review_only" in text
     assert "block_condition_strict_candidates" in text
     assert "retreat_remnant_strength horizon=next_open_to_d5_close" in text
-    assert "source=block_condition_daywalk not_edge=true" in text
+    assert "source=block_condition_daywalk 证据层=普通观察 not_edge=true" in text
     assert "wounds=板块条件daywalk/非主缓存路径,未接净成本,未接日期分块CI" in text
     assert "generic_daywalk_truth_units" in text
     assert (
         "open_auction_volume_price_acceptance family=auction_microstructure "
         "horizon=next_open_to_d5_close"
     ) in text
-    assert "source=hypothesis_daywalk not_edge=true" in text
+    assert "source=hypothesis_daywalk 证据层=普通观察 not_edge=true" in text
     assert "wounds=通用daywalk/非主缓存路径,未接净成本,未接日期分块CI" in text
     assert "score/rank is not evidence, edge, GO, or advice" in text
     assert "日包总入口" in text
@@ -1743,6 +1765,7 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "top=盛新锂能, 中矿资源" in text
     assert "boundary=cluster is one correlated setup" in text
     assert "002251.SZ 步步高" in text
+    assert "证据层=支持观察" in text
     assert "净超额=" in text
     assert "右尾簇=high_gap_first30m_hold::超市连锁" in text
     assert "样本=" in text
