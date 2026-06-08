@@ -10,12 +10,14 @@ from daedalus_wechat.kairos_readout import (
     format_kairos_intraday_alert,
     format_kairos_owner_brief,
     format_kairos_owner_brief_compact,
+    format_kairos_owner_daily_archive_dates,
     format_kairos_today_readout,
     load_kairos_forward_shadow_track_record,
     load_kairos_hypothesis_scout_readout,
     load_kairos_intraday_alert,
     load_kairos_intraday_candidate_manifest,
     load_kairos_owner_brief,
+    load_kairos_owner_daily_archive,
     load_kairos_owner_daily_package,
     load_kairos_owner_review_truth_units,
     load_kairos_today_readout,
@@ -974,6 +976,65 @@ def test_load_kairos_owner_daily_package_reads_latest_report(tmp_path: Path) -> 
     assert payload["accepted_edges"] == 0
 
 
+def test_load_kairos_owner_daily_archive_reads_dated_bundle(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    archive_dir = tmp_path / "2026-06-08"
+    archive_dir.mkdir()
+    (archive_dir / "owner_review_brief.json").write_text(
+        json.dumps(_sample_owner_brief_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (archive_dir / "owner_daily_package.json").write_text(
+        json.dumps(_sample_owner_daily_package_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (archive_dir / "intraday_owner_alert.json").write_text(
+        json.dumps(_sample_intraday_alert_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "daedalus_wechat.kairos_readout.default_kairos_owner_daily_archive_root",
+        lambda: tmp_path,
+    )
+
+    bundle = load_kairos_owner_daily_archive("2026-06-08")
+
+    assert bundle["report_date"] == "2026-06-08"
+    assert bundle["accepted_edges"] == 0
+    assert bundle["owner_review_brief"]["report_path"] == str(
+        archive_dir / "owner_review_brief.json"
+    )
+    assert bundle["owner_daily_package"]["report_path"] == str(
+        archive_dir / "owner_daily_package.json"
+    )
+    assert bundle["intraday_owner_alert"]["report_path"] == str(
+        archive_dir / "intraday_owner_alert.json"
+    )
+
+
+def test_format_kairos_owner_daily_archive_dates_lists_available_days(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    for day in ("2026-06-08", "2026-06-07"):
+        archive_dir = tmp_path / day
+        archive_dir.mkdir()
+        (archive_dir / "owner_review_brief.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        "daedalus_wechat.kairos_readout.default_kairos_owner_daily_archive_root",
+        lambda: tmp_path,
+    )
+
+    text = format_kairos_owner_daily_archive_dates()
+
+    assert "Kairos 日报历史: 可回看 2 天" in text
+    assert "2026-06-08, 2026-06-07" in text
+    assert "/brief YYYY-MM-DD" in text
+    assert "accepted_edges=0" in text
+
+
 def test_load_kairos_forward_shadow_track_record_reads_latest_report(
     tmp_path: Path,
 ) -> None:
@@ -1391,6 +1452,77 @@ def test_cli_brief_does_not_require_bridge_state(tmp_path: Path, capsys, monkeyp
     assert "002251.SZ 步步高" in out
 
 
+def test_cli_brief_date_reads_archived_daily_report(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    archive_dir = tmp_path / "2026-06-08"
+    archive_dir.mkdir()
+    (archive_dir / "owner_review_brief.json").write_text(
+        json.dumps(_sample_owner_brief_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (archive_dir / "owner_daily_package.json").write_text(
+        json.dumps(_sample_owner_daily_package_payload(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (archive_dir / "intraday_owner_alert.json").write_text(
+        json.dumps(_sample_intraday_alert_payload_with_triggered_row(), ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "daedalus_wechat.kairos_readout.default_kairos_owner_daily_archive_root",
+        lambda: tmp_path,
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["daedalus-wechat", "brief", "--date", "2026-06-08", "--limit", "1"],
+    )
+    monkeypatch.setattr(
+        "daedalus_wechat.cli.load_kairos_intraday_candidate_manifest",
+        lambda: _sample_intraday_manifest_payload(),
+    )
+    monkeypatch.setattr(
+        "daedalus_wechat.cli.load_kairos_forward_shadow_track_record",
+        lambda: _sample_forward_shadow_track_record_payload(),
+    )
+    monkeypatch.setattr(
+        "daedalus_wechat.cli.load_kairos_hypothesis_scout_readout",
+        lambda: _sample_hypothesis_scout_readout_payload(),
+    )
+
+    rc = main()
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Kairos 日包 2026-06-05 -> 2026-06-08" in out
+    assert f"brief={archive_dir / 'owner_review_brief.json'}" in out
+    assert "盘中触发 Top 1" in out
+
+
+def test_cli_brief_dates_lists_archive_dates(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    archive_dir = tmp_path / "2026-06-08"
+    archive_dir.mkdir()
+    (archive_dir / "owner_review_brief.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        "daedalus_wechat.kairos_readout.default_kairos_owner_daily_archive_root",
+        lambda: tmp_path,
+    )
+    monkeypatch.setattr("sys.argv", ["daedalus-wechat", "brief", "--dates"])
+
+    rc = main()
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "Kairos 日报历史: 可回看 1 天" in out
+    assert "2026-06-08" in out
+
+
 def test_cli_brief_full_keeps_diagnostic_view(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:
@@ -1491,6 +1623,46 @@ def test_daemon_brief_full_command_keeps_diagnostic_view() -> None:
     assert "Kairos 日包 brief=REPORT_ONLY_SHORT_CYCLE_OWNER_REVIEW_BRIEF" in text
     assert "Forward-shadow闭环" in text
     assert "Broad scout intake" in text
+
+
+def test_daemon_brief_date_command_reads_archive() -> None:
+    with patch(
+        "daedalus_wechat.daemon.load_kairos_owner_daily_archive",
+        return_value={
+            "owner_review_brief": _sample_owner_brief_payload(),
+            "owner_daily_package": _sample_owner_daily_package_payload(),
+            "intraday_owner_alert": _sample_intraday_alert_payload_with_triggered_row(),
+            "accepted_edges": 0,
+        },
+    ) as archive_loader, patch(
+        "daedalus_wechat.daemon.load_kairos_intraday_candidate_manifest",
+        return_value=_sample_intraday_manifest_payload(),
+    ), patch(
+        "daedalus_wechat.daemon.load_kairos_forward_shadow_track_record",
+        return_value=_sample_forward_shadow_track_record_payload(),
+    ), patch(
+        "daedalus_wechat.daemon.load_kairos_hypothesis_scout_readout",
+        return_value=_sample_hypothesis_scout_readout_payload(),
+    ):
+        text = BridgeDaemon._handle_command(
+            BridgeDaemon.__new__(BridgeDaemon), "/brief 2026-06-08"
+        )
+
+    archive_loader.assert_called_once_with("2026-06-08")
+    assert "Kairos 日包 2026-06-05 -> 2026-06-08" in text
+    assert "盘中触发 Top 1" in text
+
+
+def test_daemon_brief_dates_command_lists_archive_dates() -> None:
+    with patch(
+        "daedalus_wechat.daemon.format_kairos_owner_daily_archive_dates",
+        return_value="Kairos 日报历史: 可回看 1 天",
+    ):
+        text = BridgeDaemon._handle_command(
+            BridgeDaemon.__new__(BridgeDaemon), "/brief dates"
+        )
+
+    assert "Kairos 日报历史" in text
 
 
 def test_load_kairos_intraday_alert_reads_latest_report(tmp_path: Path) -> None:

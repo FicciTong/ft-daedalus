@@ -24,12 +24,14 @@ from .kairos_readout import (
     format_kairos_intraday_alert,
     format_kairos_owner_brief,
     format_kairos_owner_brief_compact,
+    format_kairos_owner_daily_archive_dates,
     format_kairos_today_readout,
     load_kairos_forward_shadow_track_record,
     load_kairos_hypothesis_scout_readout,
     load_kairos_intraday_alert,
     load_kairos_intraday_candidate_manifest,
     load_kairos_owner_brief,
+    load_kairos_owner_daily_archive,
     load_kairos_owner_daily_package,
     load_kairos_today_readout,
 )
@@ -300,6 +302,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Render the full diagnostic brief instead of the compact owner view",
     )
+    brief.add_argument(
+        "--date",
+        default=None,
+        help="Render a dated archived owner daily report (YYYY-MM-DD)",
+    )
+    brief.add_argument(
+        "--dates",
+        action="store_true",
+        help="List archived owner daily report dates",
+    )
     intraday = sub.add_parser(
         "intraday",
         help="Print latest Kairos short-cycle intraday owner alert",
@@ -435,7 +447,23 @@ def main() -> int:
             print(format_kairos_today_readout(payload))
         return 0
     if args.command == "brief":
-        payload = load_kairos_owner_brief(args.report_path)
+        if args.dates:
+            print(format_kairos_owner_daily_archive_dates())
+            return 0
+        archived = load_kairos_owner_daily_archive(args.date) if args.date else None
+        payload = (
+            archived["owner_review_brief"]
+            if archived
+            else load_kairos_owner_brief(args.report_path)
+        )
+        daily_package = (
+            archived["owner_daily_package"]
+            if archived
+            else load_kairos_owner_daily_package()
+        )
+        intraday_alert = (
+            archived["intraday_owner_alert"] if archived else load_kairos_intraday_alert()
+        )
         if args.json:
             print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
         else:
@@ -448,9 +476,9 @@ def main() -> int:
                 renderer(
                     payload,
                     candidate_limit=args.limit,
-                    daily_package=load_kairos_owner_daily_package(),
+                    daily_package=daily_package,
                     intraday_manifest=load_kairos_intraday_candidate_manifest(),
-                    intraday_alert=load_kairos_intraday_alert(),
+                    intraday_alert=intraday_alert,
                     forward_shadow_track_record=load_kairos_forward_shadow_track_record(),
                     hypothesis_scout_readout=load_kairos_hypothesis_scout_readout(),
                 )

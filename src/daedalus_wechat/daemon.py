@@ -31,15 +31,18 @@ from .incoming_media import (
     download_incoming_video,
 )
 from .kairos_readout import (
+    ARCHIVE_DATE_RE,
     format_kairos_intraday_alert,
     format_kairos_owner_brief,
     format_kairos_owner_brief_compact,
+    format_kairos_owner_daily_archive_dates,
     format_kairos_today_readout,
     load_kairos_forward_shadow_track_record,
     load_kairos_hypothesis_scout_readout,
     load_kairos_intraday_alert,
     load_kairos_intraday_candidate_manifest,
     load_kairos_owner_brief,
+    load_kairos_owner_daily_archive,
     load_kairos_owner_daily_package,
     load_kairos_today_readout,
 )
@@ -390,7 +393,7 @@ HELP_TEXT = """FT bridge（支持 `/` 和 `\\`，缩写参数同原命令）
 /lg /log           日志
 /cu /catchup       补看
 /fl /flush         冲洗
-/kt /kairos-today  Kairos；/b /brief 日包；/ia /intraday 盘中
+/kt /kairos-today  Kairos；/b /brief 日包/历史；/ia /intraday 盘中
 /it /intent        接线；/fb /feedback 反馈
 /rs /room-status   房间状态；/bc 广播
 """
@@ -878,16 +881,32 @@ class BridgeDaemon:
         if command == "/kairos-today":
             return format_kairos_today_readout(load_kairos_today_readout())
         if command == "/brief":
+            brief_arg = arg.strip()
+            if brief_arg.lower() in {"dates", "history", "历史", "回看"}:
+                return format_kairos_owner_daily_archive_dates()
+            archive = (
+                load_kairos_owner_daily_archive(brief_arg)
+                if ARCHIVE_DATE_RE.match(brief_arg)
+                else None
+            )
             renderer = (
                 format_kairos_owner_brief
-                if arg.lower() in {"full", "debug", "详细", "全部"}
+                if brief_arg.lower() in {"full", "debug", "详细", "全部"}
                 else format_kairos_owner_brief_compact
             )
             return renderer(
-                load_kairos_owner_brief(),
-                daily_package=load_kairos_owner_daily_package(),
+                archive["owner_review_brief"] if archive else load_kairos_owner_brief(),
+                daily_package=(
+                    archive["owner_daily_package"]
+                    if archive
+                    else load_kairos_owner_daily_package()
+                ),
                 intraday_manifest=load_kairos_intraday_candidate_manifest(),
-                intraday_alert=load_kairos_intraday_alert(),
+                intraday_alert=(
+                    archive["intraday_owner_alert"]
+                    if archive
+                    else load_kairos_intraday_alert()
+                ),
                 forward_shadow_track_record=load_kairos_forward_shadow_track_record(),
                 hypothesis_scout_readout=load_kairos_hypothesis_scout_readout(),
             )

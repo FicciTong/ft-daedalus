@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
 
 from .owner_feedback import format_owner_feedback_summary, load_owner_feedback_summary
+
+ARCHIVE_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 def default_kairos_readout_path() -> Path:
@@ -72,6 +75,105 @@ def default_kairos_intraday_candidate_manifest_path() -> Path:
         / "research_substrate"
         / "short_cycle_intraday_candidate_manifest_latest.json"
     )
+
+
+def default_kairos_owner_daily_archive_root() -> Path:
+    """Return the workbench-local dated Kairos owner daily archive root."""
+    cosmos_root = Path(__file__).resolve().parents[3]
+    return (
+        cosmos_root
+        / "ft-kairos"
+        / "var"
+        / "reports"
+        / "research_substrate"
+        / "owner_daily_archive"
+    )
+
+
+def kairos_owner_daily_archive_paths(report_date: str) -> dict[str, Path]:
+    """Return dated archive paths for one owner-visible report date."""
+    clean_date = report_date.strip()
+    if not ARCHIVE_DATE_RE.match(clean_date):
+        raise ValueError("archive report date must use YYYY-MM-DD")
+    root = default_kairos_owner_daily_archive_root() / clean_date
+    return {
+        "root": root,
+        "owner_review_brief": root / "owner_review_brief.json",
+        "owner_daily_package": root / "owner_daily_package.json",
+        "intraday_owner_alert": root / "intraday_owner_alert.json",
+    }
+
+
+def list_kairos_owner_daily_archive_dates(limit: int = 20) -> list[str]:
+    """List dated owner daily archives, newest first."""
+    root = default_kairos_owner_daily_archive_root()
+    if not root.is_dir():
+        return []
+    dates: list[str] = []
+    for item in root.iterdir():
+        if not item.is_dir() or not ARCHIVE_DATE_RE.match(item.name):
+            continue
+        if (item / "owner_review_brief.json").is_file():
+            dates.append(item.name)
+    return sorted(dates, reverse=True)[: max(0, limit)]
+
+
+def format_kairos_owner_daily_archive_dates(limit: int = 20) -> str:
+    dates = list_kairos_owner_daily_archive_dates(limit=limit)
+    if not dates:
+        return (
+            "Kairos 日报历史: 暂无可回看日期\n"
+            f"archive_root={default_kairos_owner_daily_archive_root()}\n"
+            "边界: report-only / accepted_edges=0"
+        )
+    return "\n".join(
+        [
+            f"Kairos 日报历史: 可回看 {len(dates)} 天",
+            f"日期: {', '.join(dates)}",
+            "用法: /brief YYYY-MM-DD 或 daedalus-wechat brief --date YYYY-MM-DD",
+            "边界: report-only / accepted_edges=0",
+        ]
+    )
+
+
+def load_kairos_owner_daily_archive(report_date: str) -> dict[str, Any]:
+    """Load one dated owner daily archive bundle without falling back to latest."""
+    try:
+        paths = kairos_owner_daily_archive_paths(report_date)
+    except ValueError as exc:
+        missing = _missing_owner_brief_payload(
+            default_kairos_owner_daily_archive_root() / report_date,
+            status="BLOCKED",
+            reason=str(exc),
+        )
+        return {
+            "report_date": report_date,
+            "archive_root": str(default_kairos_owner_daily_archive_root() / report_date),
+            "owner_review_brief": missing,
+            "owner_daily_package": _missing_owner_daily_package_payload(
+                default_kairos_owner_daily_archive_root() / report_date,
+                status="BLOCKED",
+                reason=str(exc),
+            ),
+            "intraday_owner_alert": _missing_intraday_alert_payload(
+                default_kairos_owner_daily_archive_root() / report_date,
+                status="BLOCKED",
+                reason=str(exc),
+            ),
+            "accepted_edges": 0,
+        }
+    return {
+        "report_date": report_date,
+        "archive_root": str(paths["root"]),
+        "owner_review_brief": load_kairos_owner_brief(paths["owner_review_brief"]),
+        "owner_daily_package": load_kairos_owner_daily_package(
+            paths["owner_daily_package"]
+        ),
+        "intraday_owner_alert": load_kairos_intraday_alert(
+            paths["intraday_owner_alert"]
+        ),
+        "accepted_edges": 0,
+    }
 
 
 def default_kairos_hypothesis_scout_readout_path() -> Path:
@@ -2369,22 +2471,28 @@ def format_kairos_today_readout(payload: dict[str, Any]) -> str:
 
 
 __all__ = [
+    "ARCHIVE_DATE_RE",
     "default_kairos_forward_shadow_track_record_path",
     "default_kairos_hypothesis_scout_readout_path",
     "default_kairos_intraday_candidate_manifest_path",
     "default_kairos_intraday_alert_path",
+    "default_kairos_owner_daily_archive_root",
     "default_kairos_owner_review_truth_units_path",
     "default_kairos_owner_daily_package_path",
     "default_kairos_owner_brief_path",
     "default_kairos_readout_path",
+    "format_kairos_owner_daily_archive_dates",
     "format_kairos_intraday_alert",
     "format_kairos_owner_brief",
     "format_kairos_owner_brief_compact",
     "format_kairos_today_readout",
+    "kairos_owner_daily_archive_paths",
+    "list_kairos_owner_daily_archive_dates",
     "load_kairos_forward_shadow_track_record",
     "load_kairos_hypothesis_scout_readout",
     "load_kairos_intraday_candidate_manifest",
     "load_kairos_intraday_alert",
+    "load_kairos_owner_daily_archive",
     "load_kairos_owner_review_truth_units",
     "load_kairos_owner_daily_package",
     "load_kairos_owner_brief",
