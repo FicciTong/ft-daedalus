@@ -2287,6 +2287,8 @@ def format_kairos_owner_brief_compact(
     posture = _as_dict(payload.get("explosive_short_cycle_posture"))
     setup = _as_dict(posture.get("setup_supply"))
     tape = _as_dict(posture.get("right_tail_tape"))
+    env_diag = _as_dict(payload.get("environment_diagnostics"))
+    env_rigor = _as_dict(env_diag.get("rigor_summary"))
     candidates = [
         item for item in _as_list(payload.get("owner_review_candidates"))
         if isinstance(item, dict)
@@ -2333,6 +2335,20 @@ def format_kairos_owner_brief_compact(
             f"炸板={_fmt_num(tape.get('broken_limit_up_count'))}"
         ),
     ]
+    if env_diag:
+        lines.append(
+            "环境诊断: "
+            f"cases={_fmt_num(env_diag.get('case_count'))} "
+            f"当前候选={_fmt_num(env_diag.get('current_promising_count'))} "
+            f"FDR过={_fmt_num(env_rigor.get('fdr_pass_count'))}/"
+            f"{_fmt_num(env_rigor.get('fdr_known_count'))} "
+            f"CI未穿0={_fmt_num(env_rigor.get('date_block_ci_non_cross_zero_count'))} "
+            f"CI穿0={_fmt_num(env_rigor.get('date_block_ci_crosses_zero_count'))} "
+            f"posthoc={_fmt_num(env_rigor.get('posthoc_variant_selection_count'))} "
+            f"伤口={_fmt_num(env_rigor.get('case_wound_count'))} "
+            f"fresh={env_diag.get('freshness_status', 'unknown')} "
+            "边界=report-only"
+        )
 
     lines.extend(
         _format_compact_intraday_status(

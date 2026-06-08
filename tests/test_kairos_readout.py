@@ -280,9 +280,20 @@ def _sample_owner_brief_payload() -> dict[str, object]:
             }
         ],
         "environment_diagnostics": {
+            "case_count": 24,
+            "current_for_package_as_of": True,
             "freshness_status": "STALE_FOR_PACKAGE_AS_OF",
             "current_promising_count": 0,
             "diagnostic_promising_count": 6,
+            "rigor_summary": {
+                "case_wound_count": 4,
+                "date_block_ci_crosses_zero_count": 3,
+                "date_block_ci_non_cross_zero_count": 2,
+                "fdr_known_count": 6,
+                "fdr_pass_count": 2,
+                "posthoc_variant_selection_count": 6,
+                "review_unit_count": 6,
+            },
         },
         "limit_board_base_rates": [
             {
@@ -1521,6 +1532,9 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "市场: 震荡 情绪=热" in text
     assert "行业集中: 行业高度集中" in text
     assert "右尾温度计:" in text
+    assert "环境诊断: cases=24 当前候选=0 FDR过=2/6" in text
+    assert "CI未穿0=2 CI穿0=3 posthoc=6 伤口=4" in text
+    assert "边界=report-only" in text
     assert "盘中: 观察包就绪 已观察=2 待观察=25" in text
     assert "触发字段=触发字段就绪 快照=实时快照待补" in text
     assert "盘中EOD复盘: PENDING_EOD_INTRADAY_REPLAY_REVIEW" in text
