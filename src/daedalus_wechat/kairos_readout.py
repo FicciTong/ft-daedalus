@@ -305,6 +305,15 @@ def _continuous_runner_status_label(value: Any) -> str | None:
     return status or None
 
 
+def _candidate_count_guard_label(value: Any) -> str | None:
+    status = str(value or "")
+    if status == "FILLED_TARGET_CANDIDATE_COUNT":
+        return "已保量"
+    if status == "UNDERFILLED_CANDIDATE_COUNT":
+        return "候选不足"
+    return status or None
+
+
 def _format_archive_day_line(row: dict[str, Any]) -> str:
     summary = _as_dict(row.get("summary"))
     report_date = row.get("report_date")
@@ -315,6 +324,36 @@ def _format_archive_day_line(row: dict[str, Any]) -> str:
         f"rows={_fmt_num(summary.get('owner_review_candidate_count'))}",
         _format_archive_tier_counts(summary),
     ]
+    candidate_guard_label = _candidate_count_guard_label(
+        summary.get("owner_review_candidate_count_guard_status")
+    )
+    if candidate_guard_label:
+        pieces.append(
+            "候选保量="
+            f"{candidate_guard_label} "
+            f"{_fmt_num(summary.get('owner_review_candidate_count'))}/"
+            f"{_fmt_num(summary.get('owner_review_candidate_target_count'))}"
+        )
+    _append_archive_count(
+        pieces,
+        label="候选短缺",
+        value=summary.get("owner_review_candidate_count_guard_shortfall_count"),
+    )
+    _append_archive_count(
+        pieces,
+        label="替补池",
+        value=summary.get("owner_review_candidate_count_guard_replacement_pool_count"),
+    )
+    _append_archive_count_map(
+        pieces,
+        label="候选来源",
+        value=summary.get("owner_review_candidate_count_guard_source_mix"),
+    )
+    if summary.get("owner_review_candidate_count_guard_underfill_blocker_id"):
+        pieces.append(
+            "候选短缺阻塞="
+            f"{summary.get('owner_review_candidate_count_guard_underfill_blocker_id')}"
+        )
     if summary.get("intraday_status"):
         pieces.append(f"intraday={summary.get('intraday_status')}")
         if summary.get("intraday_triggered_unit_count") is not None:

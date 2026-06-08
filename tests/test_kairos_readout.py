@@ -1367,6 +1367,21 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
                             "target_trade_date": "2026-06-08",
                             "as_of_date": "2026-06-05",
                             "owner_review_candidate_count": 40,
+                            "owner_review_candidate_target_count": 40,
+                            "owner_review_candidate_count_guard_status": (
+                                "FILLED_TARGET_CANDIDATE_COUNT"
+                            ),
+                            "owner_review_candidate_count_guard_shortfall_count": 0,
+                            "owner_review_candidate_count_guard_replacement_pool_count": (
+                                88
+                            ),
+                            "owner_review_candidate_count_guard_source_mix": {
+                                "primary_candidate": 6,
+                                "replacement_candidate": 34,
+                            },
+                            "owner_review_candidate_count_guard_underfill_blocker_id": (
+                                None
+                            ),
                             "evidence_tier_counts": {
                                 "VALIDATED_EDGE": 0,
                                 "SUPPORTED_OBSERVATION": 1,
@@ -1479,6 +1494,11 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
     assert "Kairos 日报历史: 可回看 2 天" in text
     assert "- 2026-06-08 target=2026-06-08 as_of=2026-06-05 rows=40" in text
     assert "tier=验证0/支持1/观察39" in text
+    assert "候选保量=已保量 40/40" in text
+    assert "候选短缺=0" in text
+    assert "替补池=88" in text
+    assert "候选来源=primary_candidate=6 replacement_candidate=34" in text
+    assert "候选短缺阻塞=" not in text
     assert "intraday=REPORT_ONLY_INTRADAY_READY" in text
     assert "triggered=4" in text
     assert "触发事件=14" in text
