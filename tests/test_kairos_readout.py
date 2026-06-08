@@ -1390,6 +1390,33 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
                             "intraday_eod_outcome_status": "PENDING_EOD_OUTCOME",
                             "eod_outcome_candidate_unit_count": 20,
                             "eod_outcome_matched_panel_row_count": 0,
+                            "feedback_status": "REPORT_ONLY_FEEDBACK_READY",
+                            "feedback_queue_item_count": 27,
+                            "feedback_intaked_route_item_count": 27,
+                            "feedback_research_action_counts": {
+                                "draft_machine_executable_hypothesis_or_selection_policy": 10,
+                                "verify_surface_or_wound_connection_before_rerun": 8,
+                            },
+                            "forward_shadow_lifecycle_state": "PENDING_TARGET_OPEN_STATE",
+                            "forward_shadow_pending_trigger_count": 213,
+                            "forward_shadow_trigger_fired_count": 0,
+                            "minute_price_volume_candidate_count": 21,
+                            "minute_price_volume_ready_count": 21,
+                            "minute_price_volume_missing_count": 0,
+                            "price_volume_flag_counts": {
+                                "first30m_high_amount_acceptance": 16,
+                                "late_session_volume_acceleration_positive": 19,
+                            },
+                            "volume_anchor_universe_match_count": 769,
+                            "volume_anchor_shape_pass_count": 88,
+                            "volume_anchor_mode_counts": {
+                                "dual_price_volume_break": 40,
+                                "price_only_break": 703,
+                                "volume_only_watchlist": 26,
+                            },
+                            "volume_anchor_outcome_event_count": 16875,
+                            "volume_anchor_outcome_industry_mapped_event_count": 16006,
+                            "volume_anchor_outcome_status": "READY",
                             "latest_generated_at_utc": "2026-06-08T06:30:00Z",
                         },
                     },
@@ -1426,6 +1453,27 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
     assert "pending=19" in text
     assert "eod_outcome=PENDING_EOD_OUTCOME" in text
     assert "outcome_matched=0/20" in text
+    assert "反馈=REPORT_ONLY_FEEDBACK_READY" in text
+    assert "反馈队列=27" in text
+    assert "已路由=27" in text
+    assert (
+        "反馈动作=draft_machine_executable_hypothesis_or_selection_policy=10"
+        in text
+    )
+    assert "verify_surface_or_wound_connection_before_rerun=8" in text
+    assert "forward_shadow=PENDING_TARGET_OPEN_STATE" in text
+    assert "shadow_pending=213" in text
+    assert "shadow_fired=0" in text
+    assert "分钟量价=21/21" in text
+    assert "分钟缺口=0" in text
+    assert "分钟量价标记=first30m_high_amount_acceptance=16" in text
+    assert "late_session_volume_acceleration_positive=19" in text
+    assert "量价锚=88/769" in text
+    assert "锚模式=dual_price_volume_break=40" in text
+    assert "price_only_break=703" in text
+    assert "volume_only_watchlist=26" in text
+    assert "锚回放=16006/16875" in text
+    assert "锚回放状态=READY" in text
     assert "surfaces=5" in text
     assert "/brief YYYY-MM-DD" in text
     assert "accepted_edges=0" in text
@@ -1801,6 +1849,9 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
         daily_package=_sample_owner_daily_package_payload(),
         intraday_alert=_sample_intraday_alert_payload_with_triggered_row(),
         intraday_eod_review_queue=_sample_intraday_eod_review_queue_payload(),
+        intraday_eod_outcome_review=_sample_intraday_eod_outcome_review_payload(
+            status="PENDING_INTRADAY_EOD_OUTCOME_PANEL_NOT_MATURED",
+        ),
         hypothesis_scout_readout=_sample_hypothesis_scout_readout_payload(),
         owner_review_truth_units=_sample_owner_review_truth_units_payload(),
         owner_feedback_summary={

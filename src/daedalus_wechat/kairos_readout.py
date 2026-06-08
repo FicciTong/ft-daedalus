@@ -223,6 +223,16 @@ def _append_archive_count(
         pieces.append(f"{label}={_fmt_num(value)}")
 
 
+def _append_archive_count_map(
+    pieces: list[str],
+    *,
+    label: str,
+    value: Any,
+) -> None:
+    if _as_dict(value):
+        pieces.append(f"{label}={_fmt_count_map(value)}")
+
+
 def _format_archive_day_line(row: dict[str, Any]) -> str:
     summary = _as_dict(row.get("summary"))
     report_date = row.get("report_date")
@@ -301,6 +311,70 @@ def _format_archive_day_line(row: dict[str, Any]) -> str:
             f"{_fmt_num(summary.get('eod_outcome_matched_panel_row_count'))}/"
             f"{_fmt_num(summary.get('eod_outcome_candidate_unit_count'))}"
         )
+    if summary.get("feedback_status"):
+        pieces.append(f"反馈={summary.get('feedback_status')}")
+    _append_archive_count(
+        pieces,
+        label="反馈队列",
+        value=summary.get("feedback_queue_item_count"),
+    )
+    _append_archive_count(
+        pieces,
+        label="已路由",
+        value=summary.get("feedback_intaked_route_item_count"),
+    )
+    _append_archive_count_map(
+        pieces,
+        label="反馈动作",
+        value=summary.get("feedback_research_action_counts"),
+    )
+    if summary.get("forward_shadow_lifecycle_state"):
+        pieces.append(f"forward_shadow={summary.get('forward_shadow_lifecycle_state')}")
+    _append_archive_count(
+        pieces,
+        label="shadow_pending",
+        value=summary.get("forward_shadow_pending_trigger_count"),
+    )
+    _append_archive_count(
+        pieces,
+        label="shadow_fired",
+        value=summary.get("forward_shadow_trigger_fired_count"),
+    )
+    if summary.get("minute_price_volume_candidate_count") is not None:
+        pieces.append(
+            "分钟量价="
+            f"{_fmt_num(summary.get('minute_price_volume_ready_count'))}/"
+            f"{_fmt_num(summary.get('minute_price_volume_candidate_count'))}"
+        )
+    _append_archive_count(
+        pieces,
+        label="分钟缺口",
+        value=summary.get("minute_price_volume_missing_count"),
+    )
+    _append_archive_count_map(
+        pieces,
+        label="分钟量价标记",
+        value=summary.get("price_volume_flag_counts"),
+    )
+    if summary.get("volume_anchor_universe_match_count") is not None:
+        pieces.append(
+            "量价锚="
+            f"{_fmt_num(summary.get('volume_anchor_shape_pass_count'))}/"
+            f"{_fmt_num(summary.get('volume_anchor_universe_match_count'))}"
+        )
+    _append_archive_count_map(
+        pieces,
+        label="锚模式",
+        value=summary.get("volume_anchor_mode_counts"),
+    )
+    if summary.get("volume_anchor_outcome_event_count") is not None:
+        pieces.append(
+            "锚回放="
+            f"{_fmt_num(summary.get('volume_anchor_outcome_industry_mapped_event_count'))}/"
+            f"{_fmt_num(summary.get('volume_anchor_outcome_event_count'))}"
+        )
+    if summary.get("volume_anchor_outcome_status"):
+        pieces.append(f"锚回放状态={summary.get('volume_anchor_outcome_status')}")
     if summary.get("latest_generated_at_utc"):
         pieces.append(f"latest={summary.get('latest_generated_at_utc')}")
     pieces.append(f"surfaces={_fmt_num(summary.get('surface_count'))}")
