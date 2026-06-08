@@ -38,7 +38,10 @@ from .kairos_readout import (
     load_kairos_today_readout,
 )
 from .live_session import LiveCodexSessionManager
-from .owner_feedback import handle_owner_feedback_command
+from .owner_feedback import (
+    export_owner_feedback_route_queue,
+    handle_owner_feedback_command,
+)
 from .security_drill import run_security_drill
 from .state import BridgeState
 from .wechat_api import WeChatAccount, WeChatClient
@@ -358,6 +361,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional feedback ledger JSONL path.",
     )
+    feedback.add_argument(
+        "--export-routes",
+        action="store_true",
+        help="Write a report-only research-route queue artifact derived from feedback.",
+    )
+    feedback.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Optional output path for --export-routes.",
+    )
     send_bound = sub.add_parser(
         "send-bound",
         help="Send text / image / file / video to the currently bound WeChat chat",
@@ -506,6 +520,13 @@ def main() -> int:
             print(format_kairos_intraday_alert(payload, candidate_limit=args.limit))
         return 0
     if args.command == "feedback":
+        if args.export_routes:
+            payload = export_owner_feedback_route_queue(
+                ledger_path=args.path,
+                output_path=args.output,
+            )
+            print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
         print(
             handle_owner_feedback_command(
                 " ".join(args.body),

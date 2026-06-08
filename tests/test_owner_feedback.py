@@ -6,6 +6,7 @@ from pathlib import Path
 from daedalus_wechat.cli import main
 from daedalus_wechat.owner_feedback import (
     append_owner_feedback,
+    export_owner_feedback_route_queue,
     feedback_help_text,
     format_owner_feedback_summary,
     handle_owner_feedback_command,
@@ -111,6 +112,44 @@ def test_owner_feedback_routes_write_card_and_surface_blocker(tmp_path: Path) ->
     assert "复核=1" in text
 
 
+def test_owner_feedback_exports_research_route_queue(tmp_path: Path) -> None:
+    ledger = tmp_path / "owner_feedback.jsonl"
+    output = tmp_path / "owner_feedback_research_routes_latest.json"
+    append_owner_feedback(
+        mark="写卡",
+        text="洗盘突破需要做成机器可测 pattern",
+        source="test",
+        ledger_path=ledger,
+        captured_at_utc="2026-06-08T08:00:00Z",
+    )
+    append_owner_feedback(
+        mark="数据缺口",
+        text="利尔达负面事件 wound 要接进候选行",
+        source="test",
+        ledger_path=ledger,
+        captured_at_utc="2026-06-08T08:01:00Z",
+    )
+
+    payload = export_owner_feedback_route_queue(
+        ledger_path=ledger,
+        output_path=output,
+    )
+    written = json.loads(output.read_text(encoding="utf-8"))
+
+    assert payload["status"] == "OWNER_FEEDBACK_RESEARCH_ROUTE_PROJECTION_READY"
+    assert payload["route_item_count"] == 2
+    assert payload["route_counts"] == {
+        "research_card_draft_backlog": 1,
+        "surface_blocker_triage": 1,
+    }
+    assert payload["authority_boundary"]["evidence_gate_mutation_allowed"] is False
+    assert payload["authority_boundary"]["ranking_mutation_allowed"] is False
+    assert payload["authority_boundary"]["candidate_promotion_allowed"] is False
+    assert payload["accepted_edges"] == 0
+    assert written["output_path"] == str(output)
+    assert written["recent_route_items"][0]["route"] == "research_card_draft_backlog"
+
+
 def test_owner_feedback_command_records_and_blocks_unknown_mark(tmp_path: Path) -> None:
     ledger = tmp_path / "owner_feedback.jsonl"
 
@@ -170,3 +209,38 @@ def test_owner_feedback_cli_writes_requested_ledger(
     payload = json.loads(ledger.read_text(encoding="utf-8").strip())
     assert payload["text"] == "300319 高开承接值得继续观察"
     assert payload["firewall"]["ranking_mutation_allowed"] is False
+
+
+def test_owner_feedback_cli_exports_routes(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    ledger = tmp_path / "feedback.jsonl"
+    output = tmp_path / "routes.json"
+    append_owner_feedback(
+        mark="复核",
+        text="股性过滤请 review",
+        source="test",
+        ledger_path=ledger,
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "daedalus-wechat",
+            "feedback",
+            "--path",
+            str(ledger),
+            "--export-routes",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert main() == 0
+
+    out = json.loads(capsys.readouterr().out)
+    written = json.loads(output.read_text(encoding="utf-8"))
+    assert out["route_counts"] == {"peer_review_backlog": 1}
+    assert written["recent_route_items"][0]["route"] == "peer_review_backlog"
+    assert written["authority_boundary"]["trading_authority_allowed"] is False

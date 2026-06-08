@@ -75,6 +75,19 @@ def default_owner_feedback_path() -> Path:
     return daedalus_root / "var" / "reports" / "kairos_owner_feedback" / "owner_feedback.jsonl"
 
 
+def default_owner_feedback_route_queue_path() -> Path:
+    """Return the derived research-route queue artifact path."""
+
+    daedalus_root = Path(__file__).resolve().parents[2]
+    return (
+        daedalus_root
+        / "var"
+        / "reports"
+        / "kairos_owner_feedback"
+        / "owner_feedback_research_routes_latest.json"
+    )
+
+
 def normalize_mark(mark: str) -> str | None:
     normalized = mark.strip().lower()
     if not normalized:
@@ -225,6 +238,7 @@ def _feedback_route_projection(
     route_counts = Counter(str(item.get("route") or "unknown") for item in route_items)
     recent = route_items[-recent_limit:] if recent_limit > 0 else []
     return {
+        "contract": "daedalus_wechat.owner_feedback_research_route_projection",
         "status": (
             "OWNER_FEEDBACK_RESEARCH_ROUTE_PROJECTION_READY"
             if route_items
@@ -234,12 +248,49 @@ def _feedback_route_projection(
         "route_counts": dict(sorted(route_counts.items())),
         "recent_route_items": recent,
         "accepted_edges": 0,
+        "authority_boundary": {
+            "accepted_edges": 0,
+            "report_only": True,
+            "authority_delta": "none",
+            "evidence_gate_mutation_allowed": False,
+            "ranking_mutation_allowed": False,
+            "candidate_promotion_allowed": False,
+            "trading_authority_allowed": False,
+            "advisory_claim_allowed": False,
+            "owner_pnl_claim_allowed": False,
+        },
         "claim_boundary": (
             "owner feedback routes research attention only; it must not mutate "
             "evidence gates, rankings, candidate promotion, trading authority, "
             "advisory claims, or owner-PnL claims"
         ),
     }
+
+
+def export_owner_feedback_route_queue(
+    *,
+    ledger_path: Path | None = None,
+    output_path: Path | None = None,
+    recent_limit: int = 20,
+) -> dict[str, Any]:
+    """Write a derived report-only research-route queue from feedback entries."""
+
+    path = ledger_path or default_owner_feedback_path()
+    out_path = output_path or default_owner_feedback_route_queue_path()
+    entries = _read_entries(path)
+    projection = _feedback_route_projection(entries, recent_limit=recent_limit)
+    payload = {
+        **projection,
+        "source_ledger_path": str(path),
+        "output_path": str(out_path),
+        "generated_at_utc": _utc_now_iso(),
+    }
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return payload
 
 
 def load_owner_feedback_summary(
