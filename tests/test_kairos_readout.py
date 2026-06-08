@@ -117,6 +117,33 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                 }
             ],
         },
+        "official_hard_risk_candidate_summary": {
+            "status": "REPORT_ONLY_OFFICIAL_HARD_RISK_CANDIDATE_SUMMARY",
+            "candidate_count": 43,
+            "hard_risk_candidate_count": 2,
+            "ranking_effect": "not_applied_to_current_rank",
+            "top_rows": [
+                {
+                    "rank": 38,
+                    "symbol": "000536.SZ",
+                    "stock_name": "华映科技",
+                    "latest_date": "2026-05-05",
+                    "latest_announcement_kind": "shareholder_reduction",
+                    "latest_title": "关于持股5%以上股东部分股份将被司法拍卖的提示性公告",
+                },
+                {
+                    "rank": 41,
+                    "symbol": "920249.BJ",
+                    "stock_name": "利尔达",
+                    "latest_date": "2026-03-12",
+                    "latest_announcement_kind": "regulatory_risk",
+                    "latest_title": (
+                        "关于公司及相关当事人收到中国证券监督管理委员会"
+                        "立案告知书的公告"
+                    ),
+                },
+            ],
+        },
         "cross_horizon_right_tail_candidate_clusters": {
             "status": "REPORT_ONLY_CURRENT_CANDIDATE_CROSS_HORIZON_RIGHT_TAIL_INTERSECTION",
             "matched_cluster_count": 1,
@@ -1616,6 +1643,11 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "股性/质地筛选:" in text
     assert "未接股性/质地筛选" in text
     assert "ranking_effect=未应用/只显示伤口" in text
+    assert "官方硬风险候选:" in text
+    assert "候选=43 硬风险=2 排名影响=未应用 report_only=true" in text
+    assert "000536.SZ 华映科技" in text
+    assert "920249.BJ 利尔达" in text
+    assert "立案告知书" in text
     assert "环境诊断: cases=24 当前候选=0 FDR过=2/6" in text
     assert "CI未穿0=2 CI穿0=3 posthoc=6 伤口=4" in text
     assert "边界=report-only" in text

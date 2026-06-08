@@ -1613,6 +1613,36 @@ def _format_stock_personality_selection_policy_backlog(
     ]
 
 
+def _format_official_hard_risk_candidate_summary(
+    payload: dict[str, Any],
+) -> list[str]:
+    summary = _as_dict(payload.get("official_hard_risk_candidate_summary"))
+    if not summary:
+        return []
+    lines = [
+        "",
+        "官方硬风险候选:",
+        (
+            f"- 候选={_fmt_num(summary.get('candidate_count'))} "
+            f"硬风险={_fmt_num(summary.get('hard_risk_candidate_count'))} "
+            "排名影响=未应用 report_only=true"
+        ),
+    ]
+    for row in _as_list(summary.get("top_rows"))[:3]:
+        item = _as_dict(row)
+        title = str(item.get("latest_title") or "unknown")
+        if len(title) > 52:
+            title = f"{title[:52]}..."
+        lines.append(
+            f"- #{_fmt_num(item.get('rank'))} "
+            f"{item.get('symbol', 'unknown')} {item.get('stock_name', '')} "
+            f"{item.get('latest_date', 'unknown')} "
+            f"{item.get('latest_announcement_kind', 'unknown')} "
+            f"{title}"
+        )
+    return lines
+
+
 def _format_environment_conditioned_diagnostics(
     package: dict[str, Any] | None,
 ) -> list[str]:
@@ -2545,6 +2575,7 @@ def format_kairos_owner_brief_compact(
         )
 
     lines.extend(_format_stock_personality_selection_policy_backlog(payload))
+    lines.extend(_format_official_hard_risk_candidate_summary(payload))
 
     lines.extend(
         _format_compact_intraday_status(
