@@ -1388,6 +1388,7 @@ def _format_hypothesis_scout_readout(
     top_families = _as_list(surface.get("top_families"))
     top_hypotheses = _as_list(surface.get("top_hypotheses"))
     dispatchable = _as_list(surface.get("dispatchable_examples"))
+    materialized = _as_list(surface.get("already_materialized_daywalk_examples"))
     needs_spec = _as_list(surface.get("needs_executable_spec_examples"))
     pending_surface = _as_list(surface.get("pending_surface_examples"))
 
@@ -1400,6 +1401,7 @@ def _format_hypothesis_scout_readout(
             f"cells={_fmt_num(counts.get('scout_cell_count'))} "
             f"hypotheses={_fmt_num(counts.get('hypothesis_card_count'))} "
             f"dispatchable={_fmt_num(counts.get('dispatchable_pending_run_cell_count'))} "
+            f"materialized_daywalk={_fmt_num(counts.get('daywalk_report_materialized_cell_count'))} "
             f"needs_spec={_fmt_num(counts.get('needs_executable_spec_cell_count'))} "
             f"pending_surface={_fmt_num(counts.get('pending_surface_cell_count'))} "
             f"accepted_edges={scout.get('accepted_edges', 0)}"
@@ -1412,6 +1414,14 @@ def _format_hypothesis_scout_readout(
     for row in dispatchable[:limit]:
         if isinstance(row, dict):
             lines.append(f"- dispatchable: {_format_scout_example(row)}")
+    for row in materialized[:limit]:
+        if isinstance(row, dict):
+            paths = _as_list(row.get("existing_daywalk_report_paths"))
+            first_path = paths[0] if paths else "unknown"
+            lines.append(
+                f"- already_materialized: {_format_scout_example(row)} "
+                f"report={first_path}"
+            )
     for row in needs_spec[:limit]:
         if isinstance(row, dict):
             lines.append(f"- needs_spec: {_format_scout_example(row)}")

@@ -441,7 +441,8 @@ def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
         "counts": {
             "scout_cell_count": 724,
             "hypothesis_card_count": 40,
-            "dispatchable_pending_run_cell_count": 520,
+            "dispatchable_pending_run_cell_count": 192,
+            "daywalk_report_materialized_cell_count": 328,
             "needs_executable_spec_cell_count": 124,
             "pending_surface_cell_count": 80,
         },
@@ -464,6 +465,20 @@ def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
                     "route": "NEEDS_DAYWALK",
                     "execution_dispatch": "EXECUTABLE",
                     "missing_surface_requirements": [],
+                    "next_action": "run_daywalk_stability_and_forward_observed_readout",
+                }
+            ],
+            "already_materialized_daywalk_examples": [
+                {
+                    "hypothesis_id": "ice_point_repair_first_board",
+                    "family": "emotion_cycle_timing",
+                    "horizon_id": "next_open_to_d3_close",
+                    "route": "NEEDS_DAYWALK",
+                    "execution_dispatch": "EXECUTABLE",
+                    "missing_surface_requirements": [],
+                    "existing_daywalk_report_paths": [
+                        "/tmp/short_cycle_hypothesis_daywalk_ice_point_repair_first_board_long_latest.json"
+                    ],
                     "next_action": "run_daywalk_stability_and_forward_observed_readout",
                 }
             ],
@@ -1051,11 +1066,14 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "not position sizing" in text
     assert "Broad scout intake" in text
     assert (
-        "cells=724 hypotheses=40 dispatchable=520 needs_spec=124 pending_surface=80"
+        "cells=724 hypotheses=40 dispatchable=192 materialized_daywalk=328 "
+        "needs_spec=124 pending_surface=80"
         in text
     )
     assert "top_families execution_template_ablation=92 intraday_price_volume=88" in text
     assert "dispatchable: ice_point_repair_first_board family=emotion_cycle_timing" in text
+    assert "already_materialized: ice_point_repair_first_board family=emotion_cycle_timing" in text
+    assert "short_cycle_hypothesis_daywalk_ice_point_repair_first_board" in text
     assert "needs_spec: tail_accumulation_next_open family=intraday_price_volume" in text
     assert (
         "pending_surface: northbound_out_active_money_smallcap "
