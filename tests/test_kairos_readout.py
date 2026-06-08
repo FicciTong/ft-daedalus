@@ -451,8 +451,8 @@ def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
             "hypothesis_card_count": 40,
             "dispatchable_pending_run_cell_count": 192,
             "daywalk_report_materialized_cell_count": 328,
-            "specialized_readout_ready_cell_count": 108,
-            "needs_executable_spec_cell_count": 16,
+            "specialized_readout_ready_cell_count": 124,
+            "needs_executable_spec_cell_count": 0,
             "pending_surface_cell_count": 80,
         },
         "owner_review_surface": {
@@ -524,22 +524,7 @@ def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
                     },
                 }
             ],
-            "needs_executable_spec_examples": [
-                {
-                    "hypothesis_id": "d3_vs_d5_decay",
-                    "family": "execution_template_ablation",
-                    "horizon_id": "next_open_to_d3_close",
-                    "route": "RESOLVE_BLOCKER",
-                    "execution_dispatch": "NEEDS_EXECUTABLE_SPEC",
-                    "missing_surface_requirements": [],
-                    "next_action": "write_machine_executable_predicate_or_registered_runner_spec",
-                    "owner_visible_metadata_zh": {
-                        "hypothesis_name_zh": "D3对D5衰减",
-                        "family_name_zh": "执行模板对照",
-                        "condition_summary_zh": "比较次日开盘、前5分钟VWAP、尾盘买和持有期差异。",
-                    },
-                }
-            ],
+            "needs_executable_spec_examples": [],
             "pending_surface_examples": [
                 {
                     "hypothesis_id": "northbound_out_active_money_smallcap",
@@ -1138,7 +1123,7 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "Broad scout intake" in text
     assert (
         "cells=724 hypotheses=40 dispatchable=192 materialized_daywalk=328 "
-        "specialized_readout=108 needs_spec=16 pending_surface=80"
+        "specialized_readout=124 needs_spec=0 pending_surface=80"
         in text
     )
     assert "top_families 执行模板对照/execution_template_ablation=92" in text
@@ -1154,7 +1139,7 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
         "family=情绪周期择时/emotion_cycle_timing"
     ) in text
     assert "short_cycle_hypothesis_daywalk_ice_point_repair_first_board" in text
-    assert "needs_spec: D3对D5衰减(d3_vs_d5_decay)" in text
+    assert "needs_spec: D3对D5衰减(d3_vs_d5_decay)" not in text
     assert (
         "pending_surface: 北向弱但活跃资金小盘(northbound_out_active_money_smallcap) "
         "family=资金偏好流/fund_preference_flow"
@@ -1325,13 +1310,13 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "伤口=未行业中性/含板块beta" in text
     assert "研究队列:" in text
     assert "可审单元=120 严格候选=9 右尾观察=23" in text
-    assert "专用readout=108 待定义=16" in text
+    assert "专用readout=124 待定义=0" in text
     assert "证据覆盖: 窗口=7 horizon=3 多窗单元=64" in text
     assert "Scout重点:" in text
     assert "执行模板对照=92" in text
     assert "盘中量价=88" in text
     assert "Scout条件: 执行模板对照: 比较次日开盘" in text
-    assert "Scout待定义: D3对D5衰减=16" in text
+    assert "Scout待定义:" not in text
     assert "REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT" not in text
     assert "first30m_confirmation_1001" not in text
     assert "完整诊断: /brief full；盘中: /intraday" in text
