@@ -323,3 +323,35 @@ def test_owner_observation_ledger_routes_into_research_projection(
     assert item_by_id["OO-20260608-010"]["route"] == "surface_blocker_triage"
     assert item_by_id["OO-20260608-011"]["mark"] == "write_card"
     assert item_by_id["OO-20260608-011"]["route"] == "research_card_draft_backlog"
+
+
+def test_owner_observation_parser_ignores_template_heading(tmp_path: Path) -> None:
+    observation_ledger = tmp_path / "owner_observation_ledger.md"
+    observation_ledger.write_text(
+        """# Owner Observation Ledger
+
+```md
+## OO-YYYYMMDD-###
+
+- logged_at:
+- family_guess:
+- observation:
+```
+
+## OO-20260608-012
+
+- logged_at: 2026-06-08
+- posture: repeat_suspected
+- state: noted
+- family_guess: stock_personality_selection_policy_candidate
+- observation:
+  - 股性 should be tested as a selection policy
+- why_it_matters:
+  - template headings must not become route items
+""",
+        encoding="utf-8",
+    )
+
+    entries = iter_owner_observation_entries(observation_ledger)
+
+    assert [entry["observation_id"] for entry in entries] == ["OO-20260608-012"]

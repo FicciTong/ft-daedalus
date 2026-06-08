@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
@@ -66,6 +67,8 @@ MARK_ALIASES = {
     "复核": "needs_review",
     "needs_review": "needs_review",
 }
+
+OWNER_OBSERVATION_HEADING_RE = re.compile(r"^## (OO-\d{8}-\d{3})$")
 
 
 def default_owner_feedback_path() -> Path:
@@ -258,7 +261,8 @@ def iter_owner_observation_entries(
     current_heading = ""
     current_lines: list[str] = []
     for line in ledger_path.read_text(encoding="utf-8").splitlines():
-        if line.startswith("## OO-"):
+        heading_match = OWNER_OBSERVATION_HEADING_RE.match(line.strip())
+        if heading_match:
             if current_heading and current_lines:
                 entries.append(
                     _owner_observation_entry_from_block(
@@ -267,7 +271,7 @@ def iter_owner_observation_entries(
                         ledger_path=ledger_path,
                     )
                 )
-            current_heading = line.strip().removeprefix("## ").strip()
+            current_heading = heading_match.group(1)
             current_lines = []
             continue
         if current_heading:
