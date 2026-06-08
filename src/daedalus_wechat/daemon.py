@@ -1136,12 +1136,16 @@ class BridgeDaemon:
         if cursor is not None and latest_seq and cursor > latest_seq:
             self.state.clear_recent_delivery_cursor(scope_key)
             cursor = None
-        items, scope_label, _ = self._read_effective_recent_items(
-            to_user_id=target_user,
-            limit=keep_last if cursor is None else 20,
-            after_seq=cursor,
-            scope_all=False,
-        )
+        if cursor is not None and latest_seq and cursor >= latest_seq:
+            items: list[dict] = []
+            scope_label = active_tmux or "all"
+        else:
+            items, scope_label, _ = self._read_effective_recent_items(
+                to_user_id=target_user,
+                limit=keep_last,
+                after_seq=None,
+                scope_all=False,
+            )
         if items:
             last_seq = int(items[-1].get("seq", 0) or 0)
             self.state.set_recent_delivery_cursor(scope_key, last_seq)

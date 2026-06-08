@@ -6838,6 +6838,50 @@ class DaemonTests(unittest.TestCase):
                 daemon.state.get_recent_delivery_cursor("user@im.wechat|codex"), 9239
             )
 
+    def test_catchup_with_old_cursor_shows_latest_tail_not_old_backlog(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_dir = Path(tmpdir)
+            config = self._make_config(state_dir, frozenset())
+            config.state_dir.mkdir(parents=True, exist_ok=True)
+            config.delivery_ledger_file.write_text(
+                "\n".join(
+                    [
+                        '{"seq":1,"ts":"2026-03-30T08:00:00+00:00","to":"user@im.wechat","status":"sent","kind":"final","origin":"desktop-mirror","tmux_session":"codex","text":"cursor anchor"}',
+                        '{"seq":2,"ts":"2026-03-30T08:00:01+00:00","to":"user@im.wechat","status":"sent","kind":"progress","origin":"desktop-mirror","tmux_session":"codex","text":"old backlog one"}',
+                        '{"seq":3,"ts":"2026-03-30T08:00:02+00:00","to":"user@im.wechat","status":"flushed","kind":"progress","origin":"desktop-mirror","tmux_session":"codex","text":"old backlog two"}',
+                        '{"seq":4,"ts":"2026-03-30T08:00:03+00:00","to":"user@im.wechat","status":"sent","kind":"final","origin":"desktop-mirror","tmux_session":"codex","text":"old backlog three"}',
+                        '{"seq":5,"ts":"2026-03-30T09:20:40+00:00","to":"user@im.wechat","status":"flushed","kind":"progress","origin":"desktop-mirror","tmux_session":"codex","text":"latest one"}',
+                        '{"seq":6,"ts":"2026-03-30T09:20:41+00:00","to":"user@im.wechat","status":"sent","kind":"progress","origin":"desktop-mirror","tmux_session":"codex","text":"latest two"}',
+                        '{"seq":7,"ts":"2026-03-30T09:20:42+00:00","to":"user@im.wechat","status":"sent","kind":"final","origin":"desktop-mirror","tmux_session":"codex","text":"latest three"}',
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            daemon = _TestDaemon(
+                config=config,
+                wechat=_FakeWeChat(),
+                runner=_FakeRunner(),
+                state=BridgeState(
+                    bound_user_id="user@im.wechat",
+                    active_tmux_session="codex",
+                    recent_delivery_cursors={"user@im.wechat|codex": 1},
+                ),
+            )
+
+            text = daemon._catchup_text("")
+
+            self.assertIn("catchup=ok", text)
+            self.assertIn("latest one", text)
+            self.assertIn("latest two", text)
+            self.assertIn("latest three", text)
+            self.assertNotIn("old backlog one", text)
+            self.assertNotIn("old backlog two", text)
+            self.assertNotIn("old backlog three", text)
+            self.assertEqual(
+                daemon.state.get_recent_delivery_cursor("user@im.wechat|codex"), 7
+            )
+
     def test_stale_inactive_desktop_mirror_final_is_kept_for_later_scope_flush(
         self,
     ) -> None:
