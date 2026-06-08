@@ -1523,6 +1523,24 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
             ],
             "accepted_edges": 0,
         },
+        owner_feedback_route_intake={
+            "status": "REPORT_ONLY_OWNER_FEEDBACK_RESEARCH_ROUTE_INTAKE_READY",
+            "queue_item_count": 2,
+            "source_total_route_item_count": 2,
+            "research_action_counts": {
+                "draft_machine_executable_hypothesis_or_selection_policy": 1,
+                "verify_surface_or_wound_connection_before_rerun": 1,
+            },
+            "next_actions": [
+                {
+                    "action": (
+                        "draft_machine_executable_hypothesis_or_selection_policy"
+                    ),
+                    "count": 1,
+                }
+            ],
+            "accepted_edges": 0,
+        },
         candidate_limit=2,
     )
 
@@ -1558,6 +1576,11 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "support不足=120 成本缺=69 成本杀=5 右尾负均值=49" in text
     assert "反馈回路: 已记录=2 useful=1 noise=1" in text
     assert "不改证据门/排名" in text
+    assert "反馈接入Kairos: REPORT_ONLY_OWNER_FEEDBACK_RESEARCH_ROUTE_INTAKE_READY" in text
+    assert "queue=2 source_total=2" in text
+    assert "draft_machine_executable_hypothesis_or_selection_policy=1" in text
+    assert "verify_surface_or_wound_connection_before_rerun=1" in text
+    assert "边界=只导研究,不改证据门/排名" in text
     assert "证据覆盖: 窗口=7 horizon=3 多窗单元=64" in text
     assert "Scout重点:" in text
     assert "执行模板对照=92" in text

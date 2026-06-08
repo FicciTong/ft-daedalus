@@ -248,6 +248,19 @@ def default_kairos_owner_review_truth_units_path() -> Path:
     )
 
 
+def default_kairos_owner_feedback_route_intake_path() -> Path:
+    """Return the workbench-local Kairos owner-feedback research intake path."""
+    cosmos_root = Path(__file__).resolve().parents[3]
+    return (
+        cosmos_root
+        / "ft-kairos"
+        / "var"
+        / "reports"
+        / "research_substrate"
+        / "owner_feedback_research_route_intake_latest.json"
+    )
+
+
 def default_kairos_forward_shadow_track_record_path() -> Path:
     """Return the workbench-local Kairos forward-shadow track-record path."""
     cosmos_root = Path(__file__).resolve().parents[3]
@@ -531,6 +544,36 @@ def _missing_owner_review_truth_units_payload(
     }
 
 
+def _missing_owner_feedback_route_intake_payload(
+    report_path: Path, *, status: str, reason: str
+) -> dict[str, Any]:
+    return {
+        "contract": "daedalus_wechat.kairos_owner_feedback_route_intake_readout",
+        "readout_source": "fail_closed",
+        "status": status,
+        "report_path": str(report_path),
+        "accepted_edges": 0,
+        "queue_item_count": 0,
+        "research_action_counts": {},
+        "source_route_counts": {},
+        "next_actions": [
+            {
+                "action": "restore_kairos_feedback_route_intake",
+                "reason": reason,
+            }
+        ],
+        "authority_boundary": {
+            "authority_delta": "none",
+            "owner_advisory_allowed": False,
+            "owner_pnl_claim_allowed": False,
+            "consumer_cutover_allowed": False,
+            "live_broker_allowed": False,
+            "auto_order_allowed": False,
+        },
+        "errors": [reason],
+    }
+
+
 def load_kairos_owner_brief(report_path: Path | None = None) -> dict[str, Any]:
     path = report_path or default_kairos_owner_brief_path()
     if not path.is_file():
@@ -661,6 +704,44 @@ def load_kairos_owner_review_truth_units(
             path,
             status="BLOCKED",
             reason="Kairos owner-review truth-unit readout root is not an object",
+        )
+    payload = dict(payload)
+    payload["report_path"] = str(path)
+    return payload
+
+
+def load_kairos_owner_feedback_route_intake(
+    report_path: Path | None = None,
+) -> dict[str, Any]:
+    path = report_path or default_kairos_owner_feedback_route_intake_path()
+    if not path.is_file():
+        return _missing_owner_feedback_route_intake_payload(
+            path,
+            status="MISSING",
+            reason="Kairos owner-feedback research route intake is missing",
+        )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except JSONDecodeError as exc:
+        return _missing_owner_feedback_route_intake_payload(
+            path,
+            status="BLOCKED",
+            reason=(
+                "Kairos owner-feedback research route intake is invalid JSON: "
+                f"{exc.msg}"
+            ),
+        )
+    except OSError as exc:
+        return _missing_owner_feedback_route_intake_payload(
+            path,
+            status="BLOCKED",
+            reason=f"Kairos owner-feedback research route intake cannot be read: {exc}",
+        )
+    if not isinstance(payload, dict):
+        return _missing_owner_feedback_route_intake_payload(
+            path,
+            status="BLOCKED",
+            reason="Kairos owner-feedback research route intake root is not an object",
         )
     payload = dict(payload)
     payload["report_path"] = str(path)
@@ -2011,6 +2092,31 @@ def _format_compact_materialized_outcome_summary(
     )
 
 
+def _format_compact_feedback_route_intake(intake: dict[str, Any]) -> str:
+    status = str(intake.get("status") or "UNKNOWN")
+    action_counts = _as_dict(intake.get("research_action_counts"))
+    next_actions = _as_list(intake.get("next_actions"))
+    latest_action = "none"
+    if next_actions and isinstance(next_actions[0], dict):
+        latest_action = str(next_actions[0].get("action") or "unknown")
+    action_text = _fmt_named_counts_owner(
+        [
+            {"name": name, "count": count}
+            for name, count in sorted(action_counts.items())
+        ],
+        limit=3,
+    )
+    return (
+        "反馈接入Kairos: "
+        f"{status} "
+        f"queue={_fmt_num(intake.get('queue_item_count'))} "
+        f"source_total={_fmt_num(intake.get('source_total_route_item_count'))} "
+        f"动作={action_text} "
+        f"next={latest_action} "
+        "边界=只导研究,不改证据门/排名"
+    )
+
+
 def _format_scout_example(row: dict[str, Any]) -> str:
     missing = _as_list(row.get("missing_surface_requirements"))
     missing_text = ",".join(str(item) for item in missing[:3]) if missing else "none"
@@ -2252,6 +2358,7 @@ def format_kairos_owner_brief_compact(
     hypothesis_scout_readout: dict[str, Any] | None = None,
     owner_review_truth_units: dict[str, Any] | None = None,
     owner_feedback_summary: dict[str, Any] | None = None,
+    owner_feedback_route_intake: dict[str, Any] | None = None,
 ) -> str:
     """Render a short owner-visible daily brief for WeChat."""
 
@@ -2265,6 +2372,8 @@ def format_kairos_owner_brief_compact(
         intraday_eod_outcome_review = load_kairos_intraday_eod_outcome_review()
     if owner_feedback_summary is None:
         owner_feedback_summary = load_owner_feedback_summary()
+    if owner_feedback_route_intake is None:
+        owner_feedback_route_intake = load_kairos_owner_feedback_route_intake()
 
     status = str(payload.get("status") or "UNKNOWN")
     as_of = payload.get("as_of_date") or "unknown"
@@ -2421,6 +2530,7 @@ def format_kairos_owner_brief_compact(
     if scout_needs_spec_hints:
         lines.append(scout_needs_spec_hints)
     lines.append(format_owner_feedback_summary(owner_feedback_summary))
+    lines.append(_format_compact_feedback_route_intake(owner_feedback_route_intake))
 
     package_path = _as_dict(daily_package).get("report_path")
     if package_path:
@@ -2836,6 +2946,7 @@ __all__ = [
     "default_kairos_intraday_eod_outcome_review_path",
     "default_kairos_intraday_eod_review_queue_path",
     "default_kairos_owner_daily_archive_root",
+    "default_kairos_owner_feedback_route_intake_path",
     "default_kairos_owner_review_truth_units_path",
     "default_kairos_owner_daily_package_path",
     "default_kairos_owner_brief_path",
@@ -2854,6 +2965,7 @@ __all__ = [
     "load_kairos_intraday_eod_outcome_review",
     "load_kairos_intraday_eod_review_queue",
     "load_kairos_owner_daily_archive",
+    "load_kairos_owner_feedback_route_intake",
     "load_kairos_owner_review_truth_units",
     "load_kairos_owner_daily_package",
     "load_kairos_owner_brief",
