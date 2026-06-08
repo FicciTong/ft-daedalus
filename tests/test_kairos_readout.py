@@ -1374,8 +1374,22 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
                             },
                             "intraday_status": "REPORT_ONLY_INTRADAY_READY",
                             "intraday_triggered_unit_count": 4,
+                            "intraday_trigger_event_count": 14,
+                            "intraday_current_triggered_event_count": 2,
+                            "intraday_no_longer_triggered_event_count": 0,
+                            "intraday_current_observation_missing_event_count": 11,
+                            "intraday_universe_row_count": 5208,
+                            "intraday_universe_priced_row_count": 5199,
+                            "intraday_universe_candidate_count": 20,
+                            "intraday_universe_candidate_observed_count": 18,
                             "intraday_eod_review_status": "PENDING_EOD_REPLAY",
+                            "eod_review_candidate_unit_count": 20,
+                            "eod_review_ever_triggered_candidate_count": 1,
+                            "eod_review_current_triggered_candidate_count": 1,
+                            "eod_review_pending_or_missing_candidate_count": 19,
                             "intraday_eod_outcome_status": "PENDING_EOD_OUTCOME",
+                            "eod_outcome_candidate_unit_count": 20,
+                            "eod_outcome_matched_panel_row_count": 0,
                             "latest_generated_at_utc": "2026-06-08T06:30:00Z",
                         },
                     },
@@ -1399,8 +1413,19 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
     assert "tier=验证0/支持1/观察39" in text
     assert "intraday=REPORT_ONLY_INTRADAY_READY" in text
     assert "triggered=4" in text
+    assert "触发事件=14" in text
+    assert "当前触发=2" in text
+    assert "失效保留=0" in text
+    assert "观察缺口=11" in text
+    assert "universe=5199/5208" in text
+    assert "候选观测=18/20" in text
     assert "eod_queue=PENDING_EOD_REPLAY" in text
+    assert "eod_units=20" in text
+    assert "曾触发=1" in text
+    assert "当前候选=1" in text
+    assert "pending=19" in text
     assert "eod_outcome=PENDING_EOD_OUTCOME" in text
+    assert "outcome_matched=0/20" in text
     assert "surfaces=5" in text
     assert "/brief YYYY-MM-DD" in text
     assert "accepted_edges=0" in text

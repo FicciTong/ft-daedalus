@@ -213,6 +213,16 @@ def _format_archive_tier_counts(summary: dict[str, Any]) -> str:
     )
 
 
+def _append_archive_count(
+    pieces: list[str],
+    *,
+    label: str,
+    value: Any,
+) -> None:
+    if value is not None:
+        pieces.append(f"{label}={_fmt_num(value)}")
+
+
 def _format_archive_day_line(row: dict[str, Any]) -> str:
     summary = _as_dict(row.get("summary"))
     report_date = row.get("report_date")
@@ -229,10 +239,68 @@ def _format_archive_day_line(row: dict[str, Any]) -> str:
             pieces.append(
                 f"triggered={_fmt_num(summary.get('intraday_triggered_unit_count'))}"
             )
+    _append_archive_count(
+        pieces,
+        label="触发事件",
+        value=summary.get("intraday_trigger_event_count"),
+    )
+    _append_archive_count(
+        pieces,
+        label="当前触发",
+        value=summary.get("intraday_current_triggered_event_count"),
+    )
+    _append_archive_count(
+        pieces,
+        label="失效保留",
+        value=summary.get("intraday_no_longer_triggered_event_count"),
+    )
+    _append_archive_count(
+        pieces,
+        label="观察缺口",
+        value=summary.get("intraday_current_observation_missing_event_count"),
+    )
+    if summary.get("intraday_universe_row_count") is not None:
+        pieces.append(
+            "universe="
+            f"{_fmt_num(summary.get('intraday_universe_priced_row_count'))}/"
+            f"{_fmt_num(summary.get('intraday_universe_row_count'))}"
+        )
+    if summary.get("intraday_universe_candidate_count") is not None:
+        pieces.append(
+            "候选观测="
+            f"{_fmt_num(summary.get('intraday_universe_candidate_observed_count'))}/"
+            f"{_fmt_num(summary.get('intraday_universe_candidate_count'))}"
+        )
     if summary.get("intraday_eod_review_status"):
         pieces.append(f"eod_queue={summary.get('intraday_eod_review_status')}")
+    _append_archive_count(
+        pieces,
+        label="eod_units",
+        value=summary.get("eod_review_candidate_unit_count"),
+    )
+    _append_archive_count(
+        pieces,
+        label="曾触发",
+        value=summary.get("eod_review_ever_triggered_candidate_count"),
+    )
+    _append_archive_count(
+        pieces,
+        label="当前候选",
+        value=summary.get("eod_review_current_triggered_candidate_count"),
+    )
+    _append_archive_count(
+        pieces,
+        label="pending",
+        value=summary.get("eod_review_pending_or_missing_candidate_count"),
+    )
     if summary.get("intraday_eod_outcome_status"):
         pieces.append(f"eod_outcome={summary.get('intraday_eod_outcome_status')}")
+    if summary.get("eod_outcome_candidate_unit_count") is not None:
+        pieces.append(
+            "outcome_matched="
+            f"{_fmt_num(summary.get('eod_outcome_matched_panel_row_count'))}/"
+            f"{_fmt_num(summary.get('eod_outcome_candidate_unit_count'))}"
+        )
     if summary.get("latest_generated_at_utc"):
         pieces.append(f"latest={summary.get('latest_generated_at_utc')}")
     pieces.append(f"surfaces={_fmt_num(summary.get('surface_count'))}")
