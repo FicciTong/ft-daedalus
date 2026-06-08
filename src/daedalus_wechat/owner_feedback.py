@@ -19,6 +19,33 @@ ALLOWED_MARKS = (
     "needs_review",
 )
 
+MARK_ROUTE_PROJECTION = {
+    "useful": {
+        "route": "owner_attention_research_prior",
+        "next_action": "prioritize similar owner-review units for comparison only",
+    },
+    "watch": {
+        "route": "owner_watchlist_research_prior",
+        "next_action": "keep on the owner-visible watch surface and gather outcomes",
+    },
+    "write_card": {
+        "route": "research_card_draft_backlog",
+        "next_action": "draft or bind a machine-executable hypothesis before evidence",
+    },
+    "surface_blocker": {
+        "route": "surface_blocker_triage",
+        "next_action": "verify the missing surface before rerunning affected cells",
+    },
+    "needs_review": {
+        "route": "peer_review_backlog",
+        "next_action": "route to read-only review before changing research direction",
+    },
+    "noise": {
+        "route": "noise_review_backlog",
+        "next_action": "inspect why owner saw noise; do not auto-demote evidence",
+    },
+}
+
 MARK_ALIASES = {
     "有用": "useful",
     "有意思": "useful",
@@ -157,6 +184,64 @@ def _read_entries(path: Path) -> list[dict[str, Any]]:
     return entries
 
 
+def _project_feedback_route(entry: dict[str, Any]) -> dict[str, Any]:
+    mark = str(entry.get("mark") or "unknown")
+    projection = MARK_ROUTE_PROJECTION.get(
+        mark,
+        {
+            "route": "unknown_mark_review",
+            "next_action": "review mark mapping before routing",
+        },
+    )
+    text = str(entry.get("text") or "").strip()
+    return {
+        "feedback_id": entry.get("feedback_id"),
+        "captured_at_utc": entry.get("captured_at_utc"),
+        "mark": mark,
+        "route": projection["route"],
+        "next_action": projection["next_action"],
+        "text": text,
+        "text_preview": text[:80],
+        "accepted_edges": 0,
+        "firewall": {
+            "research_queue_direction_only": True,
+            "owner_review_attention_only": True,
+            "evidence_gate_mutation_allowed": False,
+            "ranking_mutation_allowed": False,
+            "candidate_promotion_allowed": False,
+            "trading_authority_allowed": False,
+            "advisory_claim_allowed": False,
+            "owner_pnl_claim_allowed": False,
+        },
+    }
+
+
+def _feedback_route_projection(
+    entries: list[dict[str, Any]],
+    *,
+    recent_limit: int,
+) -> dict[str, Any]:
+    route_items = [_project_feedback_route(entry) for entry in entries]
+    route_counts = Counter(str(item.get("route") or "unknown") for item in route_items)
+    recent = route_items[-recent_limit:] if recent_limit > 0 else []
+    return {
+        "status": (
+            "OWNER_FEEDBACK_RESEARCH_ROUTE_PROJECTION_READY"
+            if route_items
+            else "OWNER_FEEDBACK_RESEARCH_ROUTE_PROJECTION_EMPTY"
+        ),
+        "route_item_count": len(route_items),
+        "route_counts": dict(sorted(route_counts.items())),
+        "recent_route_items": recent,
+        "accepted_edges": 0,
+        "claim_boundary": (
+            "owner feedback routes research attention only; it must not mutate "
+            "evidence gates, rankings, candidate promotion, trading authority, "
+            "advisory claims, or owner-PnL claims"
+        ),
+    }
+
+
 def load_owner_feedback_summary(
     ledger_path: Path | None = None,
     *,
@@ -166,6 +251,7 @@ def load_owner_feedback_summary(
     entries = _read_entries(path)
     mark_counts = Counter(str(entry.get("mark") or "unknown") for entry in entries)
     recent = entries[-recent_limit:] if recent_limit > 0 else []
+    route_projection = _feedback_route_projection(entries, recent_limit=recent_limit)
     return {
         "contract": CONTRACT,
         "status": "OWNER_FEEDBACK_LEDGER_READY" if path.exists() else "OWNER_FEEDBACK_LEDGER_EMPTY",
@@ -173,6 +259,7 @@ def load_owner_feedback_summary(
         "feedback_count": len(entries),
         "mark_counts": dict(sorted(mark_counts.items())),
         "recent_feedback": recent,
+        "research_route_projection": route_projection,
         "accepted_edges": 0,
         "firewall": {
             "feedback_route_scope": [
@@ -191,12 +278,36 @@ def load_owner_feedback_summary(
 def format_owner_feedback_summary(summary: dict[str, Any]) -> str:
     marks = summary.get("mark_counts") if isinstance(summary.get("mark_counts"), dict) else {}
     recent = summary.get("recent_feedback") if isinstance(summary.get("recent_feedback"), list) else []
+    route_projection = (
+        summary.get("research_route_projection")
+        if isinstance(summary.get("research_route_projection"), dict)
+        else {}
+    )
+    route_counts = (
+        route_projection.get("route_counts")
+        if isinstance(route_projection.get("route_counts"), dict)
+        else {}
+    )
+    recent_routes = (
+        route_projection.get("recent_route_items")
+        if isinstance(route_projection.get("recent_route_items"), list)
+        else []
+    )
     recent_text = "none"
     if recent:
         last = recent[-1]
         if isinstance(last, dict):
             text = str(last.get("text") or "").strip()
             recent_text = f"{last.get('mark', 'unknown')}:{text[:40]}"
+    recent_route_text = "none"
+    if recent_routes:
+        last_route = recent_routes[-1]
+        if isinstance(last_route, dict):
+            recent_route_text = (
+                f"{last_route.get('mark', 'unknown')}->"
+                f"{last_route.get('route', 'unknown')}:"
+                f"{str(last_route.get('text_preview') or '')[:30]}"
+            )
     return (
         "反馈回路: "
         f"已记录={summary.get('feedback_count', 0)} "
@@ -206,8 +317,14 @@ def format_owner_feedback_summary(summary: dict[str, Any]) -> str:
         f"write_card={marks.get('write_card', 0)} "
         f"surface_blocker={marks.get('surface_blocker', 0)} "
         f"needs_review={marks.get('needs_review', 0)} "
+        f"待路由={route_projection.get('route_item_count', 0)} "
+        f"写卡={route_counts.get('research_card_draft_backlog', 0)} "
+        f"数据缺口={route_counts.get('surface_blocker_triage', 0)} "
+        f"复核={route_counts.get('peer_review_backlog', 0)} "
+        f"噪音复盘={route_counts.get('noise_review_backlog', 0)} "
         f"最近={recent_text} "
-        "防火墙=只导研究/注意力,不改证据门/排名"
+        f"最新路由={recent_route_text} "
+        "防火墙=只导研究/注意力,不改证据门/排名/候选提升"
     )
 
 

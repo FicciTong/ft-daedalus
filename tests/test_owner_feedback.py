@@ -50,12 +50,65 @@ def test_owner_feedback_summary_counts_marks(tmp_path: Path) -> None:
     assert summary["mark_counts"] == {"noise": 1, "useful": 1, "watch": 1}
     assert summary["accepted_edges"] == 0
     assert summary["firewall"]["candidate_promotion_allowed"] is False
+    projection = summary["research_route_projection"]
+    assert projection["route_item_count"] == 3
+    assert projection["route_counts"] == {
+        "noise_review_backlog": 1,
+        "owner_attention_research_prior": 1,
+        "owner_watchlist_research_prior": 1,
+    }
+    assert projection["accepted_edges"] == 0
+    assert projection["recent_route_items"][-1]["route"] == (
+        "owner_watchlist_research_prior"
+    )
+    assert projection["recent_route_items"][-1]["firewall"][
+        "evidence_gate_mutation_allowed"
+    ] is False
     text = format_owner_feedback_summary(summary)
     assert "已记录=3" in text
     assert "useful=1" in text
     assert "noise=1" in text
     assert "watch=1" in text
-    assert "不改证据门/排名" in text
+    assert "待路由=3" in text
+    assert "噪音复盘=1" in text
+    assert "最新路由=watch->owner_watchlist_research_prior:C" in text
+    assert "不改证据门/排名/候选提升" in text
+
+
+def test_owner_feedback_routes_write_card_and_surface_blocker(tmp_path: Path) -> None:
+    ledger = tmp_path / "owner_feedback.jsonl"
+    append_owner_feedback(
+        mark="写卡",
+        text="洗盘突破需要做成机器可测 pattern",
+        source="test",
+        ledger_path=ledger,
+    )
+    append_owner_feedback(
+        mark="数据缺口",
+        text="利尔达负面事件 wound 要接进候选行",
+        source="test",
+        ledger_path=ledger,
+    )
+    append_owner_feedback(
+        mark="复核",
+        text="强势股股性过滤请 review",
+        source="test",
+        ledger_path=ledger,
+    )
+
+    summary = load_owner_feedback_summary(ledger)
+    projection = summary["research_route_projection"]
+
+    assert projection["route_counts"] == {
+        "peer_review_backlog": 1,
+        "research_card_draft_backlog": 1,
+        "surface_blocker_triage": 1,
+    }
+    assert "must not mutate evidence gates" in projection["claim_boundary"]
+    text = format_owner_feedback_summary(summary)
+    assert "写卡=1" in text
+    assert "数据缺口=1" in text
+    assert "复核=1" in text
 
 
 def test_owner_feedback_command_records_and_blocks_unknown_mark(tmp_path: Path) -> None:
