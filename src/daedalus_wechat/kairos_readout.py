@@ -1593,6 +1593,7 @@ def _format_hypothesis_scout_readout(
             f"hypotheses={_fmt_num(counts.get('hypothesis_card_count'))} "
             f"dispatchable={_fmt_num(counts.get('dispatchable_pending_run_cell_count'))} "
             f"materialized_daywalk={_fmt_num(counts.get('daywalk_report_materialized_cell_count'))} "
+            f"specialized_readout={_fmt_num(counts.get('specialized_readout_ready_cell_count'))} "
             f"needs_spec={_fmt_num(counts.get('needs_executable_spec_cell_count'))} "
             f"pending_surface={_fmt_num(counts.get('pending_surface_cell_count'))} "
             f"accepted_edges={scout.get('accepted_edges', 0)}"
@@ -1879,7 +1880,9 @@ def format_kairos_owner_brief_compact(
                 f"右尾观察={_fmt_num(_as_dict(truth_units.get('route_counts')).get('owner_review_tail_watch'))} "
                 f"scout总数={_fmt_num(scout_counts.get('scout_cell_count'))} "
                 f"待跑={_fmt_num(scout_counts.get('dispatchable_pending_run_cell_count'))} "
-                f"已跑={_fmt_num(scout_counts.get('daywalk_report_materialized_cell_count'))}"
+                f"已跑={_fmt_num(scout_counts.get('daywalk_report_materialized_cell_count'))} "
+                f"专用readout={_fmt_num(scout_counts.get('specialized_readout_ready_cell_count'))} "
+                f"待定义={_fmt_num(scout_counts.get('needs_executable_spec_cell_count'))}"
             ),
             (
                 "证据覆盖: "

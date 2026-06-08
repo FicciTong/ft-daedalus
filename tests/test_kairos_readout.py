@@ -451,7 +451,8 @@ def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
             "hypothesis_card_count": 40,
             "dispatchable_pending_run_cell_count": 192,
             "daywalk_report_materialized_cell_count": 328,
-            "needs_executable_spec_cell_count": 124,
+            "specialized_readout_ready_cell_count": 76,
+            "needs_executable_spec_cell_count": 48,
             "pending_surface_cell_count": 80,
         },
         "owner_review_surface": {
@@ -1137,7 +1138,7 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "Broad scout intake" in text
     assert (
         "cells=724 hypotheses=40 dispatchable=192 materialized_daywalk=328 "
-        "needs_spec=124 pending_surface=80"
+        "specialized_readout=76 needs_spec=48 pending_surface=80"
         in text
     )
     assert "top_families 执行模板对照/execution_template_ablation=92" in text
@@ -1324,6 +1325,7 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "伤口=未行业中性/含板块beta" in text
     assert "研究队列:" in text
     assert "可审单元=120 严格候选=9 右尾观察=23" in text
+    assert "专用readout=76 待定义=48" in text
     assert "证据覆盖: 窗口=7 horizon=3 多窗单元=64" in text
     assert "Scout重点:" in text
     assert "执行模板对照=92" in text
