@@ -1719,6 +1719,7 @@ def format_kairos_owner_brief_compact(
         if isinstance(item, dict)
     ]
     truth_units = _as_dict(owner_review_truth_units)
+    truth_coverage = _as_dict(truth_units.get("coverage_summary"))
     scout = _as_dict(hypothesis_scout_readout)
     scout_counts = _as_dict(scout.get("counts"))
     scout_surface = _as_dict(scout.get("owner_review_surface"))
@@ -1783,6 +1784,12 @@ def format_kairos_owner_brief_compact(
                 f"scout_cells={_fmt_num(scout_counts.get('scout_cell_count'))} "
                 f"pending={_fmt_num(scout_counts.get('dispatchable_pending_run_cell_count'))} "
                 f"done={_fmt_num(scout_counts.get('daywalk_report_materialized_cell_count'))}"
+            ),
+            (
+                "证据覆盖: "
+                f"windows={_fmt_num(truth_coverage.get('observed_window_count'))} "
+                f"horizons={_fmt_num(truth_coverage.get('horizon_count'))} "
+                f"multi_window_units={_fmt_num(truth_coverage.get('multi_window_truth_unit_count'))}"
             ),
             (
                 "Scout重点: "

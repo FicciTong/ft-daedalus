@@ -579,6 +579,25 @@ def _sample_owner_review_truth_units_payload() -> dict[str, object]:
             "owner_tail_watch_support_ok": 27,
             "observation_sample_ok_not_confirmed": 34,
         },
+        "coverage_summary": {
+            "observed_window_count": 7,
+            "observed_windows": [
+                "short_cycle_long_2023_h1",
+                "short_cycle_long_2023_h2",
+                "short_cycle_long_2024_h1",
+                "short_cycle_long_2024_h2",
+                "short_cycle_long_2025_h1",
+                "short_cycle_long_2025_h2",
+                "short_cycle_long_2026_q1_q2",
+            ],
+            "horizon_count": 3,
+            "horizons": [
+                "next_open_to_d3_close",
+                "next_open_to_d5_close",
+                "next_open_to_next_close",
+            ],
+            "multi_window_truth_unit_count": 64,
+        },
         "top_truth_units": [
             {
                 "hypothesis_id": "high_gap_first30m_hold",
@@ -1298,6 +1317,7 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "002251.SZ 步步高" in text
     assert "伤口=未行业中性/含板块beta" in text
     assert "研究队列:" in text
+    assert "证据覆盖: windows=7 horizons=3 multi_window_units=64" in text
     assert "Scout重点:" in text
     assert "Scout条件: 执行模板对照: 比较次日开盘" in text
     assert "完整诊断: /brief full；盘中: /intraday" in text
