@@ -1307,19 +1307,30 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "Kairos 日包 2026-06-05 -> 2026-06-08" in text
     assert "accepted_edges=0" in text
     assert "非买卖建议" in text
-    assert "市场:" in text
-    assert "集中度:" in text
+    assert "市场: 震荡 情绪=热" in text
+    assert "行业集中: 行业高度集中" in text
     assert "右尾温度计:" in text
+    assert "盘中: 观察包就绪 已观察=2 待观察=25" in text
+    assert "触发字段=触发字段就绪 快照=实时快照待补" in text
     assert "盘中触发 Top 1" in text
+    assert "高开后前30分钟承接 窗口=开盘,前5分钟,前30分钟确认" in text
+    assert "窗口=开盘,前5分钟,前30分钟确认" in text
     assert "明天重点 Top 1" in text
     assert "战法条件: 高开后前30分钟承接: 高开后没有快速转弱" in text
     assert "优先看强势股池、流动性可交易" in text
     assert "002251.SZ 步步高" in text
+    assert "净超额=" in text
+    assert "样本=" in text
     assert "伤口=未行业中性/含板块beta" in text
     assert "研究队列:" in text
-    assert "证据覆盖: windows=7 horizons=3 multi_window_units=64" in text
+    assert "可审单元=120 严格候选=9 右尾观察=23" in text
+    assert "证据覆盖: 窗口=7 horizon=3 多窗单元=64" in text
     assert "Scout重点:" in text
+    assert "执行模板对照=92" in text
+    assert "盘中量价=88" in text
     assert "Scout条件: 执行模板对照: 比较次日开盘" in text
+    assert "REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT" not in text
+    assert "first30m_confirmation_1001" not in text
     assert "完整诊断: /brief full；盘中: /intraday" in text
     assert "Long-window研究路由" not in text
 

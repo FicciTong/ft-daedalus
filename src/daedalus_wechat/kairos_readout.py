@@ -625,10 +625,67 @@ WOUND_LABEL_ZH = {
     "cluster_is_correlated_setup_not_independent_edge": "同簇相关/非独立机会",
 }
 
+MARKET_REGIME_LABEL_ZH = {
+    "CHOPPY": "震荡",
+    "HOT": "偏热",
+    "COLD": "偏冷",
+    "TREND": "趋势",
+    "RISK_OFF": "退潮",
+}
+
+EMOTION_PHASE_LABEL_ZH = {
+    "hot": "热",
+    "cold": "冷",
+    "choppy": "震荡",
+    "repair": "修复",
+    "risk_off": "退潮",
+}
+
+CONCENTRATION_LABEL_ZH = {
+    "HIGH_INDUSTRY_CONCENTRATION": "行业高度集中",
+    "MODERATE_INDUSTRY_CONCENTRATION": "行业中度集中",
+    "LOW_INDUSTRY_CONCENTRATION": "行业分散",
+}
+
+INTRADAY_STATUS_LABEL_ZH = {
+    "REPORT_ONLY_SHORT_CYCLE_INTRADAY_OWNER_ALERT": "观察包就绪",
+    "TRIGGER_FIELDS_PENDING": "触发字段待补",
+    "TRIGGER_FIELDS_READY": "触发字段就绪",
+    "REALTIME_SNAPSHOT_READY": "实时快照就绪",
+    "PENDING_REALTIME_SNAPSHOT": "实时快照待补",
+    "MISSING": "缺失",
+    "BLOCKED": "阻塞",
+}
+
+TACTIC_LABEL_ZH = {
+    "high_gap_first30m_hold": "高开后前30分钟承接",
+    "first30m_shakeout_recover": "前30分钟下探修复",
+    "prior_strength_orderly_pullback": "前强有序回踩",
+    "prior_weak_close_reclaim_volume": "前弱收盘放量修复",
+    "leader_orderly_flat_pullback": "龙头有序横盘回踩",
+    "prior_limit_gap_down_reclaim": "限涨后低开修复",
+}
+
+WINDOW_LABEL_ZH = {
+    "opening_print_0926": "开盘",
+    "first5m_preliminary_0936": "前5分钟",
+    "first30m_confirmation_1001": "前30分钟确认",
+}
+
 
 def _wound_label(wound: Any) -> str:
     name = str(wound)
     return WOUND_LABEL_ZH.get(name, name)
+
+
+def _zh_label(value: Any, labels: dict[str, str]) -> str:
+    key = str(value or "unknown")
+    return labels.get(key, key)
+
+
+def _fmt_window_labels(window_ids: list[Any]) -> str:
+    labels = [WINDOW_LABEL_ZH.get(str(item), str(item)) for item in window_ids if item]
+    return ",".join(labels) if labels else "none"
 
 
 def _fmt_wound_counter(counter: Counter[str], *, limit: int = 4) -> str:
@@ -731,6 +788,7 @@ def _format_compact_intraday_status(
     alert: dict[str, Any] | None,
     *,
     limit: int = 3,
+    tactic_names_zh: dict[str, str] | None = None,
 ) -> list[str]:
     alert = _as_dict(alert)
     if not alert:
@@ -744,28 +802,35 @@ def _format_compact_intraday_status(
     lines = [
         (
             "盘中: "
-            f"status={alert.get('status', 'unknown')} "
-            f"observed={_fmt_num(projection.get('observed_candidate_count'))} "
-            f"pending={_fmt_num(projection.get('pending_candidate_count'))} "
-            f"trigger={readiness.get('status', 'unknown')} "
-            f"snapshot={snapshot.get('status', 'unknown')}"
+            f"{_zh_label(alert.get('status'), INTRADAY_STATUS_LABEL_ZH)} "
+            f"已观察={_fmt_num(projection.get('observed_candidate_count'))} "
+            f"待观察={_fmt_num(projection.get('pending_candidate_count'))} "
+            f"触发字段={_zh_label(readiness.get('status'), INTRADAY_STATUS_LABEL_ZH)} "
+            f"快照={_zh_label(snapshot.get('status'), INTRADAY_STATUS_LABEL_ZH)}"
         )
     ]
     if triggered:
         lines.append(f"盘中触发 Top {len(triggered)}:")
         for row, hits in triggered:
-            windows = ",".join(str(hit.get("window_id")) for hit in hits)
+            windows = _fmt_window_labels([hit.get("window_id") for hit in hits])
             first30m = {
                 str(hit.get("window_id")): hit for hit in hits
             }.get("first30m_confirmation_1001", {})
+            tactic_id = str(row.get("tactic_id") or "unknown")
+            tactic_name = (
+                _as_dict(tactic_names_zh).get(tactic_id)
+                or row.get("tactic_name")
+                or TACTIC_LABEL_ZH.get(tactic_id)
+                or tactic_id
+            )
             lines.append(
                 f"- #{_fmt_num(row.get('rank'))} "
                 f"{row.get('symbol', 'unknown')} {row.get('stock_name', '')} "
                 f"[{row.get('industry_name', 'unknown')}] "
-                f"{row.get('tactic_id', 'unknown')} "
-                f"windows={windows} "
+                f"{tactic_name} "
+                f"窗口={windows} "
                 f"first30m={_fmt_ratio_pct(first30m.get('first30m_return_pct'))} "
-                f"wounds={_fmt_wound_list(_as_list(row.get('evidence_wounds')), limit=2)}"
+                f"伤口={_fmt_wound_list(_as_list(row.get('evidence_wounds')), limit=2)}"
             )
     return lines
 
@@ -1398,6 +1463,22 @@ def _fmt_named_counts(rows: list[Any], *, limit: int = 3) -> str:
     return " ".join(parts) if parts else "none"
 
 
+def _fmt_named_counts_owner(rows: list[Any], *, limit: int = 3) -> str:
+    parts: list[str] = []
+    for row in rows[:limit]:
+        if not isinstance(row, dict):
+            continue
+        name = (
+            row.get("hypothesis_name_zh")
+            or row.get("family_name_zh")
+            or row.get("name_zh")
+            or row.get("name")
+            or "unknown"
+        )
+        parts.append(f"{name}={_fmt_num(row.get('count'))}")
+    return " ".join(parts) if parts else "none"
+
+
 def _format_compact_strategy_hints(
     candidates: list[dict[str, Any]],
     *,
@@ -1718,6 +1799,15 @@ def format_kairos_owner_brief_compact(
         item for item in _as_list(payload.get("owner_review_candidates"))
         if isinstance(item, dict)
     ]
+    tactic_names_zh = {
+        str(item.get("tactic_id")): str(
+            _as_dict(item.get("strategy_metadata_zh")).get("name_zh")
+            or item.get("tactic_name")
+            or item.get("tactic_id")
+        )
+        for item in candidates
+        if item.get("tactic_id")
+    }
     truth_units = _as_dict(owner_review_truth_units)
     truth_coverage = _as_dict(truth_units.get("coverage_summary"))
     scout = _as_dict(hypothesis_scout_readout)
@@ -1729,16 +1819,16 @@ def format_kairos_owner_brief_compact(
         f"边界: report-only / accepted_edges={accepted_edges} / 非买卖建议",
         (
             "市场: "
-            f"{market.get('market_regime', 'unknown')} "
-            f"emotion={market.get('emotion_phase', 'unknown')} "
+            f"{_zh_label(market.get('market_regime'), MARKET_REGIME_LABEL_ZH)} "
+            f"情绪={_zh_label(market.get('emotion_phase'), EMOTION_PHASE_LABEL_ZH)} "
             f"breadth={_fmt_pct(market.get('breadth_up_pct'))} "
             f"涨停={_fmt_num(market.get('limit_up_count'))} "
             f"炸板={_fmt_num(market.get('broken_limit_up_count'))} "
             f"高度={_fmt_num(market.get('highest_continuous_board'))}"
         ),
         (
-            "集中度: "
-            f"{concentration.get('state', 'unknown')} "
+            "行业集中: "
+            f"{_zh_label(concentration.get('state'), CONCENTRATION_LABEL_ZH)} "
             f"top={_fmt_pct(concentration.get('top_industry_share_pct'))} "
             f"HHI={_fmt_num(concentration.get('hhi'))}"
         ),
@@ -1752,7 +1842,13 @@ def format_kairos_owner_brief_compact(
         ),
     ]
 
-    lines.extend(_format_compact_intraday_status(intraday_alert, limit=3))
+    lines.extend(
+        _format_compact_intraday_status(
+            intraday_alert,
+            limit=3,
+            tactic_names_zh=tactic_names_zh,
+        )
+    )
 
     strategy_hints = _format_compact_strategy_hints(candidates)
     if strategy_hints:
@@ -1768,9 +1864,9 @@ def format_kairos_owner_brief_compact(
             f"[{item.get('industry_name', 'unknown')}] "
             f"{item.get('tactic_name', item.get('tactic_id', 'unknown'))} "
             f"{item.get('owner_confidence_label', 'unknown')} "
-            f"net={_fmt_pct(support.get('net_excess_pct'))} "
-            f"tail5={_fmt_pct(support.get('right_tail_return_ge_5pct_share_pct'))} "
-            f"n={_fmt_num(support.get('row_n'))}/days={_fmt_num(support.get('date_block_effective_n'))} "
+            f"净超额={_fmt_pct(support.get('net_excess_pct'))} "
+            f"右尾5={_fmt_pct(support.get('right_tail_return_ge_5pct_share_pct'))} "
+            f"样本={_fmt_num(support.get('row_n'))}/天={_fmt_num(support.get('date_block_effective_n'))} "
             f"伤口={wounds}"
         )
 
@@ -1778,23 +1874,23 @@ def format_kairos_owner_brief_compact(
         [
             (
                 "研究队列: "
-                f"truth_units={_fmt_num(truth_units.get('truth_unit_count'))} "
-                f"strict={_fmt_num(_as_dict(truth_units.get('route_counts')).get('strict_candidate_review_only'))} "
-                f"tail_watch={_fmt_num(_as_dict(truth_units.get('route_counts')).get('owner_review_tail_watch'))} "
-                f"scout_cells={_fmt_num(scout_counts.get('scout_cell_count'))} "
-                f"pending={_fmt_num(scout_counts.get('dispatchable_pending_run_cell_count'))} "
-                f"done={_fmt_num(scout_counts.get('daywalk_report_materialized_cell_count'))}"
+                f"可审单元={_fmt_num(truth_units.get('truth_unit_count'))} "
+                f"严格候选={_fmt_num(_as_dict(truth_units.get('route_counts')).get('strict_candidate_review_only'))} "
+                f"右尾观察={_fmt_num(_as_dict(truth_units.get('route_counts')).get('owner_review_tail_watch'))} "
+                f"scout总数={_fmt_num(scout_counts.get('scout_cell_count'))} "
+                f"待跑={_fmt_num(scout_counts.get('dispatchable_pending_run_cell_count'))} "
+                f"已跑={_fmt_num(scout_counts.get('daywalk_report_materialized_cell_count'))}"
             ),
             (
                 "证据覆盖: "
-                f"windows={_fmt_num(truth_coverage.get('observed_window_count'))} "
-                f"horizons={_fmt_num(truth_coverage.get('horizon_count'))} "
-                f"multi_window_units={_fmt_num(truth_coverage.get('multi_window_truth_unit_count'))}"
+                f"窗口={_fmt_num(truth_coverage.get('observed_window_count'))} "
+                f"horizon={_fmt_num(truth_coverage.get('horizon_count'))} "
+                f"多窗单元={_fmt_num(truth_coverage.get('multi_window_truth_unit_count'))}"
             ),
             (
                 "Scout重点: "
-                f"{_fmt_named_counts(_as_list(scout_surface.get('top_families')), limit=2)}; "
-                f"{_fmt_named_counts(_as_list(scout_surface.get('top_hypotheses')), limit=2)}"
+                f"{_fmt_named_counts_owner(_as_list(scout_surface.get('top_families')), limit=2)}; "
+                f"{_fmt_named_counts_owner(_as_list(scout_surface.get('top_hypotheses')), limit=2)}"
             ),
         ]
     )
