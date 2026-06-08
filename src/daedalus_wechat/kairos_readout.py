@@ -352,6 +352,54 @@ def _format_archive_runner_next_actions(summary: dict[str, Any]) -> str | None:
     return " ".join(visible)
 
 
+def _volume_anchor_mode_label(mode_id: Any) -> str:
+    labels = {
+        "volume_anchor_price_only_break": "价过量未过",
+        "volume_anchor_dual_price_volume_break": "量价双破",
+        "volume_anchor_volume_only_watchlist": "量过价未过",
+    }
+    return labels.get(str(mode_id or ""), str(mode_id or "unknown"))
+
+
+def _ci_cross_label(value: Any) -> str:
+    if value is True:
+        return "CI跨0"
+    if value is False:
+        return "CI不跨0"
+    return "CI未知"
+
+
+def _format_volume_anchor_mode_evidence(summary: dict[str, Any]) -> str | None:
+    evidence = _as_dict(summary.get("volume_anchor_outcome_mode_evidence"))
+    if not evidence:
+        return None
+    mode_order = (
+        "volume_anchor_price_only_break",
+        "volume_anchor_dual_price_volume_break",
+        "volume_anchor_volume_only_watchlist",
+    )
+    pieces: list[str] = []
+    for mode_id in mode_order:
+        row = _as_dict(evidence.get(mode_id))
+        if not row:
+            continue
+        wounds = _as_list(row.get("wounds"))
+        pending = (
+            "待FDR/holdout/forward"
+            if "fdr_holdout_forward_shadow_pending" in wounds
+            else "report-only"
+        )
+        pieces.append(
+            f"{_volume_anchor_mode_label(mode_id)}:"
+            f"D20行业超额{_fmt_pct(row.get('d20_mean_excess_vs_industry_pct'))}/"
+            f"右尾20%={_fmt_pct(row.get('d20_right_tail_ge_20pct_share_pct'))}/"
+            f"n={_fmt_num(row.get('d20_date_block_effective_n'))}/"
+            f"{_ci_cross_label(row.get('d20_date_block_ci_crosses_zero'))}/"
+            f"{row.get('evidence_tier', 'OBSERVATION')}/{pending}"
+        )
+    return " ".join(pieces) if pieces else None
+
+
 def _continuous_runner_status_label(value: Any) -> str | None:
     status = str(value or "")
     if status == "REPORT_ONLY_SHORT_CYCLE_CONTINUOUS_RUNNER_STATUS_READY":
@@ -616,6 +664,9 @@ def _format_archive_day_line(row: dict[str, Any]) -> str:
         )
     if summary.get("volume_anchor_outcome_status"):
         pieces.append(f"锚回放状态={summary.get('volume_anchor_outcome_status')}")
+    mode_evidence = _format_volume_anchor_mode_evidence(summary)
+    if mode_evidence:
+        pieces.append(f"锚证据={mode_evidence}")
     if summary.get("latest_generated_at_utc"):
         pieces.append(f"latest={summary.get('latest_generated_at_utc')}")
     pieces.append(f"surfaces={_fmt_num(summary.get('surface_count'))}")

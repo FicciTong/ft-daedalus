@@ -1514,6 +1514,41 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
                             },
                             "volume_anchor_outcome_event_count": 16875,
                             "volume_anchor_outcome_industry_mapped_event_count": 16006,
+                            "volume_anchor_outcome_mode_evidence": {
+                                "volume_anchor_price_only_break": {
+                                    "evidence_tier": "OBSERVATION",
+                                    "d20_mean_excess_vs_industry_pct": 1.1535,
+                                    "d20_right_tail_ge_20pct_share_pct": 12.958,
+                                    "d20_date_block_effective_n": 97,
+                                    "d20_date_block_ci_crosses_zero": False,
+                                    "wounds": [
+                                        "report_only_mode_summary_not_edge",
+                                        "fdr_holdout_forward_shadow_pending",
+                                    ],
+                                },
+                                "volume_anchor_dual_price_volume_break": {
+                                    "evidence_tier": "OBSERVATION",
+                                    "d20_mean_excess_vs_industry_pct": 0.6201,
+                                    "d20_right_tail_ge_20pct_share_pct": 11.6599,
+                                    "d20_date_block_effective_n": 97,
+                                    "d20_date_block_ci_crosses_zero": True,
+                                    "wounds": [
+                                        "report_only_mode_summary_not_edge",
+                                        "fdr_holdout_forward_shadow_pending",
+                                    ],
+                                },
+                                "volume_anchor_volume_only_watchlist": {
+                                    "evidence_tier": "OBSERVATION",
+                                    "d20_mean_excess_vs_industry_pct": -1.024,
+                                    "d20_right_tail_ge_20pct_share_pct": 8.9995,
+                                    "d20_date_block_effective_n": 97,
+                                    "d20_date_block_ci_crosses_zero": False,
+                                    "wounds": [
+                                        "report_only_mode_summary_not_edge",
+                                        "fdr_holdout_forward_shadow_pending",
+                                    ],
+                                },
+                            },
                             "volume_anchor_outcome_status": "READY",
                             "latest_generated_at_utc": "2026-06-08T06:30:00Z",
                         },
@@ -1599,6 +1634,12 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
     assert "volume_only_watchlist=26" in text
     assert "锚回放=16006/16875" in text
     assert "锚回放状态=READY" in text
+    assert "锚证据=价过量未过:D20行业超额1.15%" in text
+    assert "右尾20%=12.96%" in text
+    assert "n=97/CI不跨0/OBSERVATION/待FDR/holdout/forward" in text
+    assert "量价双破:D20行业超额0.62%" in text
+    assert "CI跨0/OBSERVATION/待FDR/holdout/forward" in text
+    assert "量过价未过:D20行业超额-1.02%" in text
     assert "surfaces=5" in text
     assert "/brief YYYY-MM-DD" in text
     assert "accepted_edges=0" in text
