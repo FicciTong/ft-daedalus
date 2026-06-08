@@ -233,6 +233,50 @@ def _append_archive_count_map(
         pieces.append(f"{label}={_fmt_count_map(value)}")
 
 
+def _format_archive_wound_counts(value: Any, *, limit: int = 3) -> str:
+    if isinstance(value, dict):
+        items = sorted(
+            value.items(),
+            key=lambda item: (-_float_or(item[1]), str(item[0])),
+        )
+        return " ".join(
+            f"{_wound_label(wound)}={_fmt_num(count)}"
+            for wound, count in items[:limit]
+        )
+    rows: list[tuple[str, Any]] = []
+    for item in _as_list(value):
+        row = _as_dict(item)
+        wound = str(row.get("wound") or row.get("name") or "")
+        if not wound:
+            continue
+        rows.append(
+            (
+                wound,
+                row.get("candidate_count")
+                or row.get("count")
+                or row.get("row_count")
+                or 0,
+            )
+        )
+    rows.sort(key=lambda item: (-_float_or(item[1]), item[0]))
+    return " ".join(
+        f"{_wound_label(wound)}={_fmt_num(count)}"
+        for wound, count in rows[:limit]
+    )
+
+
+def _append_archive_wound_counts(
+    pieces: list[str],
+    *,
+    label: str,
+    value: Any,
+    limit: int = 3,
+) -> None:
+    text = _format_archive_wound_counts(value, limit=limit)
+    if text:
+        pieces.append(f"{label}={text}")
+
+
 def _format_archive_day_line(row: dict[str, Any]) -> str:
     summary = _as_dict(row.get("summary"))
     report_date = row.get("report_date")
@@ -350,6 +394,11 @@ def _format_archive_day_line(row: dict[str, Any]) -> str:
         pieces,
         label="分钟缺口",
         value=summary.get("minute_price_volume_missing_count"),
+    )
+    _append_archive_wound_counts(
+        pieces,
+        label="分钟伤口",
+        value=summary.get("minute_price_volume_wound_counts"),
     )
     _append_archive_count_map(
         pieces,
@@ -1220,6 +1269,13 @@ WOUND_LABEL_ZH = {
     "stock_personality_selection_policy_not_integrated": "未接股性/质地筛选",
     "context_fit_stock_texture_not_evaluated": "板块符合但个股质地未评估",
     "ma_posture_strength_filter_not_integrated": "未接均线强势姿态筛选",
+    "auction_volume_share_missing": "竞价量占比缺失",
+    "first30m_amount_share_missing": "前30分钟成交额占比缺失",
+    "first30m_bars_incomplete": "前30分钟分钟线不完整",
+    "full_session_minute_bars_incomplete": "全日分钟线不完整",
+    "stock_intraday_features_daily_missing": "分钟量价特征未生成",
+    "stock_open_state_day_missing": "开盘状态未生成",
+    "tail_amount_share_missing": "尾盘成交额占比缺失",
 }
 
 MARKET_REGIME_LABEL_ZH = {

@@ -1401,8 +1401,26 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
                             "forward_shadow_pending_trigger_count": 213,
                             "forward_shadow_trigger_fired_count": 0,
                             "minute_price_volume_candidate_count": 21,
-                            "minute_price_volume_ready_count": 21,
-                            "minute_price_volume_missing_count": 0,
+                            "minute_price_volume_ready_count": 0,
+                            "minute_price_volume_missing_count": 21,
+                            "minute_price_volume_wound_counts": [
+                                {
+                                    "wound": "stock_intraday_features_daily_missing",
+                                    "candidate_count": 21,
+                                },
+                                {
+                                    "wound": "first30m_bars_incomplete",
+                                    "candidate_count": 19,
+                                },
+                                {
+                                    "wound": "auction_volume_share_missing",
+                                    "candidate_count": 18,
+                                },
+                                {
+                                    "wound": "tail_amount_share_missing",
+                                    "candidate_count": 17,
+                                },
+                            ],
                             "price_volume_flag_counts": {
                                 "first30m_high_amount_acceptance": 16,
                                 "late_session_volume_acceleration_positive": 19,
@@ -1464,8 +1482,12 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
     assert "forward_shadow=PENDING_TARGET_OPEN_STATE" in text
     assert "shadow_pending=213" in text
     assert "shadow_fired=0" in text
-    assert "分钟量价=21/21" in text
-    assert "分钟缺口=0" in text
+    assert "分钟量价=0/21" in text
+    assert "分钟缺口=21" in text
+    assert "分钟伤口=分钟量价特征未生成=21" in text
+    assert "前30分钟分钟线不完整=19" in text
+    assert "竞价量占比缺失=18" in text
+    assert "尾盘成交额占比缺失=17" not in text
     assert "分钟量价标记=first30m_high_amount_acceptance=16" in text
     assert "late_session_volume_acceleration_positive=19" in text
     assert "量价锚=88/769" in text
