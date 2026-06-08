@@ -1458,6 +1458,31 @@ def _format_owner_review_truth_units(
                 f"source=block_condition_daywalk "
                 f"not_edge=true wounds={wounds}"
             )
+    generic_daywalk_rows = [
+        row
+        for row in _as_list(truth_units.get("all_truth_units"))
+        if isinstance(row, dict)
+        and row.get("source_type") == "hypothesis_daywalk"
+    ][:3]
+    if generic_daywalk_rows:
+        lines.append("- generic_daywalk_truth_units:")
+        for row in generic_daywalk_rows:
+            wounds = ",".join(
+                str(item)
+                for item in _as_list(row.get("presentation_wounds"))[:3]
+                if item
+            )
+            lines.append(
+                f"  - {row.get('hypothesis_id', 'unknown')} "
+                f"family={row.get('family', 'unknown')} "
+                f"horizon={row.get('horizon_id', 'unknown')} "
+                f"latest={row.get('latest_verdict', 'unknown')} "
+                f"gross={_fmt_pct(row.get('latest_executable_excess_pct_gross'))} "
+                f"n={_fmt_num(row.get('latest_executable_row_n'))}/"
+                f"days={_fmt_num(row.get('latest_date_cluster_n'))} "
+                f"source=hypothesis_daywalk "
+                f"not_edge=true wounds={wounds}"
+            )
     report_path = truth_units.get("report_path")
     if report_path:
         lines.append(f"- truth_units_artifact={report_path}")

@@ -542,6 +542,7 @@ def _sample_owner_review_truth_units_payload() -> dict[str, object]:
             },
             {
                 "hypothesis_id": "retreat_remnant_strength",
+                "family": "sector_theme_lifecycle",
                 "horizon_id": "next_open_to_d5_close",
                 "source_type": "block_condition_daywalk",
                 "owner_review_route": "strict_candidate_review_only",
@@ -551,6 +552,22 @@ def _sample_owner_review_truth_units_payload() -> dict[str, object]:
                 "latest_date_cluster_n": 93,
                 "presentation_wounds": [
                     "block_condition_daywalk_source_not_cached_retry",
+                    "net_static_cost_not_available_for_source",
+                    "date_block_ci_not_available_for_source",
+                ],
+            },
+            {
+                "hypothesis_id": "open_auction_volume_price_acceptance",
+                "family": "auction_microstructure",
+                "horizon_id": "next_open_to_d5_close",
+                "source_type": "hypothesis_daywalk",
+                "owner_review_route": "strict_candidate_review_only",
+                "latest_verdict": "CANDIDATE_ONLY",
+                "latest_executable_excess_pct_gross": 0.5727,
+                "latest_executable_row_n": 1885,
+                "latest_date_cluster_n": 91,
+                "presentation_wounds": [
+                    "hypothesis_daywalk_source_not_cached_retry",
                     "net_static_cost_not_available_for_source",
                     "date_block_ci_not_available_for_source",
                 ],
@@ -955,6 +972,12 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "block_condition_strict_candidates" in text
     assert "retreat_remnant_strength horizon=next_open_to_d5_close" in text
     assert "source=block_condition_daywalk not_edge=true" in text
+    assert "generic_daywalk_truth_units" in text
+    assert (
+        "open_auction_volume_price_acceptance family=auction_microstructure "
+        "horizon=next_open_to_d5_close"
+    ) in text
+    assert "source=hypothesis_daywalk not_edge=true" in text
     assert "score/rank is not evidence, edge, GO, or advice" in text
     assert "日包总入口" in text
     assert (
