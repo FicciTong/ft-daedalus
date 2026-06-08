@@ -449,13 +449,33 @@ def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
         "owner_review_surface": {
             "surface_status": "REPORT_ONLY_SCOUT_INTAKE_DENOMINATOR",
             "top_families": [
-                {"name": "execution_template_ablation", "count": 92},
-                {"name": "intraday_price_volume", "count": 88},
-                {"name": "auction_microstructure", "count": 80},
+                {
+                    "name": "execution_template_ablation",
+                    "family_name_zh": "执行模板对照",
+                    "count": 92,
+                },
+                {
+                    "name": "intraday_price_volume",
+                    "family_name_zh": "盘中量价",
+                    "count": 88,
+                },
+                {
+                    "name": "auction_microstructure",
+                    "family_name_zh": "集合竞价微结构",
+                    "count": 80,
+                },
             ],
             "top_hypotheses": [
-                {"name": "next_open_vs_first5m_vwap_gap", "count": 32},
-                {"name": "tail_accumulation_next_open", "count": 32},
+                {
+                    "name": "next_open_vs_first5m_vwap_gap",
+                    "hypothesis_name_zh": "次日开盘对前5分钟VWAP",
+                    "count": 32,
+                },
+                {
+                    "name": "tail_accumulation_next_open",
+                    "hypothesis_name_zh": "尾盘吸筹次日开盘",
+                    "count": 32,
+                },
             ],
             "dispatchable_examples": [
                 {
@@ -466,6 +486,11 @@ def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
                     "execution_dispatch": "EXECUTABLE",
                     "missing_surface_requirements": [],
                     "next_action": "run_daywalk_stability_and_forward_observed_readout",
+                    "owner_visible_metadata_zh": {
+                        "hypothesis_name_zh": "冰点修复首板",
+                        "family_name_zh": "情绪周期择时",
+                        "condition_summary_zh": "观察冰点、退潮、高潮分歧和修复日。",
+                    },
                 }
             ],
             "already_materialized_daywalk_examples": [
@@ -480,6 +505,11 @@ def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
                         "/tmp/short_cycle_hypothesis_daywalk_ice_point_repair_first_board_long_latest.json"
                     ],
                     "next_action": "run_daywalk_stability_and_forward_observed_readout",
+                    "owner_visible_metadata_zh": {
+                        "hypothesis_name_zh": "冰点修复首板",
+                        "family_name_zh": "情绪周期择时",
+                        "condition_summary_zh": "观察冰点、退潮、高潮分歧和修复日。",
+                    },
                 }
             ],
             "needs_executable_spec_examples": [
@@ -491,6 +521,11 @@ def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
                     "execution_dispatch": "NEEDS_EXECUTABLE_SPEC",
                     "missing_surface_requirements": [],
                     "next_action": "write_machine_executable_predicate_or_registered_runner_spec",
+                    "owner_visible_metadata_zh": {
+                        "hypothesis_name_zh": "尾盘吸筹次日开盘",
+                        "family_name_zh": "盘中量价",
+                        "condition_summary_zh": "观察尾盘吸筹、前30分钟突破、放量突破和VWAP修复。",
+                    },
                 }
             ],
             "pending_surface_examples": [
@@ -502,6 +537,11 @@ def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
                     "execution_dispatch": None,
                     "missing_surface_requirements": ["canonical.northbound_flow_day"],
                     "next_action": "materialize_pit_safe_source_surface_before_freeze",
+                    "owner_visible_metadata_zh": {
+                        "hypothesis_name_zh": "北向弱但活跃资金小盘",
+                        "family_name_zh": "资金偏好流",
+                        "condition_summary_zh": "观察北向、龙虎榜、净流和机构偏好等资金足迹。",
+                    },
                 }
             ],
         },
@@ -1070,14 +1110,23 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
         "needs_spec=124 pending_surface=80"
         in text
     )
-    assert "top_families execution_template_ablation=92 intraday_price_volume=88" in text
-    assert "dispatchable: ice_point_repair_first_board family=emotion_cycle_timing" in text
-    assert "already_materialized: ice_point_repair_first_board family=emotion_cycle_timing" in text
-    assert "short_cycle_hypothesis_daywalk_ice_point_repair_first_board" in text
-    assert "needs_spec: tail_accumulation_next_open family=intraday_price_volume" in text
+    assert "top_families 执行模板对照/execution_template_ablation=92" in text
+    assert "盘中量价/intraday_price_volume=88" in text
+    assert "top_hypotheses 次日开盘对前5分钟VWAP/next_open_vs_first5m_vwap_gap=32" in text
     assert (
-        "pending_surface: northbound_out_active_money_smallcap "
-        "family=fund_preference_flow"
+        "dispatchable: 冰点修复首板(ice_point_repair_first_board) "
+        "family=情绪周期择时/emotion_cycle_timing"
+    ) in text
+    assert "condition=观察冰点、退潮、高潮分歧和修复日。" in text
+    assert (
+        "already_materialized: 冰点修复首板(ice_point_repair_first_board) "
+        "family=情绪周期择时/emotion_cycle_timing"
+    ) in text
+    assert "short_cycle_hypothesis_daywalk_ice_point_repair_first_board" in text
+    assert "needs_spec: 尾盘吸筹次日开盘(tail_accumulation_next_open)" in text
+    assert (
+        "pending_surface: 北向弱但活跃资金小盘(northbound_out_active_money_smallcap) "
+        "family=资金偏好流/fund_preference_flow"
     ) in text
     assert "missing=canonical.northbound_flow_day" in text
     assert "scout denominator only; not evidence, not edge, not GO, not advice" in text

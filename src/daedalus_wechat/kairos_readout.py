@@ -1343,21 +1343,37 @@ def _fmt_named_counts(rows: list[Any], *, limit: int = 3) -> str:
     for row in rows[:limit]:
         if not isinstance(row, dict):
             continue
-        parts.append(f"{row.get('name', 'unknown')}={_fmt_num(row.get('count'))}")
+        name = str(row.get("name", "unknown"))
+        zh_name = (
+            row.get("hypothesis_name_zh")
+            or row.get("family_name_zh")
+            or row.get("name_zh")
+        )
+        label = f"{zh_name}/{name}" if zh_name else name
+        parts.append(f"{label}={_fmt_num(row.get('count'))}")
     return " ".join(parts) if parts else "none"
 
 
 def _format_scout_example(row: dict[str, Any]) -> str:
     missing = _as_list(row.get("missing_surface_requirements"))
     missing_text = ",".join(str(item) for item in missing[:3]) if missing else "none"
+    metadata = _as_dict(row.get("owner_visible_metadata_zh"))
+    hypothesis_name = metadata.get("hypothesis_name_zh") or row.get(
+        "hypothesis_id",
+        "unknown",
+    )
+    family_name = metadata.get("family_name_zh") or row.get("family", "unknown")
+    condition_summary = metadata.get("condition_summary_zh")
+    condition_text = f" condition={condition_summary}" if condition_summary else ""
     return (
-        f"{row.get('hypothesis_id', 'unknown')} "
-        f"family={row.get('family', 'unknown')} "
+        f"{hypothesis_name}({row.get('hypothesis_id', 'unknown')}) "
+        f"family={family_name}/{row.get('family', 'unknown')} "
         f"horizon={row.get('horizon_id', 'unknown')} "
         f"route={row.get('route', 'unknown')} "
         f"dispatch={row.get('execution_dispatch', 'unknown')} "
         f"missing={missing_text} "
         f"next={row.get('next_action', 'review')}"
+        f"{condition_text}"
     )
 
 
