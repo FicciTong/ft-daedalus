@@ -1403,6 +1403,9 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
                             "eod_review_current_triggered_candidate_count": 1,
                             "eod_review_pending_or_missing_candidate_count": 19,
                             "intraday_eod_outcome_status": "PENDING_EOD_OUTCOME",
+                            "intraday_eod_blocker_id": (
+                                "target_trade_date_outcome_rows_not_matured"
+                            ),
                             "eod_outcome_candidate_unit_count": 20,
                             "eod_outcome_matched_panel_row_count": 0,
                             "feedback_status": "REPORT_ONLY_FEEDBACK_READY",
@@ -1417,6 +1420,9 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
                                 "surface_blocker_triage": 8,
                             },
                             "forward_shadow_lifecycle_state": "PENDING_TARGET_OPEN_STATE",
+                            "forward_shadow_next_action": (
+                                "wait for target open-state and first30m fields"
+                            ),
                             "forward_shadow_pending_trigger_count": 213,
                             "forward_shadow_trigger_fired_count": 0,
                             "continuous_runner_status": (
@@ -1429,6 +1435,38 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
                             "continuous_runner_blocked_job_count": 0,
                             "continuous_runner_missing_required_job_count": 0,
                             "continuous_runner_heavy_or_whole_market_job_count": 2,
+                            "continuous_runner_pending_job_ids": [
+                                "short_cycle_intraday_price_volume_utilization_readout",
+                                "short_cycle_intraday_eod_outcome_review",
+                                "short_cycle_forward_shadow_track_record",
+                            ],
+                            "continuous_runner_next_actions": [
+                                {
+                                    "job_id": (
+                                        "short_cycle_intraday_price_volume_"
+                                        "utilization_readout"
+                                    ),
+                                    "next_action": (
+                                        "rerun after target trade date "
+                                        "intraday/minute-derived surfaces are available; "
+                                        "pending target-day rows are not negative evidence"
+                                    ),
+                                },
+                                {
+                                    "job_id": "short_cycle_intraday_eod_outcome_review",
+                                    "next_action": (
+                                        "rerun forward outcome panel after target-day "
+                                        "and forward horizon daily bars are available; "
+                                        "missing rows are pending, not negative evidence"
+                                    ),
+                                },
+                                {
+                                    "job_id": "short_cycle_forward_shadow_track_record",
+                                    "next_action": (
+                                        "wait for target open-state and first30m fields"
+                                    ),
+                                },
+                            ],
                             "minute_price_volume_candidate_count": 21,
                             "minute_price_volume_ready_count": 0,
                             "minute_price_volume_missing_count": 21,
@@ -1517,6 +1555,7 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
     assert "当前候选=1" in text
     assert "pending=19" in text
     assert "eod_outcome=PENDING_EOD_OUTCOME" in text
+    assert "eod_blocker=target_trade_date_outcome_rows_not_matured" in text
     assert "outcome_matched=0/20" in text
     assert "反馈=REPORT_ONLY_FEEDBACK_READY" in text
     assert "反馈队列=27" in text
@@ -1529,6 +1568,7 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
     assert "反馈来源=research_card_draft_backlog=10" in text
     assert "surface_blocker_triage=8" in text
     assert "forward_shadow=PENDING_TARGET_OPEN_STATE" in text
+    assert "forward_next=等开盘/30m字段" in text
     assert "shadow_pending=213" in text
     assert "shadow_fired=0" in text
     assert "runner=待成熟" in text
@@ -1537,8 +1577,13 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
     assert "runner_blocked=0" in text
     assert "runner_missing=0" in text
     assert "heavy=2" in text
+    assert "runner_jobs=分钟量价,EOD回放,forward-shadow" in text
+    assert "runner_next=分钟量价:等目标日分钟面" in text
+    assert "EOD回放:等前向日线成熟" in text
+    assert "forward-shadow:等开盘/30m字段" in text
     assert "分钟量价=0/21" in text
     assert "分钟量价状态=目标日未成熟" in text
+    assert "分钟量价next=等目标日分钟面" in text
     assert "分钟待成熟=21" in text
     assert "分钟缺口=21" not in text
     assert "分钟伤口=" not in text

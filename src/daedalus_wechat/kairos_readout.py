@@ -292,6 +292,66 @@ def _minute_price_volume_maturity_label(summary: dict[str, Any]) -> str | None:
     return None
 
 
+def _short_cycle_job_label(value: Any) -> str:
+    job_id = str(value or "")
+    labels = {
+        "short_cycle_intraday_price_volume_utilization_readout": "分钟量价",
+        "short_cycle_intraday_eod_outcome_review": "EOD回放",
+        "short_cycle_forward_shadow_track_record": "forward-shadow",
+    }
+    return labels.get(job_id, job_id)
+
+
+def _short_cycle_next_action_label(value: Any) -> str:
+    action = str(value or "")
+    lowered = action.lower()
+    if (
+        "intraday/minute-derived surfaces are available" in lowered
+        or "minute rows" in lowered
+    ):
+        return "等目标日分钟面"
+    if "forward horizon daily bars" in lowered or "outcome rows" in lowered:
+        return "等前向日线成熟"
+    if "target open-state" in lowered or "first30m" in lowered:
+        return "等开盘/30m字段"
+    if "pending" in lowered and "not negative evidence" in lowered:
+        return "待成熟非负证据"
+    return action
+
+
+def _format_archive_pending_runner_jobs(summary: dict[str, Any]) -> str | None:
+    job_ids = [
+        _short_cycle_job_label(item)
+        for item in _as_list(summary.get("continuous_runner_pending_job_ids"))
+        if str(item or "")
+    ]
+    if not job_ids:
+        return None
+    visible = job_ids[:3]
+    if len(job_ids) > 3:
+        visible.append(f"+{len(job_ids) - 3}")
+    return ",".join(visible)
+
+
+def _format_archive_runner_next_actions(summary: dict[str, Any]) -> str | None:
+    actions: list[str] = []
+    for item in _as_list(summary.get("continuous_runner_next_actions")):
+        row = _as_dict(item)
+        job_id = row.get("job_id")
+        next_action = row.get("next_action")
+        if not job_id or not next_action:
+            continue
+        actions.append(
+            f"{_short_cycle_job_label(job_id)}:{_short_cycle_next_action_label(next_action)}"
+        )
+    if not actions:
+        return None
+    visible = actions[:3]
+    if len(actions) > 3:
+        visible.append(f"+{len(actions) - 3}")
+    return " ".join(visible)
+
+
 def _continuous_runner_status_label(value: Any) -> str | None:
     status = str(value or "")
     if status == "REPORT_ONLY_SHORT_CYCLE_CONTINUOUS_RUNNER_STATUS_READY":
@@ -416,6 +476,8 @@ def _format_archive_day_line(row: dict[str, Any]) -> str:
     )
     if summary.get("intraday_eod_outcome_status"):
         pieces.append(f"eod_outcome={summary.get('intraday_eod_outcome_status')}")
+    if summary.get("intraday_eod_blocker_id"):
+        pieces.append(f"eod_blocker={summary.get('intraday_eod_blocker_id')}")
     if summary.get("eod_outcome_candidate_unit_count") is not None:
         pieces.append(
             "outcome_matched="
@@ -446,6 +508,11 @@ def _format_archive_day_line(row: dict[str, Any]) -> str:
     )
     if summary.get("forward_shadow_lifecycle_state"):
         pieces.append(f"forward_shadow={summary.get('forward_shadow_lifecycle_state')}")
+    if summary.get("forward_shadow_next_action"):
+        pieces.append(
+            "forward_next="
+            f"{_short_cycle_next_action_label(summary.get('forward_shadow_next_action'))}"
+        )
     _append_archive_count(
         pieces,
         label="shadow_pending",
@@ -487,6 +554,12 @@ def _format_archive_day_line(row: dict[str, Any]) -> str:
         label="heavy",
         value=summary.get("continuous_runner_heavy_or_whole_market_job_count"),
     )
+    pending_jobs = _format_archive_pending_runner_jobs(summary)
+    if pending_jobs:
+        pieces.append(f"runner_jobs={pending_jobs}")
+    runner_next = _format_archive_runner_next_actions(summary)
+    if runner_next:
+        pieces.append(f"runner_next={runner_next}")
     if summary.get("minute_price_volume_candidate_count") is not None:
         pieces.append(
             "分钟量价="
@@ -497,6 +570,11 @@ def _format_archive_day_line(row: dict[str, Any]) -> str:
     minute_pending = minute_maturity_label == "目标日未成熟"
     if minute_maturity_label:
         pieces.append(f"分钟量价状态={minute_maturity_label}")
+    if summary.get("minute_price_volume_next_action"):
+        pieces.append(
+            "分钟量价next="
+            f"{_short_cycle_next_action_label(summary.get('minute_price_volume_next_action'))}"
+        )
     if minute_pending:
         _append_archive_count(
             pieces,
