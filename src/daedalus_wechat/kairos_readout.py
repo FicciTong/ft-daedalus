@@ -595,6 +595,15 @@ def _fmt_num(value: Any) -> str:
     return f"{as_float:.4g}"
 
 
+def _fmt_ratio_pct(value: Any) -> str:
+    if value is None:
+        return "None"
+    try:
+        return f"{float(value) * 100.0:.2f}%"
+    except (TypeError, ValueError):
+        return str(value)
+
+
 def _fmt_ci(lower: Any, upper: Any) -> str:
     if lower is None and upper is None:
         return "[None,None]"
@@ -626,6 +635,62 @@ def _format_intraday_snapshot_blocker(
     if isinstance(errors, list) and errors:
         parts.append(f"errors={','.join(str(item) for item in errors[:4])}")
     return "- intraday_alert_blocker " + " ".join(parts)
+
+
+def _triggered_intraday_rows(
+    alert: dict[str, Any], *, limit: int = 8
+) -> list[tuple[dict[str, Any], list[dict[str, Any]]]]:
+    rows: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+    for row in _as_list(alert.get("candidate_alerts")):
+        if not isinstance(row, dict):
+            continue
+        hits = [
+            checkpoint
+            for checkpoint in _as_list(row.get("runtime_checkpoints"))
+            if isinstance(checkpoint, dict) and checkpoint.get("triggered") is True
+        ]
+        if hits:
+            rows.append((row, hits))
+    rows.sort(
+        key=lambda item: (
+            int(item[0].get("rank") or 999999),
+            str(item[0].get("symbol") or ""),
+        )
+    )
+    return rows[:limit]
+
+
+def _format_intraday_triggered_rows(
+    alert: dict[str, Any], *, limit: int = 8
+) -> list[str]:
+    triggered_rows = _triggered_intraday_rows(alert, limit=limit)
+    if not triggered_rows:
+        return []
+
+    lines = [
+        f"- intraday_triggered_rows={len(triggered_rows)} top_limit={limit}",
+        "- intraday_triggered_boundary=observed trigger rows only; not edge, not GO, not advice",
+    ]
+    for row, hits in triggered_rows:
+        by_window = {str(hit.get("window_id")): hit for hit in hits}
+        windows = ",".join(str(hit.get("window_id")) for hit in hits)
+        first30m = by_window.get("first30m_confirmation_1001", {})
+        first5m = by_window.get("first5m_preliminary_0936", {})
+        opening = by_window.get("opening_print_0926", {})
+        lines.append(
+            f"- trigger #{_fmt_num(row.get('rank'))} "
+            f"{row.get('symbol', 'unknown')} {row.get('stock_name', '')} "
+            f"[{row.get('industry_name', 'unknown')}] "
+            f"{row.get('tactic_id', 'unknown')} "
+            f"windows={windows} "
+            f"gap={_fmt_ratio_pct(opening.get('gap_pct'))} "
+            f"first5m={_fmt_ratio_pct(first5m.get('first5m_return_pct'))} "
+            f"first30m={_fmt_ratio_pct(first30m.get('first30m_return_pct'))} "
+            f"drawdown30m={_fmt_ratio_pct(first30m.get('drawdown_30m_from_open'))} "
+            f"label={row.get('owner_confidence_label', 'unknown')} "
+            f"wounds={len(_as_list(row.get('evidence_wounds')))}"
+        )
+    return lines
 
 
 def _fmt_counter(counter: Counter[str], *, limit: int = 4) -> str:
@@ -765,6 +830,7 @@ def _format_daily_package_handoff(
                 f"pending={_fmt_num(readiness.get('pending_count'))} "
                 f"pending_windows={readiness.get('pending_window_ids')}"
             )
+        lines.extend(_format_intraday_triggered_rows(alert))
         blocker = _format_intraday_snapshot_blocker(
             snapshot=snapshot,
             alert=alert,
@@ -1655,6 +1721,11 @@ def format_kairos_intraday_alert(
             f"- {row.get('time_cst')} {row.get('window_id')}: "
             f"{row.get('owner_use')} ({row.get('trust_level')})"
         )
+
+    trigger_lines = _format_intraday_triggered_rows(payload)
+    if trigger_lines:
+        lines.extend(["", "盘中已触发:"])
+        lines.extend(trigger_lines)
 
     lines.extend(["", f"盘中候选 Top {min(candidate_limit, len(candidates))}:"])
     for row in candidates[:candidate_limit]:

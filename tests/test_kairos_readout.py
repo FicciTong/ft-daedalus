@@ -641,6 +641,39 @@ def _sample_intraday_alert_payload() -> dict[str, object]:
     }
 
 
+def _sample_intraday_alert_payload_with_triggered_row() -> dict[str, object]:
+    payload = _sample_intraday_alert_payload()
+    payload["trigger_field_readiness_status"] = {
+        "status": "TRIGGER_FIELDS_READY",
+        "resolved_count": 3,
+        "pending_count": 0,
+        "pending_window_ids": [],
+    }
+    candidate = payload["candidate_alerts"][0]  # type: ignore[index]
+    candidate["runtime_checkpoints"] = [  # type: ignore[index]
+        {
+            "window_id": "opening_print_0926",
+            "triggered": True,
+            "trigger_status": "OPENING_GAP_TRIGGER_OBSERVED",
+            "gap_pct": 0.0592,
+        },
+        {
+            "window_id": "first5m_preliminary_0936",
+            "triggered": True,
+            "trigger_status": "FIRST5M_PRELIMINARY_ACCEPTANCE_OBSERVED",
+            "first5m_return_pct": 0.0267,
+        },
+        {
+            "window_id": "first30m_confirmation_1001",
+            "triggered": True,
+            "trigger_status": "FIRST30M_PATTERN_CONFIRMATION_OBSERVED",
+            "first30m_return_pct": 0.0381,
+            "drawdown_30m_from_open": -0.0068,
+        },
+    ]
+    return payload
+
+
 def _sample_future_blocked_intraday_alert_payload() -> dict[str, object]:
     payload = _sample_intraday_alert_payload()
     payload.update(
@@ -995,6 +1028,36 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "wounds=3" in text
 
 
+def test_format_kairos_owner_brief_shows_intraday_triggered_rows(
+    tmp_path: Path,
+) -> None:
+    payload = _sample_owner_brief_payload()
+    payload["report_path"] = str(tmp_path / "brief.json")
+    package = _sample_owner_daily_package_payload()
+    package["report_path"] = str(tmp_path / "package.json")
+
+    text = format_kairos_owner_brief(
+        payload,
+        daily_package=package,
+        intraday_alert=_sample_intraday_alert_payload_with_triggered_row(),
+        hypothesis_scout_readout=_sample_hypothesis_scout_readout_payload(),
+        owner_review_truth_units=_sample_owner_review_truth_units_payload(),
+    )
+
+    assert "intraday_triggered_rows=1 top_limit=8" in text
+    assert "intraday_triggered_boundary=observed trigger rows only" in text
+    assert "trigger #1 002251.SZ 步步高" in text
+    assert (
+        "windows=opening_print_0926,first5m_preliminary_0936,"
+        "first30m_confirmation_1001"
+    ) in text
+    assert "gap=5.92%" in text
+    assert "first5m=2.67%" in text
+    assert "first30m=3.81%" in text
+    assert "drawdown30m=-0.68%" in text
+    assert "not edge, not GO, not advice" in text
+
+
 def test_format_kairos_owner_brief_shows_intraday_alert_blocker() -> None:
     text = format_kairos_owner_brief(
         _sample_owner_brief_payload(),
@@ -1193,6 +1256,19 @@ def test_format_kairos_intraday_alert_keeps_report_only_boundary(
     assert "002240.SZ 盛新锂能" in text
     assert "prior_weak_close_reclaim_volume::小金属" in text
     assert "PENDING_REALTIME_SNAPSHOT" in text
+
+
+def test_format_kairos_intraday_alert_highlights_triggered_rows() -> None:
+    text = format_kairos_intraday_alert(
+        _sample_intraday_alert_payload_with_triggered_row()
+    )
+
+    assert "盘中已触发:" in text
+    assert "intraday_triggered_rows=1 top_limit=8" in text
+    assert "trigger #1 002251.SZ 步步高" in text
+    assert "first30m=3.81%" in text
+    assert "drawdown30m=-0.68%" in text
+    assert "intraday_triggered_boundary=observed trigger rows only" in text
 
 
 def test_format_kairos_intraday_alert_shows_blocked_snapshot_details() -> None:
