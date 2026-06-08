@@ -528,6 +528,34 @@ def _sample_owner_review_truth_units_payload() -> dict[str, object]:
                 "latest_date_block_ci_crosses_zero": False,
             }
         ],
+        "all_truth_units": [
+            {
+                "hypothesis_id": "high_gap_first30m_hold",
+                "horizon_id": "next_open_to_d5_close",
+                "source_type": "cached_retry",
+                "owner_review_route": "strict_candidate_review_only",
+                "latest_verdict": "CANDIDATE_ONLY",
+                "latest_executable_excess_pct_gross": 0.75,
+                "latest_executable_row_n": 4437,
+                "latest_date_cluster_n": 86,
+                "presentation_wounds": [],
+            },
+            {
+                "hypothesis_id": "retreat_remnant_strength",
+                "horizon_id": "next_open_to_d5_close",
+                "source_type": "block_condition_daywalk",
+                "owner_review_route": "strict_candidate_review_only",
+                "latest_verdict": "CANDIDATE_ONLY",
+                "latest_executable_excess_pct_gross": 0.5178,
+                "latest_executable_row_n": 36575,
+                "latest_date_cluster_n": 93,
+                "presentation_wounds": [
+                    "block_condition_daywalk_source_not_cached_retry",
+                    "net_static_cost_not_available_for_source",
+                    "date_block_ci_not_available_for_source",
+                ],
+            },
+        ],
     }
 
 
@@ -924,6 +952,9 @@ def test_format_kairos_owner_brief_keeps_report_only_boundary(tmp_path: Path) ->
     assert "truth_units=REPORT_ONLY_OWNER_REVIEW_TRUTH_UNITS_FROM_CACHED_RETRY" in text
     assert "strict=9" in text
     assert "high_gap_first30m_hold horizon=next_open_to_d5_close" in text
+    assert "block_condition_strict_candidates" in text
+    assert "retreat_remnant_strength horizon=next_open_to_d5_close" in text
+    assert "source=block_condition_daywalk not_edge=true" in text
     assert "score/rank is not evidence, edge, GO, or advice" in text
     assert "日包总入口" in text
     assert (

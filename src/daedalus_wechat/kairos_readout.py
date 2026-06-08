@@ -1433,6 +1433,31 @@ def _format_owner_review_truth_units(
             f"windows={_fmt_num(row.get('observed_window_count'))} "
             f"ci_cross={row.get('latest_date_block_ci_crosses_zero')}"
         )
+    strict_block_rows = [
+        row
+        for row in _as_list(truth_units.get("all_truth_units"))
+        if isinstance(row, dict)
+        and row.get("source_type") == "block_condition_daywalk"
+        and row.get("owner_review_route") == "strict_candidate_review_only"
+    ][:3]
+    if strict_block_rows:
+        lines.append("- block_condition_strict_candidates:")
+        for row in strict_block_rows:
+            wounds = ",".join(
+                str(item)
+                for item in _as_list(row.get("presentation_wounds"))[:3]
+                if item
+            )
+            lines.append(
+                f"  - {row.get('hypothesis_id', 'unknown')} "
+                f"horizon={row.get('horizon_id', 'unknown')} "
+                f"latest={row.get('latest_verdict', 'unknown')} "
+                f"gross={_fmt_pct(row.get('latest_executable_excess_pct_gross'))} "
+                f"n={_fmt_num(row.get('latest_executable_row_n'))}/"
+                f"days={_fmt_num(row.get('latest_date_cluster_n'))} "
+                f"source=block_condition_daywalk "
+                f"not_edge=true wounds={wounds}"
+            )
     report_path = truth_units.get("report_path")
     if report_path:
         lines.append(f"- truth_units_artifact={report_path}")
