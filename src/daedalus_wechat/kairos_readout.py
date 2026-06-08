@@ -2208,9 +2208,12 @@ def _format_compact_scout_needs_spec_hints(
 
 
 def _format_compact_materialized_outcome_summary(
-    scout_surface: dict[str, Any],
+    scout: dict[str, Any],
 ) -> str | None:
-    summary = _as_dict(scout_surface.get("materialized_daywalk_outcome_summary"))
+    summary = _as_dict(scout.get("daywalk_outcome_summary"))
+    if not summary:
+        scout_surface = _as_dict(scout.get("owner_review_surface"))
+        summary = _as_dict(scout_surface.get("materialized_daywalk_outcome_summary"))
     route_counts = _as_dict(summary.get("route_counts"))
     if not route_counts:
         return None
@@ -2657,9 +2660,7 @@ def format_kairos_owner_brief_compact(
             ),
         ]
     )
-    materialized_outcome_summary = _format_compact_materialized_outcome_summary(
-        scout_surface
-    )
+    materialized_outcome_summary = _format_compact_materialized_outcome_summary(scout)
     if materialized_outcome_summary:
         lines.append(materialized_outcome_summary)
     scout_condition_hints = _format_compact_scout_condition_hints(scout_surface)

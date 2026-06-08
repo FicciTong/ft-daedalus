@@ -574,6 +574,25 @@ def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
             "needs_executable_spec_cell_count": 0,
             "pending_surface_cell_count": 80,
         },
+        "daywalk_outcome_summary": {
+            "status": "REPORT_ONLY_OWNER_REVIEW_TRUTH_UNITS_SUMMARY",
+            "truth_unit_count": 304,
+            "route_counts": {
+                "strict_candidate_review_only": 36,
+                "owner_review_tail_watch": 27,
+                "needs_support_before_review": 120,
+                "observation_only_net_cost_missing": 69,
+                "observation_only_net_cost_killed": 5,
+                "right_tail_but_mean_negative_review_only": 49,
+            },
+            "confidence_counts": {
+                "usable_reference_net_ci_positive": 3,
+                "owner_tail_watch_support_ok": 78,
+                "thin_sample_only": 120,
+            },
+            "accepted_edges": 0,
+            "report_only": True,
+        },
         "owner_review_surface": {
             "surface_status": "REPORT_ONLY_SCOUT_INTAKE_DENOMINATOR",
             "top_families": [
@@ -1709,7 +1728,7 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "研究队列:" in text
     assert "可审单元=120 严格候选=9 右尾观察=23" in text
     assert "专用readout=124 待定义=0" in text
-    assert "已跑结果: truth_units=304 严格=35 右尾=26" in text
+    assert "已跑结果: truth_units=304 严格=36 右尾=27" in text
     assert "support不足=120 成本缺=69 成本杀=5 右尾负均值=49" in text
     assert "反馈回路: 已记录=2 useful=1 noise=1" in text
     assert "不改证据门/排名" in text
@@ -1728,6 +1747,22 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "first30m_confirmation_1001" not in text
     assert "完整诊断: /brief full；盘中: /intraday" in text
     assert "Long-window研究路由" not in text
+
+
+def test_format_kairos_owner_brief_compact_falls_back_to_nested_scout_outcome() -> None:
+    scout_readout = json.loads(json.dumps(_sample_hypothesis_scout_readout_payload()))
+    scout_readout.pop("daywalk_outcome_summary")
+
+    text = format_kairos_owner_brief_compact(
+        _sample_owner_brief_payload(),
+        intraday_alert=_sample_intraday_alert_payload(),
+        hypothesis_scout_readout=scout_readout,
+        owner_review_truth_units=_sample_owner_review_truth_units_payload(),
+        intraday_eod_outcome_review=_sample_intraday_eod_outcome_review_payload(),
+    )
+
+    assert "已跑结果: truth_units=304 严格=35 右尾=26" in text
+    assert "support不足=120 成本缺=69 成本杀=5 右尾负均值=49" in text
 
 
 def test_cli_brief_does_not_require_bridge_state(tmp_path: Path, capsys, monkeypatch) -> None:
