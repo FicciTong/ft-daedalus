@@ -942,6 +942,17 @@ def _sample_intraday_eod_outcome_review_payload(
             "blocker_id": "target_trade_date_outcome_rows_not_matured",
             "target_trade_date": "2026-06-08",
             "next_action": "rerun forward outcome panel after target-day bars mature",
+            "forward_panel_waterline": {
+                "target_trade_date": "2026-06-08",
+                "target_entry_date_row_count": 0,
+                "target_trade_date_has_forward_panel_rows": False,
+                "forward_outcome_panel_generated_at_utc": "2026-06-08T08:13:38Z",
+                "forward_outcome_panel_entry_date_min": "2026-01-07",
+                "forward_outcome_panel_entry_date_max": "2026-05-25",
+                "forward_outcome_panel_signal_date_min": "2026-01-06",
+                "forward_outcome_panel_signal_date_max": "2026-05-22",
+                "pending_not_negative_evidence": True,
+            },
         }
     return {
         "contract": "ftkairos.research_substrate.short_cycle_intraday_eod_outcome_review",
@@ -1558,6 +1569,10 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "盘中EOD复盘: PENDING_EOD_INTRADAY_REPLAY_REVIEW" in text
     assert "盘中结果: PENDING_INTRADAY_EOD_OUTCOME_PANEL_NOT_MATURED" in text
     assert "盘中结果阻塞: target_trade_date_outcome_rows_not_matured" in text
+    assert "盘中结果水线: panel_entry=2026-01-07..2026-05-25" in text
+    assert "panel_signal=2026-01-06..2026-05-22" in text
+    assert "target=2026-06-08 target_rows=0" in text
+    assert "pending不是负证据" in text
     assert "全A盘中观察: rows=5208 上涨=699 下跌=4470" in text
     assert "盘中触发 Top 1" in text
     assert "高开后前30分钟承接 窗口=开盘,前5分钟,前30分钟确认" in text

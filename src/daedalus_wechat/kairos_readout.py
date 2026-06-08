@@ -1288,6 +1288,26 @@ def _format_outcome_group_line(stats: dict[str, Any], group_id: str, label: str)
     )
 
 
+def _format_intraday_outcome_waterline(blocker: dict[str, Any]) -> str | None:
+    waterline = _as_dict(blocker.get("forward_panel_waterline"))
+    if not waterline:
+        return None
+    entry_min = waterline.get("forward_outcome_panel_entry_date_min") or "unknown"
+    entry_max = waterline.get("forward_outcome_panel_entry_date_max") or "unknown"
+    signal_min = waterline.get("forward_outcome_panel_signal_date_min") or "unknown"
+    signal_max = waterline.get("forward_outcome_panel_signal_date_max") or "unknown"
+    target = waterline.get("target_trade_date") or blocker.get("target_trade_date") or "unknown"
+    target_rows = waterline.get("target_entry_date_row_count")
+    generated_at = waterline.get("forward_outcome_panel_generated_at_utc") or "unknown"
+    return (
+        "盘中结果水线: "
+        f"panel_entry={entry_min}..{entry_max} "
+        f"panel_signal={signal_min}..{signal_max} "
+        f"target={target} target_rows={_fmt_num(target_rows)} "
+        f"generated={generated_at} pending不是负证据"
+    )
+
+
 def _format_compact_intraday_eod_outcome_review(
     review: dict[str, Any] | None,
 ) -> list[str]:
@@ -1328,6 +1348,9 @@ def _format_compact_intraday_eod_outcome_review(
             f"{blocker.get('blocker_id', blocker.get('reason', 'unknown'))} "
             f"next={blocker.get('next_action', 'unknown')}"
         )
+        waterline = _format_intraday_outcome_waterline(blocker)
+        if waterline:
+            lines.append(waterline)
     stats = _as_dict(review.get("group_horizon_stats"))
     if summary.get("matched_panel_row_count"):
         lines.append(
