@@ -277,6 +277,21 @@ def _append_archive_wound_counts(
         pieces.append(f"{label}={text}")
 
 
+def _minute_price_volume_maturity_label(summary: dict[str, Any]) -> str | None:
+    if summary.get("minute_price_volume_pending_not_negative_evidence") is True:
+        return "目标日未成熟"
+    status = str(summary.get("minute_price_volume_maturity_status") or "")
+    if status == "PENDING_TARGET_TRADE_DATE_MINUTE_PRICE_VOLUME_NOT_MATURED":
+        return "目标日未成熟"
+    if status == "MINUTE_PRICE_VOLUME_READY":
+        return "已成熟"
+    if status == "MINUTE_PRICE_VOLUME_PARTIAL_OR_MISSING":
+        return "部分缺口"
+    if status == "NO_MANIFEST_CANDIDATES":
+        return "无候选"
+    return None
+
+
 def _format_archive_day_line(row: dict[str, Any]) -> str:
     summary = _as_dict(row.get("summary"))
     report_date = row.get("report_date")
@@ -390,21 +405,32 @@ def _format_archive_day_line(row: dict[str, Any]) -> str:
             f"{_fmt_num(summary.get('minute_price_volume_ready_count'))}/"
             f"{_fmt_num(summary.get('minute_price_volume_candidate_count'))}"
         )
-    _append_archive_count(
-        pieces,
-        label="分钟缺口",
-        value=summary.get("minute_price_volume_missing_count"),
-    )
-    _append_archive_wound_counts(
-        pieces,
-        label="分钟伤口",
-        value=summary.get("minute_price_volume_wound_counts"),
-    )
-    _append_archive_count_map(
-        pieces,
-        label="分钟量价标记",
-        value=summary.get("price_volume_flag_counts"),
-    )
+    minute_maturity_label = _minute_price_volume_maturity_label(summary)
+    minute_pending = minute_maturity_label == "目标日未成熟"
+    if minute_maturity_label:
+        pieces.append(f"分钟量价状态={minute_maturity_label}")
+    if minute_pending:
+        _append_archive_count(
+            pieces,
+            label="分钟待成熟",
+            value=summary.get("minute_price_volume_missing_count"),
+        )
+    else:
+        _append_archive_count(
+            pieces,
+            label="分钟缺口",
+            value=summary.get("minute_price_volume_missing_count"),
+        )
+        _append_archive_wound_counts(
+            pieces,
+            label="分钟伤口",
+            value=summary.get("minute_price_volume_wound_counts"),
+        )
+        _append_archive_count_map(
+            pieces,
+            label="分钟量价标记",
+            value=summary.get("price_volume_flag_counts"),
+        )
     if summary.get("volume_anchor_universe_match_count") is not None:
         pieces.append(
             "量价锚="

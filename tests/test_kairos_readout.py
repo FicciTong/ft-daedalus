@@ -1403,6 +1403,19 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
                             "minute_price_volume_candidate_count": 21,
                             "minute_price_volume_ready_count": 0,
                             "minute_price_volume_missing_count": 21,
+                            "minute_price_volume_maturity_status": (
+                                "PENDING_TARGET_TRADE_DATE_MINUTE_PRICE_VOLUME_"
+                                "NOT_MATURED"
+                            ),
+                            "minute_price_volume_maturity_reason": (
+                                "target_trade_date_after_as_of_and_no_minute_rows"
+                            ),
+                            "minute_price_volume_pending_not_negative_evidence": True,
+                            "minute_price_volume_next_action": (
+                                "rerun after target trade date intraday/minute-derived "
+                                "surfaces are available; pending target-day rows are not "
+                                "negative evidence"
+                            ),
                             "minute_price_volume_wound_counts": [
                                 {
                                     "wound": "stock_intraday_features_daily_missing",
@@ -1483,13 +1496,16 @@ def test_format_kairos_owner_daily_archive_dates_lists_available_days(
     assert "shadow_pending=213" in text
     assert "shadow_fired=0" in text
     assert "分钟量价=0/21" in text
-    assert "分钟缺口=21" in text
-    assert "分钟伤口=分钟量价特征未生成=21" in text
-    assert "前30分钟分钟线不完整=19" in text
-    assert "竞价量占比缺失=18" in text
+    assert "分钟量价状态=目标日未成熟" in text
+    assert "分钟待成熟=21" in text
+    assert "分钟缺口=21" not in text
+    assert "分钟伤口=" not in text
+    assert "分钟量价特征未生成=21" not in text
+    assert "前30分钟分钟线不完整=19" not in text
+    assert "竞价量占比缺失=18" not in text
     assert "尾盘成交额占比缺失=17" not in text
-    assert "分钟量价标记=first30m_high_amount_acceptance=16" in text
-    assert "late_session_volume_acceleration_positive=19" in text
+    assert "分钟量价标记=" not in text
+    assert "late_session_volume_acceleration_positive=19" not in text
     assert "量价锚=88/769" in text
     assert "锚模式=dual_price_volume_break=40" in text
     assert "price_only_break=703" in text
