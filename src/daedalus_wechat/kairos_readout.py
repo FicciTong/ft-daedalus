@@ -1398,6 +1398,56 @@ def _fmt_named_counts(rows: list[Any], *, limit: int = 3) -> str:
     return " ".join(parts) if parts else "none"
 
 
+def _format_compact_strategy_hints(
+    candidates: list[dict[str, Any]],
+    *,
+    limit: int = 2,
+) -> str | None:
+    parts: list[str] = []
+    seen: set[str] = set()
+    for item in candidates:
+        tactic_id = str(item.get("tactic_id") or item.get("tactic_name") or "")
+        if not tactic_id or tactic_id in seen:
+            continue
+        seen.add(tactic_id)
+        metadata = _as_dict(item.get("strategy_metadata_zh"))
+        name = (
+            metadata.get("name_zh")
+            or item.get("tactic_name")
+            or item.get("tactic_id")
+            or "unknown"
+        )
+        pattern = metadata.get("pattern_zh")
+        selection = metadata.get("selection_policy_zh")
+        if not pattern and not selection:
+            continue
+        detail = "；".join(str(value) for value in (pattern, selection) if value)
+        parts.append(f"{name}: {detail}")
+        if len(parts) >= limit:
+            break
+    if not parts:
+        return None
+    return "战法条件: " + " | ".join(parts)
+
+
+def _format_compact_scout_condition_hints(
+    scout_surface: dict[str, Any],
+    *,
+    limit: int = 2,
+) -> str | None:
+    parts: list[str] = []
+    for row in _as_list(scout_surface.get("top_families"))[:limit]:
+        if not isinstance(row, dict):
+            continue
+        name = row.get("family_name_zh") or row.get("name")
+        condition = row.get("condition_summary_zh")
+        if name and condition:
+            parts.append(f"{name}: {condition}")
+    if not parts:
+        return None
+    return "Scout条件: " + " | ".join(str(part) for part in parts)
+
+
 def _format_scout_example(row: dict[str, Any]) -> str:
     missing = _as_list(row.get("missing_surface_requirements"))
     missing_text = ",".join(str(item) for item in missing[:3]) if missing else "none"
@@ -1703,6 +1753,10 @@ def format_kairos_owner_brief_compact(
 
     lines.extend(_format_compact_intraday_status(intraday_alert, limit=3))
 
+    strategy_hints = _format_compact_strategy_hints(candidates)
+    if strategy_hints:
+        lines.append(strategy_hints)
+
     lines.append(f"明天重点 Top {min(candidate_limit, len(candidates))}:")
     for item in candidates[:candidate_limit]:
         support = _as_dict(item.get("tactic_support"))
@@ -1737,6 +1791,9 @@ def format_kairos_owner_brief_compact(
             ),
         ]
     )
+    scout_condition_hints = _format_compact_scout_condition_hints(scout_surface)
+    if scout_condition_hints:
+        lines.append(scout_condition_hints)
 
     package_path = _as_dict(daily_package).get("report_path")
     if package_path:

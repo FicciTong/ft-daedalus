@@ -222,6 +222,13 @@ def _sample_owner_brief_payload() -> dict[str, object]:
                 "stock_name": "步步高",
                 "industry_name": "超市连锁",
                 "tactic_name": "高开后前30分钟承接",
+                "strategy_metadata_zh": {
+                    "name_zh": "高开后前30分钟承接",
+                    "pattern_zh": "高开后没有快速转弱, 前30分钟仍有承接。",
+                    "selection_policy_zh": "优先看强势股池、流动性可交易、非一字涨停不可买行。",
+                    "world_state_zh": "更适合右尾活跃、涨停生态不弱、候选供给扩张的短周期环境。",
+                    "execution_template_zh": "次日开盘后观察前30分钟, 只做观察触发, 不是买入指令。",
+                },
                 "owner_confidence_label": "可用参考",
                 "evidence_wounds": ["not_industry_neutral_contains_sector_beta"],
                 "tactic_support": {
@@ -453,16 +460,19 @@ def _sample_hypothesis_scout_readout_payload() -> dict[str, object]:
                 {
                     "name": "execution_template_ablation",
                     "family_name_zh": "执行模板对照",
+                    "condition_summary_zh": "比较次日开盘、前5分钟VWAP、尾盘买和持有期差异。",
                     "count": 92,
                 },
                 {
                     "name": "intraday_price_volume",
                     "family_name_zh": "盘中量价",
+                    "condition_summary_zh": "观察尾盘吸筹、前30分钟突破、放量突破和VWAP修复。",
                     "count": 88,
                 },
                 {
                     "name": "auction_microstructure",
                     "family_name_zh": "集合竞价微结构",
+                    "condition_summary_zh": "观察竞价量价承接、高开失败、低开修复和前30分钟确认。",
                     "count": 80,
                 },
             ],
@@ -1283,10 +1293,13 @@ def test_format_kairos_owner_brief_compact_is_owner_visible() -> None:
     assert "右尾温度计:" in text
     assert "盘中触发 Top 1" in text
     assert "明天重点 Top 1" in text
+    assert "战法条件: 高开后前30分钟承接: 高开后没有快速转弱" in text
+    assert "优先看强势股池、流动性可交易" in text
     assert "002251.SZ 步步高" in text
     assert "伤口=未行业中性/含板块beta" in text
     assert "研究队列:" in text
     assert "Scout重点:" in text
+    assert "Scout条件: 执行模板对照: 比较次日开盘" in text
     assert "完整诊断: /brief full；盘中: /intraday" in text
     assert "Long-window研究路由" not in text
 
