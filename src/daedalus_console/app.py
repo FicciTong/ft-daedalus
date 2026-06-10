@@ -449,6 +449,21 @@ async def page_kairos_day(request: Any) -> HTMLResponse:
     )
 
 
+NARRATIVE_PATH = (
+    COSMOS / "ft-kairos" / "var" / "reports" / "research_substrate" / "eod_narrative_review_latest.md"
+)
+
+
+def _k_sec_narrative() -> str:
+    text = _read_text(NARRATIVE_PATH, 8000)
+    if not text:
+        return ""
+    return f"""<section>
+<h2>日记 <small>它自己写的复盘 · 每句数字可溯源 · {_mtime(NARRATIVE_PATH)}</small></h2>
+<pre class="doc">{_e(text)}</pre>
+</section>"""
+
+
 async def page_kairos(_req: Any) -> HTMLResponse:
     bundle = _load_json(KAIROS_BUNDLE)
     if not bundle:
@@ -457,6 +472,7 @@ async def page_kairos(_req: Any) -> HTMLResponse:
     else:
         body = (
             _k_sec_package(bundle.get("today_package"))
+            + _k_sec_narrative()
             + _k_sec_recall(bundle.get("recall"))
             + _k_sec_days(bundle.get("days"))
             + _k_sec_families(bundle.get("family_verdicts"))
