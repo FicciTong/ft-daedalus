@@ -55,8 +55,8 @@ body{margin:0;background:var(--ink);color:var(--fg);
 main{max-width:1180px;margin:0 auto;padding:24px 20px 80px}
 nav{display:flex;gap:4px;flex-wrap:wrap;align-items:baseline;
   border-bottom:1px solid var(--fire);padding:14px 0 10px;margin-bottom:24px}
-nav .brand{font-size:18px;letter-spacing:.14em;margin-right:18px}
-nav .brand b{color:var(--fire);font-weight:600}
+nav .brand{font-size:18px;letter-spacing:.14em;margin-right:18px;
+  color:var(--fire);font-weight:600}
 nav a{color:var(--dim);text-decoration:none;padding:3px 10px;border-radius:4px;
   font-size:13px;letter-spacing:.06em}
 nav a:hover{color:var(--fg)} nav a.on{color:var(--fire);border:1px solid var(--fire)}
@@ -181,7 +181,7 @@ def _page(slug: str, title_zh: str, element: str, lede: str, body: str) -> str:
 <meta http-equiv="refresh" content="120">
 <title>{title_zh} · 乾坤台</title><style>{CSS}</style></head>
 <body><main>
-<nav><span class="brand"><b>乾坤</b>台</span><a href="/" class="{"on" if slug == "home" else ""}">总览</a>{nav}</nav>
+<nav><span class="brand">乾坤台</span><a href="/" class="{"on" if slug == "home" else ""}">总览</a>{nav}</nav>
 <h1>{title_zh}<span class="el">{element}</span></h1>
 <p class="lede">{lede}</p>
 {body}
