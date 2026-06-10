@@ -261,6 +261,72 @@ def _k_sec_families(fv: dict[str, Any] | None) -> str:
 </section>"""
 
 
+ENV_ZH = {"hot": "热", "warm": "温", "cold": "冷"}
+PHASE_ZH = {
+    "climax": "高潮",
+    "fermenting": "发酵",
+    "ebbing": "退潮",
+    "remnant": "残留",
+    "quiet": "静默",
+}
+
+
+def _k_sec_steering(st: dict[str, Any] | None) -> str:
+    if not st:
+        return '<section><h2>自适应转向 · 读序</h2><p class="missing">暂无产物。</p></section>'
+    as_of = st.get("as_of") or {}
+    env = str(as_of.get("env_regime_today") or "")
+    phases = st.get("industry_phase_today") or []
+    phase_line = (
+        " · ".join(
+            f"{_e(p.get('industry_name') or p.get('industry_code_l2'))}"
+            f" {PHASE_ZH.get(str(p.get('lifecycle_state')), _e(p.get('lifecycle_state')))}"
+            for p in phases
+        )
+        or "全部行业静默"
+    )
+    rows = ""
+    for r in st.get("steering_table") or []:
+        role = str(r.get("family_role"))
+        rank = r.get("read_priority_rank")
+        pos = " ".join(
+            PHASE_ZH.get(p, p) for p in (r.get("positive_phases") or [])
+        )
+        rows += (
+            f"<tr><td class='num'>{_e(rank) if rank else '避险'}</td>"
+            f"<td class='code'>{_e(r.get('family'))}</td>"
+            f"<td>{_signed(r.get('prior_env_mean_excess_pct'), 3)}</td>"
+            f"<td>{_signed(r.get('scaled_cum_forward_payoff_pct'), 2)}</td>"
+            f"<td>{_signed(r.get('steering_score_pct'), 2)}</td>"
+            f"<td class='dim'>{_e(pos) or '—'}</td>"
+            f"<td class='num dim'>{_e(r.get('forward_settled_days'))}</td></tr>"
+        ) if role else rows
+    routing = ""
+    for r in st.get("industry_routing") or []:
+        routing += (
+            f"<tr><td class='code'>{_e(r.get('family'))}</td>"
+            f"<td>{_e(r.get('industry_name') or r.get('industry_code_l2'))}</td>"
+            f"<td>{PHASE_ZH.get(str(r.get('lifecycle_state')), '')}</td>"
+            f"<td>{_signed(r.get('steering_score_pct'), 2)}</td></tr>"
+        )
+    routing_block = (
+        f"<h3>今日路由 <small>正相位行业 × 家族</small></h3>"
+        f"<table><thead><tr><th>家族</th><th>行业</th><th>相位</th><th>分</th></tr></thead>"
+        f"<tbody>{routing}</tbody></table>"
+        if routing
+        else '<p class="dim">今日无正相位行业路由 — 没有高潮/残留相位的行业,接力族先验为负。</p>'
+    )
+    fp = st.get("forward_payoff") or {}
+    return f"""<section>
+<h2>自适应转向 · 读序 <small>环境×轮动相位 = 注意力路由,非门槛 · {_e(st.get('generated_at_utc'))}</small></h2>
+<p class="lede">今日环境 <strong>{ENV_ZH.get(env, env)}</strong>({_e(as_of.get('env_date'))}) · 行业相位:{phase_line}</p>
+<table><thead><tr><th>序</th><th>家族</th><th>先验@今环境%</th><th>前向累计%</th><th>转向分</th><th>正相位</th><th>结算日</th></tr></thead>
+<tbody>{rows}</tbody></table>
+{routing_block}
+<p class="dim">先验权重 {_e(fp.get('prior_pseudo_days'))} 个伪结算日 · 每日收益按 n/{_e(fp.get('payoff_n_ref'))} 可靠度缩放 · 每一次权重变动 = 账本一行({_e(fp.get('entries_total'))} 行)</p>
+</section>"""
+
+
 def _k_sec_holdout(holdout: dict[str, Any] | None) -> str:
     eras = (holdout or {}).get("eras") or []
     if not eras:
@@ -476,6 +542,7 @@ async def page_kairos(_req: Any) -> HTMLResponse:
             + _k_sec_recall(bundle.get("recall"))
             + _k_sec_days(bundle.get("days"))
             + _k_sec_families(bundle.get("family_verdicts"))
+            + _k_sec_steering(bundle.get("adaptive_steering"))
             + _k_sec_holdout(bundle.get("holdout"))
             + _k_sec_forward(bundle.get("forward_ledger"))
             + _k_sec_organism(bundle)
